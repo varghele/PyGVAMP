@@ -83,20 +83,12 @@ class GlobalModel(torch.nn.Module):
         return self.global_mlp(out)
 
 
-class MPGNN(torch.nn.Module):
+class Meta(torch.nn.Module):
     def __init__(
             self,
-            node_dim: int,
-            edge_dim: int,
-            global_dim: int,
             hidden_dim: int,
+            output_dim: int,  # New parameter for embedding output dimension
             num_layers: int,
-            num_encoder_layers: int,
-            num_edge_mlp_layers: int,
-            num_node_mlp_layers: int,
-            num_global_mlp_layers: int,
-            shift_predictor_hidden_dim: Union[int, List[int]],
-            shift_predictor_layers: int,
             embedding_type: Literal["node", "global", "combined"],
             act: Union[str, Callable] = "relu",
             norm: Optional[str] = "batch_norm",
@@ -107,108 +99,85 @@ class MPGNN(torch.nn.Module):
         self.embedding_type = embedding_type
 
         # Store all necessary attributes
-        self.node_dim = node_dim
-        self.edge_dim = edge_dim
-        self.global_dim = global_dim
         self.hidden_dim = hidden_dim
-        self.num_encoder_layers = num_encoder_layers
-        self.num_edge_mlp_layers = num_edge_mlp_layers
-        self.num_node_mlp_layers = num_node_mlp_layers
-        self.num_global_mlp_layers = num_global_mlp_layers
+        self.output_dim = output_dim
         self.act = act
         self.norm = norm
         self.dropout = dropout
 
-        # Initialize node and edge encoders as None (will be initialized in forward)
-        self.node_encoder = None
-        self.edge_encoder = None
-
         # Message passing layers
         self.layers = torch.nn.ModuleList([
             MetaLayer(
-                edge_model=EdgeModel(node_dim, edge_dim, hidden_dim, num_edge_mlp_layers, act, norm, dropout),
-                node_model=NodeModel(node_dim, edge_dim, hidden_dim, num_node_mlp_layers, act, norm, dropout),
-                global_model=GlobalModel(node_dim, edge_dim, global_dim, hidden_dim, num_global_mlp_layers, act, norm, dropout)
+                edge_model=EdgeModel(hidden_dim, act, norm, dropout),
+                node_model=NodeModel(hidden_dim, act, norm, dropout),
+                global_model=GlobalModel(hidden_dim, act, norm, dropout)
             ) for _ in range(num_layers)
         ])
 
-        # Determine input dimension for shift predictor
+        # Determine input dimension for embedding projection
         if embedding_type == "node":
-            shift_predictor_in_dim = node_dim
+            embedding_in_dim = hidden_dim
         elif embedding_type == "global":
-            shift_predictor_in_dim = global_dim
+            embedding_in_dim = hidden_dim
         else:  # combined
-            shift_predictor_in_dim = node_dim + global_dim
+            embedding_in_dim = 2 * hidden_dim
 
-        # Create channel list for shift predictor MLP
-        if isinstance(shift_predictor_hidden_dim, int):
-            channel_list = [shift_predictor_in_dim] + [shift_predictor_hidden_dim] * (shift_predictor_layers - 1) + [1]
-        else:
-            channel_list = [shift_predictor_in_dim] + list(shift_predictor_hidden_dim) + [1]
-
-        # Shift predictor MLP
-        self.shift_predictor = MLP(
-            channel_list=channel_list,
-            act=act,
-            norm=None,#norm,
-            dropout=dropout
+        # Embedding projection layer (optional, for reducing dimensions or additional non-linearity)
+        self.embedding_projection = nn.Sequential(
+            nn.Linear(embedding_in_dim, output_dim),
+            self._get_activation(act)
         )
+
+    def _get_activation(self, act):
+        if act == "relu":
+            return nn.ReLU()
+        elif act == "leaky_relu":
+            return nn.LeakyReLU()
+        elif act == "gelu":
+            return nn.GELU()
+        elif act == "elu":
+            return nn.ELU()
+        elif act == "tanh":
+            return nn.Tanh()
+        elif act == "sigmoid":
+            return nn.Sigmoid()
+        else:
+            return nn.Identity()
 
     def forward(self, x, edge_index, edge_attr, batch=None):
         if batch is None:
             batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
 
-        # Initialize node encoder if not already initialized
-        if self.node_encoder is None:
-            node_in_channels = x.size(1)  # Infer input dimension from node features
-            self.node_encoder = MLP(
-                in_channels=node_in_channels,
-                hidden_channels=self.hidden_dim,
-                out_channels=self.node_dim,
-                num_layers=self.num_encoder_layers,
-                act=self.act,
-                norm="BatchNorm",#self.norm,
-                dropout=self.dropout
-            ).apply(init_weights).to(x.device)  # Move node_encoder to the same device as x
-
-        # Initialize edge encoder if not already initialized
-        if self.edge_encoder is None:
-            edge_in_channels = edge_attr.size(1)  # Infer input dimension from edge features
-            self.edge_encoder = MLP(
-                in_channels=edge_in_channels,
-                hidden_channels=self.hidden_dim,
-                out_channels=self.edge_dim,
-                num_layers=self.num_encoder_layers,
-                act=self.act,
-                norm="BatchNorm",#self.norm,
-                dropout=self.dropout
-            ).apply(init_weights).to(x.device)  # Move edge_encoder to the same device as x
-
-
-        # Encode node and edge features
-        x = self.node_encoder(x)  # Encode node features
-        edge_attr = self.edge_encoder(edge_attr)  # Encode edge features
-
-        # Initialize random global attribute u with the same size as node_dim
-        u = torch.randn(batch.max() + 1, x.size(1), device=x.device)  # Random u with size (num_graphs, node_dim)
+        # Initialize random global attribute u with the same size as node features
+        u = torch.randn(batch.max() + 1, x.size(1), device=x.device)
 
         # Message passing
         for layer in self.layers:
             x, edge_attr, u = layer(x, edge_index, edge_attr, u, batch)
 
-        # Prepare embeddings for shift prediction
+        # Prepare embeddings based on type
         if self.embedding_type == "node":
-            shift_input = x
+            # For node-level tasks, keep node embeddings
+            embeddings = x
+            # Can also provide graph-level embeddings by pooling nodes
+            graph_embeddings = nn.global_mean_pool(x, batch)
         elif self.embedding_type == "global":
-            # Broadcast global features to all nodes
-            shift_input = u[batch]
+            # For graph-level tasks, use global features
+            embeddings = u
+            graph_embeddings = u
         else:  # combined
-            shift_input = torch.cat([x, u[batch]], dim=1)
+            # Combine node and global features
+            node_embeddings = torch.cat([x, u[batch]], dim=1)
+            embeddings = node_embeddings
+            # Pool to get graph-level embeddings
+            graph_embeddings = nn.global_mean_pool(node_embeddings, batch)
 
-        # Predict shifts
-        shifts = self.shift_predictor(shift_input)
+        # Project embeddings to desired output dimension
+        projected_embeddings = self.embedding_projection(embeddings)
+        projected_graph_embeddings = self.embedding_projection(graph_embeddings)
 
-        return shifts, (x, edge_attr, u)  # Return both shifts and embeddings
+        return projected_graph_embeddings, (projected_embeddings, x, edge_attr, u)
+
 
 
 # Example usage:
