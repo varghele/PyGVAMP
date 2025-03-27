@@ -1,3 +1,5 @@
+import torch
+
 class VAMPNetDataset(torch.utils.data.Dataset):
     def __init__(self, data, lag_time=1):
         """
