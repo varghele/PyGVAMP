@@ -87,7 +87,7 @@ class Meta(torch.nn.Module):
     def __init__(
             self,
             hidden_dim: int,
-            output_dim: int,  # New parameter for embedding output dimension
+            output_dim: int,
             num_layers: int,
             embedding_type: Literal["node", "global", "combined"],
             act: Union[str, Callable] = "relu",

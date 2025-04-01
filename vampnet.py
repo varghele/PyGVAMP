@@ -1,109 +1,110 @@
 import torch
 import torch.nn as nn
-import torch_geometric as pyg
+from typing import Optional
 
 
 class VAMPNet(nn.Module):
-    def __init__(self, encoder, lag_time=1):
+    def __init__(self, encoder, vamp_score, embedding_module=None, lag_time=1):
         """
-        Initialize the VAMPNet with a custom encoder.
+        Initialize the VAMPNet with a custom encoder and external VAMP score module.
 
         Args:
             encoder: The encoder network that transforms the input data
-            lag_time: Lag time for the VAMP scoring
+            vamp_score: The VAMPScore module for scoring embeddings
+            embedding_module: Optional module to create embeddings before the encoder
+            lag_time: Lag time for time-lagged datasets
         """
         super(VAMPNet, self).__init__()
 
         self.encoder = encoder
+        self.embedding_module = embedding_module
+        self.vamp_score = vamp_score
         self.lag_time = lag_time
 
-    def forward(self, x):
+    def forward(self, data):
         """
-        Transform input data using the encoder network.
+        Transform input data using the embedding module (if provided) and encoder network.
 
         Args:
-            x: Input data
+            data: Input data (can be graph data or tensor)
 
         Returns:
             Transformed features
         """
-        return self.encoder(x)
+        # Check if data is a PyTorch Geometric Data object
+        if hasattr(data, 'x') and hasattr(data, 'edge_index'):
+            # Extract graph components
+            x = data.x
+            edge_index = data.edge_index
+            edge_attr = data.edge_attr if hasattr(data, 'edge_attr') else None
+            batch = data.batch if hasattr(data, 'batch') else None
 
-    def vamp_score(self, x_t0, x_t1, k=None):
+            # Apply embedding module to node and edge features if provided
+            if self.embedding_module is not None:
+                if hasattr(self.embedding_module, 'node_embedding') and hasattr(self.embedding_module,
+                                                                                'edge_embedding'):
+                    # Module has separate functions for node and edge embeddings
+                    x = self.embedding_module.node_embedding(x)
+                    if edge_attr is not None and self.embedding_module.edge_embedding is not None:
+                        edge_attr = self.embedding_module.edge_embedding(edge_attr)
+                else:
+                    # Assume single embedding function for nodes
+                    x = self.embedding_module(x)
+
+            # Reconstruct PyG data object with embedded features
+            embedded_data = type(data)(x=x, edge_index=edge_index)
+            if edge_attr is not None:
+                embedded_data.edge_attr = edge_attr
+            if batch is not None:
+                embedded_data.batch = batch
+
+            # Pass through encoder
+            return self.encoder(embedded_data)
+        else:
+            # For non-graph tensor data
+            if self.embedding_module is not None:
+                # Apply embedding then encoder
+                return self.encoder(self.embedding_module(data))
+            else:
+                # Apply encoder directly
+                return self.encoder(data)
+
+    def get_embeddings(self, data):
         """
-        Calculate the VAMP score between time-lagged data.
+        Get just the embeddings without passing through the encoder.
 
         Args:
-            x_t0: Data at time t
-            x_t1: Data at time t+lag_time
-            k: Number of singular values to consider (if None, use all)
+            data: Input data
 
         Returns:
-            VAMP score
+            Embedded features
         """
-        # Apply feature transformation
-        chi_t0 = self.encoder(x_t0)
-        chi_t1 = self.encoder(x_t1)
+        if self.embedding_module is None:
+            return data
 
-        # Center the data
-        chi_t0_mean = chi_t0.mean(dim=0, keepdim=True)
-        chi_t1_mean = chi_t1.mean(dim=0, keepdim=True)
-        chi_t0 = chi_t0 - chi_t0_mean
-        chi_t1 = chi_t1 - chi_t1_mean
+        if hasattr(data, 'x') and hasattr(data, 'edge_index'):
+            # Graph data
+            x = data.x
+            edge_attr = data.edge_attr if hasattr(data, 'edge_attr') else None
 
-        # Calculate covariance matrices
-        n_samples = x_t0.shape[0]
-        cov_00 = (chi_t0.T @ chi_t0) / (n_samples - 1)
-        cov_11 = (chi_t1.T @ chi_t1) / (n_samples - 1)
-        cov_01 = (chi_t0.T @ chi_t1) / (n_samples - 1)
-
-        # Regularize covariance matrices for numerical stability
-        eps = 1e-6
-        cov_00 += eps * torch.eye(cov_00.shape[0], device=cov_00.device)
-        cov_11 += eps * torch.eye(cov_11.shape[0], device=cov_11.device)
-
-        # Calculate VAMP matrix
-        cov_00_inv_sqrt = self._matrix_inv_sqrt(cov_00)
-        cov_11_inv_sqrt = self._matrix_inv_sqrt(cov_11)
-        vamp_matrix = cov_00_inv_sqrt @ cov_01 @ cov_11_inv_sqrt
-
-        # SVD
-        U, S, Vh = torch.linalg.svd(vamp_matrix, full_matrices=False)
-
-        # Take top k singular values if specified
-        if k is not None:
-            S = S[:k]
-
-        # VAMP-2 score is the sum of squared singular values
-        score = torch.sum(S ** 2)
-
-        return score
-
-    def _matrix_inv_sqrt(self, matrix):
-        """Calculate the inverse square root of a matrix"""
-        U, S, Vh = torch.linalg.svd(matrix)
-        return U @ torch.diag(1.0 / torch.sqrt(S)) @ Vh
-
-    def vamp_loss(self, x_t0, x_t1, k=None):
-        """
-        Calculate the VAMP loss (negative VAMP score).
-
-        Args:
-            x_t0: Data at time t
-            x_t1: Data at time t+lag_time
-            k: Number of singular values to consider
-
-        Returns:
-            VAMP loss
-        """
-        return -self.vamp_score(x_t0, x_t1, k)
+            if hasattr(self.embedding_module, 'node_embedding') and hasattr(self.embedding_module, 'edge_embedding'):
+                node_emb = self.embedding_module.node_embedding(x)
+                edge_emb = None
+                if edge_attr is not None and self.embedding_module.edge_embedding is not None:
+                    edge_emb = self.embedding_module.edge_embedding(edge_attr)
+                return node_emb, edge_emb
+            else:
+                return self.embedding_module(x)
+        else:
+            # Regular tensor data
+            return self.embedding_module(data)
 
     def create_time_lagged_dataset(self, data, lag_time=None):
         """
         Create a time-lagged dataset from sequential data.
 
         Args:
-            data: Sequential data of shape (sequence_length, feature_dim)
+            data: Sequential data
             lag_time: Lag time to use (defaults to self.lag_time)
 
         Returns:
@@ -118,15 +119,16 @@ class VAMPNet(nn.Module):
 
         return x_t0, x_t1
 
-    def fit(self, data_loader, optimizer, n_epochs=100, k=None):
+    def fit(self, data_loader, optimizer, n_epochs=100, k=None, verbose=True):
         """
-        Train the VAMPNet model.
+        Train the VAMPNet model using the external VAMPScore module.
 
         Args:
             data_loader: DataLoader providing batches of (x_t0, x_t1)
             optimizer: PyTorch optimizer
             n_epochs: Number of training epochs
             k: Number of singular values to consider for VAMP score
+            verbose: Whether to print progress
 
         Returns:
             List of loss values during training
@@ -140,11 +142,15 @@ class VAMPNet(nn.Module):
             for batch in data_loader:
                 x_t0, x_t1 = batch
 
+                # Get embeddings
+                chi_t0 = self(x_t0)  # Forward pass for time t
+                chi_t1 = self(x_t1)  # Forward pass for time t+lag
+
                 # Zero gradients
                 optimizer.zero_grad()
 
-                # Calculate VAMP loss
-                loss = self.vamp_loss(x_t0, x_t1, k)
+                # Calculate VAMP loss using the external VAMPScore module
+                loss = self.vamp_score.loss(chi_t0, chi_t1, k=k)
 
                 # Backward pass and optimization
                 loss.backward()
@@ -156,7 +162,7 @@ class VAMPNet(nn.Module):
             avg_epoch_loss = epoch_loss / n_batches
             losses.append(avg_epoch_loss)
 
-            if epoch % 10 == 0:
-                print(f"Epoch {epoch}/{n_epochs}, Loss: {avg_epoch_loss:.4f}")
+            if verbose and (epoch % 10 == 0 or epoch == n_epochs - 1):
+                print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {avg_epoch_loss:.4f}")
 
         return losses
