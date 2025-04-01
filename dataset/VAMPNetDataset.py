@@ -154,11 +154,17 @@ class VAMPNetDataset(Dataset):
             distances = np.sqrt(np.sum((coords[:, np.newaxis, :] - coords[np.newaxis, :, :]) ** 2, axis=2))
 
             # Exclude self-distances (diagonal)
-            np.fill_diagonal(distances, np.inf)
+            np.fill_diagonal(distances, -1)
 
-            # Get min and max distances
-            min_distances.append(np.min(distances))
-            max_distances.append(np.max(distances))
+            # Convert to mask to filter out -1 values
+            valid_distances = distances[distances > 0]
+
+            if len(valid_distances) > 0:
+                min_distances.append(np.min(valid_distances))
+                max_distances.append(np.max(valid_distances))
+
+        if not min_distances or not max_distances:
+            raise ValueError("No valid distances found across samples")
 
         self.distance_min = float(np.min(min_distances))
         self.distance_max = float(np.max(max_distances))
@@ -188,14 +194,29 @@ class VAMPNetDataset(Dataset):
         d_range = self.distance_max - self.distance_min
         sigma = d_range / K
 
-        # Prepare broadcasting for vectorized computation
-        distances = distances.reshape(-1, 1)  # [num_edges, 1]
+        # Filter out invalid distances (diagonals set to -1)
+        valid_mask = distances >= 0
+
+        # Reshape to prepare for broadcasting
+        distances_reshaped = distances.reshape(-1, 1)  # [num_edges, 1]
 
         # Calculate μ_t values [1, K]
         mu_values = torch.linspace(self.distance_min, self.distance_max, K).view(1, -1)
 
         # Compute expanded features: exp(-(d_ij - μ_t)²/σ²)
-        expanded_features = torch.exp(-((distances - mu_values) ** 2) / (sigma ** 2))
+        expanded_features = torch.zeros((distances_reshaped.shape[0], K),
+                                        device=distances.device,
+                                        dtype=torch.float32)
+
+        # Apply computation only to valid distances
+        valid_indices = torch.nonzero(valid_mask).squeeze()
+        valid_distances = distances_reshaped[valid_indices]
+
+        # Compute Gaussian expansion only for valid distances
+        valid_expanded = torch.exp(-((valid_distances - mu_values) ** 2) / (sigma ** 2))
+
+        # Place results back in the output tensor
+        expanded_features[valid_indices] = valid_expanded
 
         return expanded_features
 
@@ -218,7 +239,7 @@ class VAMPNetDataset(Dataset):
 
         # Find M nearest neighbors for each atom
         # Set self-distances to infinity to exclude them
-        distances.fill_diagonal_(float('inf'))
+        distances.fill_diagonal_(float(-1))
 
         # Get top-k smallest distances for each atom
         _, nn_indices = torch.topk(distances, self.n_neighbors, dim=1, largest=False)
