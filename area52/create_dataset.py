@@ -40,7 +40,7 @@ def find_xtc_files(base_path):
 base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/"
 # First, let's find all the .xtc files
 xtc_files = find_xtc_files(base_path)
-print(xtc_files)
+#print(xtc_files)
 
 # Assuming you have a topology file in the same directory or nearby
 # You might need to adjust this path
@@ -50,19 +50,19 @@ topology_file = os.path.join(base_path, "topol.pdb")  # Adjust as needed
 dataset = VAMPNetDataset(
     trajectory_files=xtc_files,
     topology_file=topology_file,
-    lag_time=10,  # Lag time in frames
-    n_neighbors=12,  # Number of neighbors for graph construction
+    lag_time=4,  # Lag time in frames
+    n_neighbors=20,  # Number of neighbors for graph construction
     node_embedding_dim=32,
     gaussian_expansion_dim=16,
     selection="name CA",  # Select only C-alpha atoms
-    stride=2,  # Take every 2nd frame to reduce dataset size
+    stride=10,  # Take every 2nd frame to reduce dataset size
     cache_dir="testdata",
     use_cache=True
 )
 
 # Then use the dataset as usual
 from torch_geometric.loader import DataLoader
-loader = DataLoader(dataset, batch_size=32, shuffle=True)
+loader = DataLoader(dataset, batch_size=1, shuffle=True)
 
 # Get the first batch by using iter and next
 dataiter = iter(loader)

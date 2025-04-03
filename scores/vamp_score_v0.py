@@ -136,121 +136,191 @@ class VAMPScore(nn.Module):
         # The k parameter is not used in this implementation but kept for API compatibility
         return -self.forward(data, data_lagged)
 
-    def _koopman_matrix(self, data: torch.Tensor, data_lagged: torch.Tensor) -> torch.Tensor:
+    def _koopman_matrix(self, data: torch.Tensor, data_lagged: torch.Tensor,
+                        epsilon: float = None, mode: str = None) -> torch.Tensor:
         """
         Compute the Koopman matrix from data and time-lagged data.
 
         Parameters
         ----------
         data : torch.Tensor
-            Instantaneous data
+            Instantaneous data.
         data_lagged : torch.Tensor
-            Time-lagged data
+            Time-lagged data.
+        epsilon : float, optional
+            Cutoff parameter for small eigenvalues. Defaults to self.epsilon if None.
+        mode : str, optional
+            Regularization mode for Hermitian inverse. Defaults to self.mode if None.
 
         Returns
         -------
         torch.Tensor
-            Koopman matrix
+            Koopman matrix.
         """
+        # Use class defaults if not provided
+        if epsilon is None:
+            epsilon = self.epsilon
+        if mode is None:
+            mode = self.mode
+
         # Compute covariances
         c00, c0t, ctt = self._covariances(data, data_lagged, remove_mean=True)
 
         # Compute inverse square roots
-        c00_sqrt_inv = self._sym_inverse(c00, return_sqrt=True)
-        ctt_sqrt_inv = self._sym_inverse(ctt, return_sqrt=True)
+        c00_sqrt_inv = self._sym_inverse(c00, return_sqrt=True, epsilon=epsilon, mode=mode)
+        ctt_sqrt_inv = self._sym_inverse(ctt, return_sqrt=True, epsilon=epsilon, mode=mode)
 
         # Compute Koopman matrix: C00^(-1/2) @ C0t @ Ctt^(-1/2)
-        koopman = self._multi_dot([c00_sqrt_inv, c0t, ctt_sqrt_inv])
+        # Note the transpose at the end to match deeptime's implementation
+        koopman = self._multi_dot([c00_sqrt_inv, c0t, ctt_sqrt_inv]).t()
 
         return koopman
 
     def _covariances(self, data: torch.Tensor, data_lagged: torch.Tensor, remove_mean: bool = True) -> tuple:
         """
-        Compute covariance matrices from data and time-lagged data.
+        Compute instantaneous and time-lagged covariances matrices.
 
         Parameters
         ----------
-        data : torch.Tensor
-            Instantaneous data
-        data_lagged : torch.Tensor
-            Time-lagged data
-        remove_mean : bool, default=True
-            Whether to remove the mean from the data
+        data : torch.Tensor, shape (T, n)
+            Instantaneous data.
+        data_lagged : torch.Tensor, shape (T, n)
+            Time-lagged data.
+        remove_mean: bool, default=True
+            Whether to remove the mean of the data.
 
         Returns
         -------
-        tuple(torch.Tensor, torch.Tensor, torch.Tensor)
-            Tuple of covariance matrices (C00, C0t, Ctt)
+        cov_00 : torch.Tensor, shape (n, n)
+            Auto-covariance matrix of instantaneous data.
+        cov_0t : torch.Tensor, shape (n, n)
+            Cross-covariance matrix of instantaneous and time-lagged data.
+        cov_tt : torch.Tensor, shape (n, n)
+            Auto-covariance matrix of time-lagged data.
         """
-        n_samples = data.shape[0]
+        assert data.shape == data_lagged.shape, "data and data_lagged must be of same shape"
+        batch_size = data.shape[0]
 
-        # Center the data if requested
         if remove_mean:
             data = data - data.mean(dim=0, keepdim=True)
             data_lagged = data_lagged - data_lagged.mean(dim=0, keepdim=True)
 
-        # Compute covariances
-        c00 = data.t() @ data / (n_samples - 1)  # Instantaneous covariance
-        c0t = data.t() @ data_lagged / (n_samples - 1)  # Time-lagged covariance
-        ctt = data_lagged.t() @ data_lagged / (n_samples - 1)  # Time-lagged instantaneous covariance
+        # Calculate the cross-covariance and auto-covariances
+        data_t = data.transpose(0, 1)  # Transpose for matrix multiplication
+        data_lagged_t = data_lagged.transpose(0, 1)
+
+        c00 = 1 / (batch_size - 1) * torch.matmul(data_t, data)  # Instantaneous auto-covariance
+        c0t = 1 / (batch_size - 1) * torch.matmul(data_t, data_lagged)  # Cross-covariance
+        ctt = 1 / (batch_size - 1) * torch.matmul(data_lagged_t, data_lagged)  # Time-lagged auto-covariance
 
         return c00, c0t, ctt
 
-    def _sym_inverse(self, matrix: torch.Tensor, return_sqrt: bool = False) -> torch.Tensor:
+    def _sym_inverse(self, mat, epsilon=None, return_sqrt=False, mode=None):
         """
-        Compute the inverse or inverse square root of a symmetric matrix.
+        Utility function that returns the inverse of a matrix, with the
+        option to return the square root of the inverse matrix.
 
         Parameters
         ----------
-        matrix : torch.Tensor
-            Symmetric matrix to invert
-        return_sqrt : bool, default=False
-            If True, return the inverse square root instead of the inverse
+        mat: torch.Tensor with shape [m,m]
+            Matrix to be inverted.
+        epsilon : float, optional
+            Cutoff for eigenvalues. Defaults to self.epsilon if None.
+        return_sqrt: bool, default=False
+            If True, the square root of the inverse matrix is returned instead
+        mode: str, optional
+            Regularization mode. Defaults to self.mode if None.
+            'trunc': Truncate eigenvalues smaller than epsilon.
+            'regularize': Add epsilon to diagonal before decomposition.
+            'clamp': Clamp eigenvalues to be at least epsilon.
 
         Returns
         -------
-        torch.Tensor
-            Inverse or inverse square root of the matrix
+        x_inv: torch.Tensor with shape [m,m]
+            Inverse of the original matrix
         """
-        # Eigendecomposition
-        eigenvalues, eigenvectors = torch.linalg.eigh(matrix)
+        # Use class defaults if not provided
+        if epsilon is None:
+            epsilon = self.epsilon
+        if mode is None:
+            mode = self.mode
 
-        # Handle small eigenvalues based on mode
-        if self.mode == 'trunc':
-            # Truncate small eigenvalues
-            mask = eigenvalues > self.epsilon
-            eigenvalues = eigenvalues[mask]
-            eigenvectors = eigenvectors[:, mask]
-        else:  # regularize
-            # Add epsilon to eigenvalues for regularization
-            eigenvalues = eigenvalues + self.epsilon
+        # Perform eigendecomposition
+        eigval, eigvec = self._symeig_reg(mat, epsilon, mode)
 
-        # Compute inverse or inverse square root
+        # Build the diagonal matrix with the filtered eigenvalues or square
+        # root of the filtered eigenvalues according to the parameter
         if return_sqrt:
-            inv_eigenvalues = 1.0 / torch.sqrt(eigenvalues)
+            diag = torch.diag(torch.sqrt(1. / eigval))
         else:
-            inv_eigenvalues = 1.0 / eigenvalues
+            diag = torch.diag(1. / eigval)
 
-        # Reconstruct matrix
-        inv_matrix = eigenvectors @ torch.diag(inv_eigenvalues) @ eigenvectors.t()
+        return self._multi_dot([eigvec, diag, eigvec.t()])
 
-        return inv_matrix
-
-    def _multi_dot(self, matrices: List[torch.Tensor]) -> torch.Tensor:
+    def _symeig_reg(self, mat, epsilon=None, mode=None):
         """
-        Compute the product of multiple matrices efficiently.
+        Symmetric eigenvalue decomposition with regularization options.
+        """
+        # Use class defaults if not provided
+        if epsilon is None:
+            epsilon = self.epsilon
+        if mode is None:
+            mode = self.mode
+
+        valid_modes = ('trunc', 'regularize', 'clamp')
+        assert mode in valid_modes, f"Invalid mode {mode}, supported are {valid_modes}"
+
+        if mode == 'regularize':
+            # Add epsilon to diagonal before decomposition
+            identity = torch.eye(mat.shape[0], dtype=mat.dtype, device=mat.device)
+            mat = mat + epsilon * identity
+
+        # Calculate eigenvalues and eigenvectors
+        eigval, eigvec = torch.linalg.eigh(mat)
+
+        # Apply regularization based on mode
+        if mode == 'trunc':
+            # Filter out eigenvalues below threshold
+            mask = eigval > epsilon
+
+            # Important: Check if mask is not empty to avoid dimension issues
+            if not torch.any(mask):
+                # If all eigenvalues would be filtered out, use smallest eigenvalue
+                # and set it to epsilon to avoid empty tensor
+                min_idx = torch.argmin(eigval)
+                mask = torch.zeros_like(eigval, dtype=torch.bool)
+                mask[min_idx] = True
+                eigval = torch.tensor([epsilon], device=eigval.device)
+            else:
+                eigval = eigval[mask]
+
+            eigvec = eigvec[:, mask]  # Select corresponding eigenvectors
+        elif mode == 'regularize':
+            # Take absolute values of eigenvalues
+            eigval = torch.abs(eigval)
+        elif mode == 'clamp':
+            # Clamp eigenvalues to be at least epsilon
+            eigval = torch.clamp_min(eigval, min=epsilon)
+
+        return eigval, eigvec
+
+    def _multi_dot(self, matrices):
+        """
+        Compute the dot product of multiple matrices efficiently.
 
         Parameters
         ----------
-        matrices : List[torch.Tensor]
-            List of matrices to multiply
+        matrices : list of torch.Tensor
+            List of matrices to multiply.
 
         Returns
         -------
         torch.Tensor
-            Product of all matrices
+            Product of all matrices.
         """
-        result = matrices[0]
-        for matrix in matrices[1:]:
-            result = result @ matrix
+        #result = matrices[0]
+        result = torch.linalg.multi_dot(matrices)
+        #for matrix in matrices[1:]:
+        #    result = result @ matrix
         return result
+

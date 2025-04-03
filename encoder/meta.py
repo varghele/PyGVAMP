@@ -86,19 +86,29 @@ class GlobalModel(torch.nn.Module):
 class Meta(torch.nn.Module):
     def __init__(
             self,
+            node_dim: int,
+            edge_dim: int,
+            global_dim: int,
+            num_node_mlp_layers: int,
+            num_edge_mlp_layers: int,
+            num_global_mlp_layers: int,
             hidden_dim: int,
             output_dim: int,
-            num_layers: int,
+            num_meta_layers: int,
             embedding_type: Literal["node", "global", "combined"],
             act: Union[str, Callable] = "relu",
             norm: Optional[str] = "batch_norm",
             dropout: float = 0.0,
     ):
         super().__init__()
-        self.num_layers = num_layers
+        self.num_meta_layers = num_meta_layers
         self.embedding_type = embedding_type
 
         # Store all necessary attributes
+        self.node_dim = node_dim
+        self.edge_dim = edge_dim
+        self.global_dim = global_dim
+        self.num_edge_mlp_layers = num_edge_mlp_layers
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
         self.act = act
@@ -108,10 +118,11 @@ class Meta(torch.nn.Module):
         # Message passing layers
         self.layers = torch.nn.ModuleList([
             MetaLayer(
-                edge_model=EdgeModel(hidden_dim, act, norm, dropout),
-                node_model=NodeModel(hidden_dim, act, norm, dropout),
-                global_model=GlobalModel(hidden_dim, act, norm, dropout)
-            ) for _ in range(num_layers)
+                edge_model=EdgeModel(node_dim, edge_dim, hidden_dim, num_edge_mlp_layers, act, norm, dropout),
+                node_model=NodeModel(node_dim, edge_dim, hidden_dim, num_node_mlp_layers, act, norm, dropout),
+                global_model=GlobalModel(node_dim, edge_dim, global_dim, hidden_dim, num_global_mlp_layers, act, norm,
+                                         dropout)
+            ) for _ in range(num_meta_layers)
         ])
 
         # Determine input dimension for embedding projection
@@ -149,7 +160,8 @@ class Meta(torch.nn.Module):
             batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
 
         # Initialize random global attribute u with the same size as node features
-        u = torch.randn(batch.max() + 1, x.size(1), device=x.device)
+        #u = torch.randn(batch.max() + 1, x.size(1), device=x.device)
+        u = torch.randn(batch.max() + 1, self.global_dim, device=x.device)
 
         # Message passing
         for layer in self.layers:
@@ -177,40 +189,3 @@ class Meta(torch.nn.Module):
         projected_graph_embeddings = self.embedding_projection(graph_embeddings)
 
         return projected_graph_embeddings, (projected_embeddings, x, edge_attr, u)
-
-
-
-# Example usage:
-if __name__ == "__main__":
-    # Model parameters
-    model = MPGNN(
-        node_dim=32,
-        edge_dim=16,
-        global_dim=8,
-        hidden_dim=64,
-        num_layers=3,
-        num_encoder_layers=2,
-        num_edge_mlp_layers=2,
-        num_node_mlp_layers=2,
-        num_global_mlp_layers=2,
-        shift_predictor_hidden_dim=[128, 64, 32],  # Custom architecture for shift predictor
-        shift_predictor_layers=4,
-        embedding_type="combined",  # Use both node and global features
-        act="relu",
-        norm="batch_norm",
-        dropout=0.1
-    )
-
-    # Example data
-    num_nodes = 10
-    num_edges = 15
-    x = torch.randn(num_nodes, 32)
-    edge_index = torch.randint(0, num_nodes, (2, num_edges))
-    edge_attr = torch.randn(num_edges, 16)
-    batch = torch.zeros(num_nodes, dtype=torch.long)
-    batch[5:] = 1  # Second half of nodes belong to second graph
-
-    # Forward pass
-    shifts, (node_embeddings, edge_embeddings, global_embeddings) = model(x, edge_index, edge_attr, batch)
-
-    print(f"Predicted shifts shape: {shifts.shape}")  # [num_nodes, 1]
