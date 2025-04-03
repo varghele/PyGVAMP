@@ -13,7 +13,7 @@ from dataset.VAMPNetDataset import VAMPNetDataset
 from scores.vamp_score_v0 import VAMPScore
 from encoder.meta import Meta, init_weights
 #from encoder.schnet import SchNetEncoder
-from layers.cfconv_new import SchNetEncoder
+from layers.cfconv_newnew import SchNetEncoder
 from vampnet import VAMPNet
 
 
@@ -48,7 +48,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     print(f"Dataset loaded with {len(dataset)} time-lagged pairs")
 
     # Create data loader
-    batch_size = 128  # Small batch size for testing
+    batch_size = 256  # Small batch size for testing
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     # Create the VAMPScore module
@@ -105,7 +105,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     vampnet = VAMPNet(encoder=encoder, vamp_score=vamp_score)
 
     # Set up optimizer
-    learning_rate = 0.0001
+    learning_rate = 0.001
     optimizer = torch.optim.Adam(vampnet.parameters(), lr=learning_rate)
 
     # Check if CUDA is available
