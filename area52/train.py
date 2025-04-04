@@ -78,16 +78,6 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     )"""
 
     # Create SchNet encoder
-    #encoder = SchNetEncoder(
-    #    n_atom_basis=32,#node_feature_dim,
-    #    n_filters=64,
-    #    n_interactions=3,
-    #    n_gaussians=16,#edge_feature_dim,
-    #    output_dim=32,
-    #    activation=nn.Tanh(),
-    #    use_attention=True
-    #)
-
     encoder = SchNetEncoder(
         node_dim=32,#node_dim,
         edge_dim=16,#edge_dim,
