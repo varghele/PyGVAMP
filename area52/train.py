@@ -11,9 +11,8 @@ from tqdm import tqdm
 # Your imports
 from dataset.VAMPNetDataset import VAMPNetDataset
 from scores.vamp_score_v0 import VAMPScore
-from encoder.meta import Meta, init_weights
-#from encoder.schnet import SchNetEncoder
-from layers.cfconv_newnew import SchNetEncoder
+
+from encoder.schnet_wo_embed import SchNetEncoder
 from vampnet import VAMPNet
 
 
@@ -124,7 +123,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         with tqdm(loader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=True) as t:
             for batch in t:
                 # Move batch to device
-                x_t0, x_t1 = to_device(batch, device)
+                data_t0, data_t1 = to_device(batch, device)
 
                 # Zero gradients
                 optimizer.zero_grad()
@@ -132,8 +131,8 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
                 # Forward pass
                 # For Meta model, we need to extract the components
                 # The model expects: forward(self, x, edge_index, edge_attr, batch=None)
-                chi_t0 = vampnet(x_t0)
-                chi_t1 = vampnet(x_t1)
+                chi_t0, _ = vampnet(data_t0)
+                chi_t1, _ = vampnet(data_t1)
 
                 # Calculate VAMP loss
                 loss = vamp_score.loss(chi_t0, chi_t1)
@@ -225,13 +224,15 @@ def custom_forward(self, data):
 
 
 # Replace the forward method of VAMPNet to work with Meta encoder
-VAMPNet.forward = custom_forward
+#VAMPNet.forward = custom_forward
 
 if __name__ == "__main__":
     # Adjust paths as needed
     model, losses = train_vampnet(
-        dataset_path="/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/",
-        topology_file="/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/topol.pdb"
+        #dataset_path="/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/",
+        dataset_path="/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/",
+        #topology_file="/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/topol.pdb"
+        topology_file = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb",
     )
 
     # Save the trained model

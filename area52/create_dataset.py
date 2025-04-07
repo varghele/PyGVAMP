@@ -37,14 +37,16 @@ def find_xtc_files(base_path):
 
 
 # Specify the base directory path
-base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/"
+#base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/"
+base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/"
 # First, let's find all the .xtc files
 xtc_files = find_xtc_files(base_path)
 #print(xtc_files)
 
 # Assuming you have a topology file in the same directory or nearby
 # You might need to adjust this path
-topology_file = os.path.join(base_path, "topol.pdb")  # Adjust as needed
+#topology_file = os.path.join(base_path, "topol.pdb")  # Adjust as needed
+topology_file = os.path.join(base_path, "prot.pdb")  # Adjust as needed
 
 # Initialize the dataset
 dataset = VAMPNetDataset(

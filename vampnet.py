@@ -59,7 +59,7 @@ class VAMPNet(nn.Module):
                 embedded_data.batch = batch
 
             # Pass through encoder
-            return self.encoder(embedded_data)
+            return self.encoder(embedded_data.x, embedded_data.edge_index, embedded_data.edge_attr, embedded_data.batch)
         else:
             # For non-graph tensor data
             if self.embedding_module is not None:
