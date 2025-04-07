@@ -4,7 +4,7 @@ from typing import Optional, Union, Tuple
 from classifier.SoftmaxMLP import SoftmaxMLP
 from torch_geometric.nn.models import MLP
 import os
-from datetime import datetime
+import datetime
 
 
 class VAMPNet(nn.Module):
@@ -18,15 +18,15 @@ class VAMPNet(nn.Module):
                  embedding_hidden_dim=64,
                  embedding_num_layers=2,
                  embedding_dropout=0.0,
-                 embedding_act='relu',
+                 embedding_act='elu',
                  embedding_norm=None,
                  # Classifier options
                  classifier_module=None,
                  n_classes=None,
                  classifier_hidden_dim=64,
-                 classifier_num_layers=2,
+                 classifier_num_layers=1,
                  classifier_dropout=0.0,
-                 classifier_act='relu',
+                 classifier_act='elu',
                  classifier_norm=None,
                  # Other parameters
                  lag_time=1):
@@ -316,7 +316,7 @@ class VAMPNet(nn.Module):
             Additional metadata to save with the model (e.g., training parameters, dataset info)
         """
         # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        os.makedirs(filepath, exist_ok=True)
 
         # Prepare components to save
         save_dict = {

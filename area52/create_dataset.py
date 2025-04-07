@@ -52,12 +52,12 @@ topology_file = os.path.join(base_path, "topol.pdb")  # Adjust as needed
 dataset = VAMPNetDataset(
     trajectory_files=xtc_files,
     topology_file=topology_file,
-    lag_time=20,  # Lag time in frames
+    lag_time=20,  # Lag time in nanoseconds
     n_neighbors=20,  # Number of neighbors for graph construction
     node_embedding_dim=32,
     gaussian_expansion_dim=16,
     selection="name CA",  # Select only C-alpha atoms
-    stride=4,  # Take every 2nd frame to reduce dataset size
+    stride=40,  # Take every 2nd frame to reduce dataset size
     cache_dir="testdata",
     use_cache=True
 )

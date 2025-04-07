@@ -36,7 +36,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         node_embedding_dim=32,
         gaussian_expansion_dim=16,
         selection="name CA",  # Select only C-alpha atoms
-        stride=4,  # Take every 2nd frame to reduce dataset size
+        stride=40,  # Take every 2nd frame to reduce dataset size
         cache_dir="testdata",
         use_cache=True
     )
@@ -57,7 +57,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     embedding_type = "global"  # Use global embeddings for graph-level tasks
 
     # Initialize the Meta model
-    encoder = Meta(
+    """encoder = Meta(
         node_dim=32,
         edge_dim=16,
         global_dim=64,
@@ -71,10 +71,10 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         act="elu",
         norm=None,#"batch_norm",
         dropout=0.0
-    )
+    )"""
 
     # Create SchNet encoder
-    """encoder = SchNetEncoder(
+    encoder = SchNetEncoder(
         node_dim=32,#node_dim,
         edge_dim=16,#edge_dim,
         hidden_dim=16,
@@ -82,13 +82,13 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         n_interactions=3,
         activation='tanh',
         use_attention=True
-    )"""
+    )
 
     # Apply weight initialization
     #encoder.apply(init_weights)
 
     # Create the VAMPNet model
-    vampnet = VAMPNet(encoder=encoder, vamp_score=vamp_score, n_classes=4)
+    vampnet = VAMPNet(encoder=encoder, vamp_score=vamp_score, n_classes=4, lag_time=20)
 
     # Set up optimizer
     learning_rate = 0.005
@@ -107,7 +107,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         return (x_t0.to(device), x_t1.to(device))
 
     # Train for a few epochs to check if it's working
-    n_epochs = 300
+    n_epochs = 1
     print(f"Starting training for {n_epochs} epochs")
 
     # Train the model
@@ -168,6 +168,9 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         smoothing=5,  # Apply smoothing with window size 5
         title="VAMPNet Training VAMP Scores"
     )
+
+    # Save the model
+    vampnet.save(filepath="mdl_data")
 
     # Test the model on a sample from the dataset
     print("Testing model on a sample batch...")
