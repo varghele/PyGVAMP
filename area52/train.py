@@ -1,19 +1,15 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch_scatter import scatter_add, scatter_mean
 import matplotlib.pyplot as plt
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import MetaLayer, global_mean_pool
-from typing import Union, List, Callable, Optional, Literal
 from tqdm import tqdm
 
 # Your imports
+from encoder.meta import Meta
 from dataset.VAMPNetDataset import VAMPNetDataset
 from scores.vamp_score_v0 import VAMPScore
-
 from encoder.schnet_wo_embed import SchNetEncoder
 from vampnet import VAMPNet
+from utils.train_utils import plot_vamp_scores
 
 
 def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
@@ -47,7 +43,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     print(f"Dataset loaded with {len(dataset)} time-lagged pairs")
 
     # Create data loader
-    batch_size = 256  # Small batch size for testing
+    batch_size = 64  # Small batch size for testing
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     # Create the VAMPScore module
@@ -60,7 +56,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     embedding_type = "global"  # Use global embeddings for graph-level tasks
 
     # Initialize the Meta model
-    """encoder = Meta(
+    encoder = Meta(
         node_dim=32,
         edge_dim=16,
         global_dim=64,
@@ -74,10 +70,10 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         act="elu",
         norm=None,#"batch_norm",
         dropout=0.0
-    )"""
+    )
 
     # Create SchNet encoder
-    encoder = SchNetEncoder(
+    """encoder = SchNetEncoder(
         node_dim=32,#node_dim,
         edge_dim=16,#edge_dim,
         hidden_dim=16,
@@ -85,7 +81,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         n_interactions=2,
         activation='tanh',
         use_attention=True
-    )
+    )"""
 
     # Apply weight initialization
     #encoder.apply(init_weights)
@@ -114,10 +110,10 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     print(f"Starting training for {n_epochs} epochs")
 
     # Train the model
-    losses = []
+    vamp_scores = []
 
     for epoch in range(n_epochs):
-        epoch_loss = 0.0
+        epoch_score_sum = 0.0
         n_batches = 0
 
         with tqdm(loader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=True) as t:
@@ -134,8 +130,11 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
                 chi_t0, _ = vampnet(data_t0)
                 chi_t1, _ = vampnet(data_t1)
 
-                # Calculate VAMP loss
+                # Calculate VAMP loss (negative VAMP score)
                 loss = vamp_score.loss(chi_t0, chi_t1)
+
+                # Get positive VAMP score
+                vamp_score_epoch = -loss.item()
 
                 # Check for NaN loss
                 if torch.isnan(loss).any():
@@ -150,27 +149,25 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
 
                 optimizer.step()
 
-                epoch_loss += loss.item()
+                epoch_score_sum += vamp_score_epoch
                 n_batches += 1
 
-        # Calculate average loss for the epoch
-        avg_epoch_loss = epoch_loss / max(1, n_batches)
-        losses.append(avg_epoch_loss)
-        print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {avg_epoch_loss:.4f}")
+            # Calculate average VAMP score for the epoch
+            avg_epoch_score = epoch_score_sum / max(1, n_batches)
+            vamp_scores.append(avg_epoch_score)
+        print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {avg_epoch_score:.4f}")
 
         # Print progress
         if epoch % 5 == 0 or epoch == n_epochs - 1:
-            print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {avg_epoch_loss:.4f}")
+            print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {avg_epoch_score:.4f}")
 
-    # Plot the loss curve
-    plt.figure(figsize=(10, 6))
-    plt.plot(losses)
-    plt.title("VAMPNet Training Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.grid(True)
-    plt.savefig("vampnet_training_loss.png")
-    plt.show()
+    # Plot the VAMP score curve
+    plot_vamp_scores(
+        vamp_scores,
+        save_path="vampnet_training_scores.png",
+        smoothing=5,  # Apply smoothing with window size 5
+        title="VAMPNet Training VAMP Scores"
+    )
 
     # Test the model on a sample from the dataset
     print("Testing model on a sample batch...")
@@ -197,34 +194,6 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
 
     return vampnet, losses
 
-
-# Modified forward function for VAMPNet to work with Meta encoder
-def custom_forward(self, data):
-    """Custom forward function for VAMPNet with Meta encoder"""
-    if hasattr(data, 'x') and hasattr(data, 'edge_index'):
-        x = data.x
-        edge_index = data.edge_index
-        edge_attr = data.edge_attr
-        batch = data.batch if hasattr(data, 'batch') else None
-
-        # Apply embedding module if provided
-        if self.embedding_module is not None:
-            # Apply embeddings (similar to original implementation)
-            pass
-
-        # For Meta model, return only the graph-level embeddings
-        graph_embeddings, _ = self.encoder(x, edge_index, edge_attr, batch)
-        return graph_embeddings
-    else:
-        # For non-graph data, use standard approach
-        if self.embedding_module is not None:
-            return self.encoder(self.embedding_module(data))
-        else:
-            return self.encoder(data)
-
-
-# Replace the forward method of VAMPNet to work with Meta encoder
-#VAMPNet.forward = custom_forward
 
 if __name__ == "__main__":
     # Adjust paths as needed
