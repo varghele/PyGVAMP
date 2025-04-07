@@ -191,6 +191,9 @@ class SchNetEncoder(nn.Module):
     ):
         super(SchNetEncoder, self).__init__()
 
+        self.node_dim = node_dim
+        self.output_dim = output_dim
+
         # Interaction blocks
         self.interactions = nn.ModuleList([
             GCNInteraction(

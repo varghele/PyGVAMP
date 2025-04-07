@@ -2,6 +2,7 @@ import torch
 import matplotlib.pyplot as plt
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
+from torch_geometric.nn.models import MLP
 
 # Your imports
 from encoder.meta import Meta
@@ -9,7 +10,7 @@ from dataset.VAMPNetDataset import VAMPNetDataset
 from scores.vamp_score_v0 import VAMPScore
 from encoder.schnet_wo_embed import SchNetEncoder
 from vampnet import VAMPNet
-from utils.train_utils import plot_vamp_scores
+from utils.plotting import plot_vamp_scores
 
 
 def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
@@ -43,7 +44,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     print(f"Dataset loaded with {len(dataset)} time-lagged pairs")
 
     # Create data loader
-    batch_size = 64  # Small batch size for testing
+    batch_size = 256  # Small batch size for testing
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     # Create the VAMPScore module
@@ -56,7 +57,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     embedding_type = "global"  # Use global embeddings for graph-level tasks
 
     # Initialize the Meta model
-    encoder = Meta(
+    """encoder = Meta(
         node_dim=32,
         edge_dim=16,
         global_dim=64,
@@ -70,24 +71,24 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         act="elu",
         norm=None,#"batch_norm",
         dropout=0.0
-    )
+    )"""
 
     # Create SchNet encoder
-    """encoder = SchNetEncoder(
+    encoder = SchNetEncoder(
         node_dim=32,#node_dim,
         edge_dim=16,#edge_dim,
         hidden_dim=16,
         output_dim=32,
-        n_interactions=2,
+        n_interactions=3,
         activation='tanh',
         use_attention=True
-    )"""
+    )
 
     # Apply weight initialization
     #encoder.apply(init_weights)
 
     # Create the VAMPNet model
-    vampnet = VAMPNet(encoder=encoder, vamp_score=vamp_score)
+    vampnet = VAMPNet(encoder=encoder, vamp_score=vamp_score, n_classes=4)
 
     # Set up optimizer
     learning_rate = 0.001
@@ -198,10 +199,10 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
 if __name__ == "__main__":
     # Adjust paths as needed
     model, losses = train_vampnet(
-        #dataset_path="/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/",
-        dataset_path="/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/",
-        #topology_file="/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/topol.pdb"
-        topology_file = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb",
+        dataset_path="/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/",
+        #dataset_path="/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/",
+        topology_file="/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/topol.pdb"
+        #topology_file = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb",
     )
 
     # Save the trained model
