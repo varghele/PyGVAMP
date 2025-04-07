@@ -14,7 +14,7 @@ class VAMPNetDataset(Dataset):
             self,
             trajectory_files: List[str],
             topology_file: str,
-            lag_time: int = 1,
+            lag_time: float = 1,
             n_neighbors: int = 10,  # M nearest neighbors
             node_embedding_dim: int = 16,
             gaussian_expansion_dim: int = 16,  # K in the paper
@@ -33,7 +33,7 @@ class VAMPNetDataset(Dataset):
         Args:
             trajectory_files: List of MD trajectory files
             topology_file: Topology file for the trajectories
-            lag_time: Time lag between pairs (in frames)
+            lag_time: Time lag between pairs (in ns)
             n_neighbors: Number of nearest neighbors for graph construction (M in the paper)
             node_embedding_dim: Dimension of random node features
             gaussian_expansion_dim: Dimension of Gaussian expansion (K in the paper)
@@ -73,6 +73,9 @@ class VAMPNetDataset(Dataset):
             cache_loaded = self._load_from_cache()
 
         if not cache_loaded:
+            # Check if lag time is compatible with trajectory timestep and stride
+            self._infer_timestep()
+
             # Process trajectories and create graphs
             self._process_trajectories()
 
@@ -379,6 +382,69 @@ class VAMPNetDataset(Dataset):
         except Exception as e:
             print(f"Error loading dataset from cache: {str(e)}")
             return False
+
+    def _infer_timestep(self) -> float:
+        """
+        Infer the trajectory timestep in picoseconds and check lag time compatibility.
+
+        This method determines the timestep of the trajectory and verifies that
+        the requested lag time (in ns) can be achieved with the current stride.
+
+        Returns:
+        -------
+        float
+            Timestep in picoseconds
+
+        Raises:
+        -------
+        ValueError
+            If the timestep can't be determined or if the lag time can't be achieved
+            with current stride.
+        """
+        if not self.trajectory_files:
+            raise ValueError("No trajectory files provided")
+
+        # Try direct iterload approach (most reliable)
+        try:
+            # Load first few frames using iterload
+            traj_iterator = md.iterload(self.trajectory_files[0], top=self.topology_file, chunk=2)
+            first_chunk = next(traj_iterator)
+
+            if len(first_chunk.time) < 2:
+                raise ValueError("Trajectory must have at least 2 frames to infer timestep")
+
+            # Calculate timestep from time differences
+            timestep = first_chunk.time[1] - first_chunk.time[0]
+        except Exception as e:
+            # If time information is not available, try alternative methods
+            print(f"Warning: Could not determine timestep from trajectory time data: {str(e)}")
+            timestep = None
+
+        # Convert lag_time from ns to ps for comparison
+        lag_time_ps = self.lag_time * 1000.0
+
+        # Calculate effective timestep with stride
+        effective_timestep = timestep * self.stride
+
+        # Check if lag time is achievable with the effective timestep
+        if lag_time_ps % effective_timestep != 0:
+            closest_achievable = round(lag_time_ps / effective_timestep) * effective_timestep
+            raise ValueError(
+                f"Requested lag time of {self.lag_time} ns ({lag_time_ps} ps) cannot be achieved "
+                f"with timestep of {timestep} ps and stride of {self.stride}. "
+                f"The effective timestep is {effective_timestep} ps. "
+                f"Consider using a lag time of {closest_achievable / 1000.0:.3f} ns instead, "
+                f"or adjust the stride to {int(lag_time_ps / timestep)}."
+            )
+
+        # Calculate lag time in frames
+        self.lag_frames = int(lag_time_ps / effective_timestep)
+
+        print(f"Trajectory timestep: {timestep:.3f} ps")
+        print(f"Effective timestep with stride {self.stride}: {effective_timestep:.3f} ps")
+        print(f"Lag time: {self.lag_time:.3f} ns ({lag_time_ps} ps, {self.lag_frames} frames)")
+
+        return timestep
 
     @classmethod
     def from_cache(cls, cache_file, node_embedding_dim=16):

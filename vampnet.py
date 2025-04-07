@@ -3,6 +3,9 @@ import torch.nn as nn
 from typing import Optional, Union, Tuple
 from classifier.SoftmaxMLP import SoftmaxMLP
 from torch_geometric.nn.models import MLP
+import os
+from datetime import datetime
+
 
 class VAMPNet(nn.Module):
     def __init__(self,
@@ -69,8 +72,8 @@ class VAMPNet(nn.Module):
         classifier_norm : str or callable, default=None
             Normalization for built-in classifier
 
-        lag_time : int, default=1
-            Lag time for time-lagged datasets
+        lag_time : float, default=1
+            Lag time in ns, only a logging parameter
         """
         super(VAMPNet, self).__init__()
 
@@ -296,3 +299,207 @@ class VAMPNet(nn.Module):
                 print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {avg_epoch_loss:.4f}")
 
         return losses
+
+    def save(self, filepath, save_optimizer=False, optimizer=None, metadata=None):
+        """
+        Save the VAMPNet model to disk, including all components and optional metadata.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to save the model
+        save_optimizer : bool, default=False
+            Whether to save optimizer state
+        optimizer : torch.optim.Optimizer, optional
+            Optimizer to save if save_optimizer is True
+        metadata : dict, optional
+            Additional metadata to save with the model (e.g., training parameters, dataset info)
+        """
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+        # Prepare components to save
+        save_dict = {
+            'model_state_dict': self.state_dict(),
+            'encoder_type': type(self.encoder).__name__,
+            'encoder_params': getattr(self.encoder, 'params', {}),
+            'vamp_score_config': {
+                'epsilon': getattr(self.vamp_score, 'epsilon', 1e-6),
+                'mode': getattr(self.vamp_score, 'mode', 'regularize')
+            },
+            'has_embedding': self.embedding_module is not None,
+            'has_classifier': self.classifier_module is not None,
+            'lag_time': self.lag_time,
+            'timestamp': datetime.datetime.now().isoformat()
+        }
+
+        # Add optimizer state if requested
+        if save_optimizer and optimizer is not None:
+            save_dict['optimizer_state_dict'] = optimizer.state_dict()
+            save_dict['optimizer_type'] = type(optimizer).__name__
+
+        # Add metadata
+        if metadata is not None:
+            save_dict['metadata'] = metadata
+
+        # Save architecture-specific details
+        if self.embedding_module is not None:
+            save_dict['embedding_type'] = type(self.embedding_module).__name__
+
+            # Save MLP configuration if using standard MLP
+            if isinstance(self.embedding_module, MLP):
+                save_dict['embedding_config'] = {
+                    'in_channels': self.embedding_module.in_channels,
+                    'hidden_channels': self.embedding_module.hidden_channels,
+                    'out_channels': self.embedding_module.out_channels,
+                    'num_layers': self.embedding_module.num_layers,
+                }
+
+        if self.classifier_module is not None:
+            save_dict['classifier_type'] = type(self.classifier_module).__name__
+
+            # Save SoftmaxMLP configuration if using our custom SoftmaxMLP
+            if isinstance(self.classifier_module, SoftmaxMLP):
+                save_dict['classifier_config'] = {
+                    'in_channels': getattr(self.classifier_module, 'in_channels', None),
+                    'hidden_channels': getattr(self.classifier_module.mlp, 'hidden_channels', None)
+                    if getattr(self.classifier_module, 'mlp', None) else None,
+                    'out_channels': self.classifier_module.final_layer.out_features,
+                    'num_layers': getattr(self.classifier_module, 'num_layers', None),
+                }
+
+        # Save to file
+        torch.save(save_dict, filepath)
+        print(f"Model saved to {filepath}")
+
+    @classmethod
+    def load(cls, filepath, encoder_class, vamp_score_class,
+             embedding_class=None, classifier_class=None, map_location=None):
+        """
+        Load a VAMPNet model from disk.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the saved model
+        encoder_class : class
+            Class of the encoder network
+        vamp_score_class : class
+            Class of the VAMP score module
+        embedding_class : class, optional
+            Class of the embedding module if used
+        classifier_class : class, optional
+            Class of the classifier module if used
+        map_location : str or torch.device, optional
+            Device to load the model to
+
+        Returns
+        -------
+        tuple
+            (loaded_model, metadata)
+        """
+        # Load saved dictionary
+        checkpoint = torch.load(filepath, map_location=map_location)
+
+        # Extract metadata
+        metadata = checkpoint.get('metadata', {})
+
+        # Create VAMP score module
+        vamp_score = vamp_score_class(
+            epsilon=checkpoint['vamp_score_config'].get('epsilon', 1e-6),
+            mode=checkpoint['vamp_score_config'].get('mode', 'regularize')
+        )
+
+        # Create encoder
+        encoder_params = checkpoint.get('encoder_params', {})
+        encoder = encoder_class(**encoder_params)
+
+        # Create embedding module if needed
+        embedding_module = None
+        if checkpoint['has_embedding']:
+            if 'embedding_config' in checkpoint and embedding_class == MLP:
+                # Create MLP embedding with saved config
+                config = checkpoint['embedding_config']
+                embedding_module = embedding_class(
+                    in_channels=config['in_channels'],
+                    hidden_channels=config['hidden_channels'],
+                    out_channels=config['out_channels'],
+                    num_layers=config['num_layers']
+                )
+            elif embedding_class is not None:
+                # Create custom embedding with default params
+                embedding_module = embedding_class()
+
+        # Create classifier module if needed
+        classifier_module = None
+        if checkpoint['has_classifier']:
+            if 'classifier_config' in checkpoint and classifier_class == SoftmaxMLP:
+                # Create SoftmaxMLP classifier with saved config
+                config = checkpoint['classifier_config']
+                classifier_module = classifier_class(
+                    in_channels=config['in_channels'],
+                    hidden_channels=config['hidden_channels'],
+                    out_channels=config['out_channels'],
+                    num_layers=config.get('num_layers', 2)
+                )
+            elif classifier_class is not None:
+                # Create custom classifier with default params
+                classifier_module = classifier_class()
+
+        # Create VAMPNet model
+        model = cls(
+            encoder=encoder,
+            vamp_score=vamp_score,
+            embedding_module=embedding_module,
+            classifier_module=classifier_module,
+            lag_time=checkpoint['lag_time']
+        )
+
+        # Load state dict
+        model.load_state_dict(checkpoint['model_state_dict'])
+
+        return model, metadata
+
+    def get_config(self):
+        """
+        Get the configuration of the VAMPNet model for reproducibility.
+
+        Returns
+        -------
+        dict
+            Configuration dictionary
+        """
+        config = {
+            'encoder_type': type(self.encoder).__name__,
+            'vamp_score_type': type(self.vamp_score).__name__,
+            'embedding_type': type(self.embedding_module).__name__ if self.embedding_module else None,
+            'classifier_type': type(self.classifier_module).__name__ if self.classifier_module else None,
+            'lag_time': self.lag_time
+        }
+
+        # Add encoder details
+        if hasattr(self.encoder, 'get_config'):
+            config['encoder_config'] = self.encoder.get_config()
+        elif hasattr(self.encoder, 'params'):
+            config['encoder_config'] = self.encoder.params
+
+        # Add embedding details
+        if isinstance(self.embedding_module, MLP):
+            config['embedding_config'] = {
+                'in_channels': self.embedding_module.in_channels,
+                'hidden_channels': self.embedding_module.hidden_channels,
+                'out_channels': self.embedding_module.out_channels,
+                'num_layers': self.embedding_module.num_layers,
+            }
+
+        # Add classifier details
+        if isinstance(self.classifier_module, SoftmaxMLP):
+            config['classifier_config'] = {
+                'in_channels': getattr(self.classifier_module, 'in_channels', None),
+                'hidden_channels': getattr(self.classifier_module.mlp, 'hidden_channels', None)
+                if getattr(self.classifier_module, 'mlp', None) else None,
+                'out_channels': self.classifier_module.final_layer.out_features,
+                'num_layers': getattr(self.classifier_module, 'num_layers', None),
+            }
+
+        return config

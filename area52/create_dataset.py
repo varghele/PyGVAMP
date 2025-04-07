@@ -37,27 +37,27 @@ def find_xtc_files(base_path):
 
 
 # Specify the base directory path
-#base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/"
-base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/"
+base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/"
+#base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/"
 # First, let's find all the .xtc files
 xtc_files = find_xtc_files(base_path)
 #print(xtc_files)
 
 # Assuming you have a topology file in the same directory or nearby
 # You might need to adjust this path
-#topology_file = os.path.join(base_path, "topol.pdb")  # Adjust as needed
-topology_file = os.path.join(base_path, "prot.pdb")  # Adjust as needed
+topology_file = os.path.join(base_path, "topol.pdb")  # Adjust as needed
+#topology_file = os.path.join(base_path, "prot.pdb")  # Adjust as needed
 
 # Initialize the dataset
 dataset = VAMPNetDataset(
     trajectory_files=xtc_files,
     topology_file=topology_file,
-    lag_time=4,  # Lag time in frames
+    lag_time=20,  # Lag time in frames
     n_neighbors=20,  # Number of neighbors for graph construction
     node_embedding_dim=32,
     gaussian_expansion_dim=16,
     selection="name CA",  # Select only C-alpha atoms
-    stride=10,  # Take every 2nd frame to reduce dataset size
+    stride=4,  # Take every 2nd frame to reduce dataset size
     cache_dir="testdata",
     use_cache=True
 )

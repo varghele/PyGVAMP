@@ -31,12 +31,12 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     dataset = VAMPNetDataset(
         trajectory_files=xtc_files,
         topology_file=topology_file,
-        lag_time=4,  # Lag time in frames
+        lag_time=20,  # Lag time in ns
         n_neighbors=20,  # Number of neighbors for graph construction
         node_embedding_dim=32,
         gaussian_expansion_dim=16,
         selection="name CA",  # Select only C-alpha atoms
-        stride=10,  # Take every 2nd frame to reduce dataset size
+        stride=4,  # Take every 2nd frame to reduce dataset size
         cache_dir="testdata",
         use_cache=True
     )
@@ -57,7 +57,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     embedding_type = "global"  # Use global embeddings for graph-level tasks
 
     # Initialize the Meta model
-    """encoder = Meta(
+    encoder = Meta(
         node_dim=32,
         edge_dim=16,
         global_dim=64,
@@ -71,10 +71,10 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         act="elu",
         norm=None,#"batch_norm",
         dropout=0.0
-    )"""
+    )
 
     # Create SchNet encoder
-    encoder = SchNetEncoder(
+    """encoder = SchNetEncoder(
         node_dim=32,#node_dim,
         edge_dim=16,#edge_dim,
         hidden_dim=16,
@@ -82,7 +82,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         n_interactions=3,
         activation='tanh',
         use_attention=True
-    )
+    )"""
 
     # Apply weight initialization
     #encoder.apply(init_weights)
@@ -91,8 +91,8 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     vampnet = VAMPNet(encoder=encoder, vamp_score=vamp_score, n_classes=4)
 
     # Set up optimizer
-    learning_rate = 0.001
-    optimizer = torch.optim.Adam(vampnet.parameters(), lr=learning_rate)
+    learning_rate = 0.005
+    optimizer = torch.optim.AdamW(vampnet.parameters(), lr=learning_rate)
 
     # Check if CUDA is available
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -126,7 +126,6 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
                 optimizer.zero_grad()
 
                 # Forward pass
-                # For Meta model, we need to extract the components
                 # The model expects: forward(self, x, edge_index, edge_attr, batch=None)
                 chi_t0, _ = vampnet(data_t0)
                 chi_t1, _ = vampnet(data_t1)
@@ -156,7 +155,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
             # Calculate average VAMP score for the epoch
             avg_epoch_score = epoch_score_sum / max(1, n_batches)
             vamp_scores.append(avg_epoch_score)
-        print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {avg_epoch_score:.4f}")
+        print(f"Epoch {epoch + 1}/{n_epochs}, VAMP Score: {avg_epoch_score:.4f}")
 
         # Print progress
         if epoch % 5 == 0 or epoch == n_epochs - 1:
