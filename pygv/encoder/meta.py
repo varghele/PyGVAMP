@@ -4,8 +4,8 @@ from torch_geometric.nn import MetaLayer, MLP
 try:
     from torch_scatter import scatter_mean, scatter_add
 except ImportError:
-    from utils.alternative_torch_scatter import scatter_mean
-from typing import Optional, Union, Callable, Literal, List
+    from pygv.utils.alternative_torch_scatter import scatter_mean
+from typing import Optional, Union, Callable, Literal
 
 
 def init_weights(m):

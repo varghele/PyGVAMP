@@ -1,4 +1,4 @@
-from dataset.VAMPNetDataset import VAMPNetDataset
+from pygv.dataset.VAMPNetDataset import VAMPNetDataset
 import os
 import glob
 import torch
@@ -54,12 +54,12 @@ dataset = VAMPNetDataset(
     topology_file=topology_file,
     lag_time=20,  # Lag time in nanoseconds
     n_neighbors=20,  # Number of neighbors for graph construction
-    node_embedding_dim=32,
-    gaussian_expansion_dim=16,
+    node_embedding_dim=16,
+    gaussian_expansion_dim=8,
     selection="name CA",  # Select only C-alpha atoms
     stride=40,  # Take every 2nd frame to reduce dataset size
     cache_dir="testdata",
-    use_cache=True
+    use_cache=False
 )
 
 # Then use the dataset as usual

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from typing import Optional, Union, Tuple
-from classifier.SoftmaxMLP import SoftmaxMLP
+from typing import Union, Tuple
+from pygv.classifier.SoftmaxMLP import SoftmaxMLP
 from torch_geometric.nn.models import MLP
 import os
 import datetime
@@ -316,7 +316,7 @@ class VAMPNet(nn.Module):
             Additional metadata to save with the model (e.g., training parameters, dataset info)
         """
         # Create directory if it doesn't exist
-        os.makedirs(filepath, exist_ok=True)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
         # Prepare components to save
         save_dict = {
@@ -355,18 +355,37 @@ class VAMPNet(nn.Module):
                     'num_layers': self.embedding_module.num_layers,
                 }
 
-        if self.classifier_module is not None:
-            save_dict['classifier_type'] = type(self.classifier_module).__name__
+        if isinstance(self.classifier_module, SoftmaxMLP):
+            # For SoftmaxMLP
+            # Check if mlp exists and get hidden_channels if it does
+            mlp_hidden_channels = None
+            if hasattr(self.classifier_module, 'mlp') and self.classifier_module.mlp is not None:
+                mlp_hidden_channels = getattr(self.classifier_module.mlp, 'hidden_channels', None)
 
-            # Save SoftmaxMLP configuration if using our custom SoftmaxMLP
-            if isinstance(self.classifier_module, SoftmaxMLP):
-                save_dict['classifier_config'] = {
-                    'in_channels': getattr(self.classifier_module, 'in_channels', None),
-                    'hidden_channels': getattr(self.classifier_module.mlp, 'hidden_channels', None)
-                    if getattr(self.classifier_module, 'mlp', None) else None,
-                    'out_channels': self.classifier_module.final_layer.out_features,
-                    'num_layers': getattr(self.classifier_module, 'num_layers', None),
-                }
+            # Get output dimension from final layer
+            # The Sequential contains Linear + Softmax, so we need to access the Linear part
+            if isinstance(self.classifier_module.final_layer, nn.Sequential):
+                # Find the Linear layer in the Sequential
+                for module in self.classifier_module.final_layer:
+                    if isinstance(module, nn.Linear):
+                        out_channels = module.out_features
+                        break
+                else:
+                    # Fallback if no Linear layer found
+                    out_channels = None
+            elif isinstance(self.classifier_module.final_layer, nn.Linear):
+                # Direct Linear layer
+                out_channels = self.classifier_module.final_layer.out_features
+            else:
+                out_channels = None
+
+            # Create config dictionary
+            save_dict['classifier_config'] = {
+                'in_channels': getattr(self.classifier_module, 'in_channels', None),
+                'hidden_channels': mlp_hidden_channels,
+                'out_channels': out_channels,
+                'num_layers': getattr(self.classifier_module, 'num_layers', None),
+            }
 
         # Save to file
         torch.save(save_dict, filepath)

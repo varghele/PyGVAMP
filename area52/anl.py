@@ -1,10 +1,11 @@
 import os
 import torch
 import numpy as np
-import matplotlib.pyplot as plt
-from typing import List, Tuple
+from typing import List
 from torch_geometric.loader import DataLoader
-
+from pygv.utils.analysis import analyze_vampnet_outputs
+from pygv.utils.plotting import plot_state_populations, plot_state_evolution, plot_transition_probabilities
+from pygv.utils.ck import run_ck_analysis
 
 def run_complete_vampnet_analysis(
         model,
@@ -95,14 +96,14 @@ def run_complete_vampnet_analysis(
     )
 
     # Step 4: Plot state assignments and transitions
-    print(f"\n{'=' * 40}\nAnalyzing state assignments\n{'=' * 40}")
+    """print(f"\n{'=' * 40}\nAnalyzing state assignments\n{'=' * 40}")
     plot_state_assignments(
         probs=probs,
         save_dir=states_dir,
         protein_name=protein_name,
         timestep=timestep,
         time_unit=time_unit
-    )
+    )"""
 
     # Step 5: Calculate transition matrices for different lag times
     print(f"\n{'=' * 40}\nCalculating transition matrices\n{'=' * 40}")

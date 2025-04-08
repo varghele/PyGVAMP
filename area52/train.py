@@ -1,16 +1,13 @@
 import torch
-import matplotlib.pyplot as plt
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
-from torch_geometric.nn.models import MLP
 
 # Your imports
-from encoder.meta import Meta
-from dataset.VAMPNetDataset import VAMPNetDataset
-from scores.vamp_score_v0 import VAMPScore
-from encoder.schnet_wo_embed import SchNetEncoder
-from vampnet import VAMPNet
-from utils.plotting import plot_vamp_scores
+from pygv.dataset.VAMPNetDataset import VAMPNetDataset
+from pygv.scores.vamp_score_v0 import VAMPScore
+from pygv.encoder.schnet_wo_embed import SchNetEncoder
+from pygv.vampnet import VAMPNet
+from pygv.utils.plotting import plot_vamp_scores
 
 
 def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
@@ -75,10 +72,10 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
 
     # Create SchNet encoder
     encoder = SchNetEncoder(
-        node_dim=32,#node_dim,
-        edge_dim=16,#edge_dim,
+        node_dim=16,#node_dim,
+        edge_dim=8,#edge_dim,
         hidden_dim=16,
-        output_dim=32,
+        output_dim=16,
         n_interactions=3,
         activation='tanh',
         use_attention=True
@@ -107,7 +104,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         return (x_t0.to(device), x_t1.to(device))
 
     # Train for a few epochs to check if it's working
-    n_epochs = 1
+    n_epochs = 100
     print(f"Starting training for {n_epochs} epochs")
 
     # Train the model
@@ -170,7 +167,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     )
 
     # Save the model
-    vampnet.save(filepath="mdl_data")
+    vampnet.save(filepath="mdl_save/mdl_data.pt")
 
     # Test the model on a sample from the dataset
     print("Testing model on a sample batch...")
@@ -179,8 +176,8 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
 
     with torch.no_grad():
         # Get embeddings
-        emb_t0 = vampnet(sample_t0)
-        emb_t1 = vampnet(sample_t1)
+        emb_t0, _ = vampnet(sample_t0)
+        emb_t1, _ = vampnet(sample_t1)
 
         # Calculate VAMP score
         score = vamp_score(emb_t0, emb_t1)
@@ -195,7 +192,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     print(f"T1 embeddings mean: {emb_t1.mean().item():.4f}")
     print(f"T1 embeddings std: {emb_t1.std().item():.4f}")
 
-    return vampnet, losses
+    return vampnet, vamp_scores
 
 
 if __name__ == "__main__":

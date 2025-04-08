@@ -1,8 +1,7 @@
 import os
-import torch
 import json
 import datetime
-from vampnet import VAMPNet
+from pygv.vampnet import VAMPNet
 
 def save_run_info(model, train_config, dataset_info, save_dir, run_id=None):
     """
