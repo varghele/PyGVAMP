@@ -176,10 +176,11 @@ class VAMPNetDataset(Dataset):
 
     def _create_time_lagged_pairs(self):
         """Create time-lagged pairs of frame indices"""
-        self.t0_indices = list(range(self.n_frames - self.lag_time))
-        self.t1_indices = list(range(self.lag_time, self.n_frames))
+        self.t0_indices = list(range(self.n_frames - self.lag_frames))
+        self.t1_indices = list(range(self.lag_frames, self.n_frames))
 
-        print(f"Created {len(self.t0_indices)} time-lagged pairs with lag time {self.lag_time}")
+        print(f"Created {len(self.t0_indices)} time-lagged pairs with lag time {self.lag_time} and "
+              f"{self.lag_frames} lag frames. 1 lag frame == {self.lag_time/self.lag_frames} ns")
 
     def _compute_gaussian_expanded_distances(self, distances):
         """

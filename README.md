@@ -9,9 +9,11 @@ conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=
 pip install torch_geometric
 pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -f https://data.pyg.org/whl/torch-2.5.0+cu124.html
 pip install mdtraj
+#On windows, or on pip failure
+conda install -c conda-forge mdtraj
+pip install joblib
 pip install matplotlib
 pip install pandas
-pip install joblib
 ```
 Path needs to be exported!
 export PYTHONPATH=/home/iwe81/PycharmProjects/PyGVAMP:$PYTHONPATH

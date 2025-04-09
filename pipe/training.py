@@ -18,6 +18,7 @@ from torch_geometric.loader import DataLoader
 from datetime import datetime
 
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
+from pygv.utils.pipe_utils import find_trajectory_files
 
 from pygv.vampnet import VAMPNet
 from pygv.encoder.schnet_wo_embed import SchNetEncoderNoEmbed
@@ -58,22 +59,29 @@ def setup_output_directory(args):
 def save_config(args, paths):
     """Save configuration to a text file"""
     with open(paths['config'], 'w') as f:
-        for group in args._action_groups:
-            f.write(f"# {group.title}\n")
-            for action in group._group_actions:
-                value = getattr(args, action.dest)
-                f.write(f"{action.dest} = {value}\n")
-            f.write("\n")
+        f.write("# Configuration\n\n")
+
+        # Convert args to a dictionary
+        args_dict = vars(args)
+
+        # Write each key-value pair
+        for key, value in sorted(args_dict.items()):
+            f.write(f"{key} = {value}\n")
 
 
 def create_dataset_and_loader(args):
     """Create dataset and data loader"""
+    # Getting all trajectories in traj directory
+    traj_files = find_trajectory_files(args.traj_dir)
+
     print("Creating dataset...")
     dataset = VAMPNetDataset(
-        trajectory_files=args.traj,
+        trajectory_files=traj_files,
         topology_file=args.top,
         lag_time=args.lag_time,
         n_neighbors=args.n_neighbors,
+        node_embedding_dim=args.node_embedding_dim,
+        gaussian_expansion_dim=args.gaussian_expansion_dim,
         selection=args.selection,
         stride=args.stride,
         cache_dir=args.cache_dir,

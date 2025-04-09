@@ -182,7 +182,7 @@ class VAMPNet(nn.Module):
             if isinstance(features, tuple):
                 features = features[0]
         else:
-            # For non-graph tensor data
+            # For non-graph tensor data #TODO: Note: This is probably redundant/not wanted
             if self.embedding_module is not None:
                 # Apply embedding then encoder
                 return self.encoder(self.embedding_module(data))
@@ -657,6 +657,7 @@ class VAMPNet(nn.Module):
             iterator = tqdm(data_loader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=True) if verbose else data_loader
 
             for batch in iterator:
+                # TODO: Will throw an error if processed batch has size 1, needs to be fixed
                 # Move batch to device
                 data_t0, data_t1 = to_device(batch, device)
 
@@ -664,8 +665,8 @@ class VAMPNet(nn.Module):
                 optimizer.zero_grad()
 
                 # Forward pass
-                chi_t0 = self(data_t0, apply_classifier=False)
-                chi_t1 = self(data_t1, apply_classifier=False)
+                chi_t0, _ = self(data_t0, apply_classifier=True)
+                chi_t1, _ = self(data_t1, apply_classifier=True)
 
                 # Calculate VAMP loss (negative VAMP score)
                 loss = self.vamp_score.loss(chi_t0, chi_t1)

@@ -5,7 +5,7 @@ from tqdm import tqdm
 # Your imports
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
 from pygv.scores.vamp_score_v0 import VAMPScore
-from pygv.encoder.schnet_wo_embed import SchNetEncoder
+from pygv.encoder.schnet_wo_embed import SchNetEncoderNoEmbed
 from pygv.encoder.meta import Meta
 from pygv.vampnet import VAMPNet
 from pygv.utils.plotting import plot_vamp_scores
@@ -72,7 +72,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
     )"""
 
     # Create SchNet encoder
-    encoder = SchNetEncoder(
+    encoder = SchNetEncoderNoEmbed(
         node_dim=16,#node_dim,
         edge_dim=8,#edge_dim,
         hidden_dim=16,

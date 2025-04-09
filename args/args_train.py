@@ -16,8 +16,8 @@ def get_train_parser():
 
     # Data arguments
     data_group = parser.add_argument_group('Data')
-    data_group.add_argument('--traj', required=True, nargs='+',
-                            help='Path(s) to trajectory file(s)')
+    data_group.add_argument('--traj_dir', required=True,#, nargs='+',
+                            help='Path to trajectory directory')
     data_group.add_argument('--top', required=True,
                             help='Path to topology file')
     data_group.add_argument('--selection', default='name CA',
@@ -30,6 +30,10 @@ def get_train_parser():
                             help='Directory to cache processed data')
     data_group.add_argument('--n-neighbors', type=int, default=10,
                             help='Number of neighbors for graph construction')
+    data_group.add_argument('--node-embedding-dim', type=int, default=16,
+                            help='Dimension for node embeddings')
+    data_group.add_argument('--gaussian-expansion-dim', type=int, default=8,
+                            help='Dimension for Gaussian expansion of distances')
 
     # Encoder arguments
     encoder_group = parser.add_argument_group('Encoder')

@@ -1,4 +1,5 @@
 import os
+import glob
 import json
 import datetime
 from pygv.vampnet import VAMPNet
@@ -109,3 +110,50 @@ def load_run(run_dir, encoder_class, vamp_score_class,
             print("Warning: Could not load dataset information")
 
     return model, train_config, dataset_info
+
+
+def find_trajectory_files(dataset_path, file_pattern="*.xtc", recursive=True):
+    """
+    Find all trajectory files matching the pattern in the dataset directory.
+
+    Parameters
+    ----------
+    dataset_path : str
+        Path to the directory containing trajectory files
+    file_pattern : str, default="*.xtc"
+        Pattern to match trajectory files
+    recursive : bool, default=True
+        Whether to search recursively in subdirectories
+
+    Returns
+    -------
+    list
+        List of paths to trajectory files
+    """
+    # Ensure dataset_path exists
+    if not os.path.exists(dataset_path):
+        print(f"Error: Directory '{dataset_path}' does not exist")
+        return []
+
+    # Construct the search path based on whether recursive search is enabled
+    if recursive:
+        search_path = os.path.join(dataset_path, "**", file_pattern)
+        trajectory_files = glob.glob(search_path, recursive=True)
+    else:
+        search_path = os.path.join(dataset_path, file_pattern)
+        trajectory_files = glob.glob(search_path)
+
+    # Check if any files were found
+    if not trajectory_files:
+        print(f"No {file_pattern} files found in {dataset_path}")
+    else:
+        print(f"Found {len(trajectory_files)} trajectory files")
+        # Print a few examples
+        if len(trajectory_files) > 0:
+            print("Examples:")
+            for file in trajectory_files[:3]:
+                print(f"  - {file}")
+            if len(trajectory_files) > 3:
+                print(f"  ... and {len(trajectory_files) - 3} more")
+
+    return sorted(trajectory_files)
