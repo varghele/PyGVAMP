@@ -1,10 +1,20 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sympy.physics.quantum.gate import normalized
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import MLP
 from torch_geometric.utils import softmax
 from torch.jit import script
+from torch_geometric.nn import global_mean_pool
+
+
+def init_weights(m):
+    if type(m) == torch.nn.Linear:
+        #torch.nn.init.xavier_uniform_(m.weight)
+        torch.nn.init.xavier_uniform_(m.weight, gain=1.0)
+        m.bias.data.fill_(0.0)
+
 
 class CFConv(MessagePassing):
     """
@@ -40,8 +50,10 @@ class CFConv(MessagePassing):
             hidden_channels=hidden_channels,
             out_channels=out_channels,
             num_layers=2,
-            act=self.activation
-        )
+            act=self.activation,
+            norm=None,
+            plain_last=True
+        ).apply(init_weights)
 
         # Add node projection layer if input and output dimensions differ
         self.has_node_projection = (in_channels != out_channels)
@@ -74,7 +86,7 @@ class CFConv(MessagePassing):
         Forward pass of CFConv layer.
         """
         # Normalize edge attributes for numerical stability
-        edge_attr_norm = edge_attr / (edge_attr.norm(dim=1, keepdim=True) + 1e-8)
+        edge_attr_norm = edge_attr / (edge_attr.norm(dim=-1, keepdim=True) + 1e-8)
 
         # Generate weights from edge attributes
         edge_weights = self.filter_network(edge_attr_norm)
@@ -118,14 +130,14 @@ class CFConv(MessagePassing):
             # Compute attention score for each edge
             attention = torch.matmul(messages, self.attention_vector).squeeze(-1)
 
-            # Store raw attention weights for later access
-            self._attention_weights = attention
-
             # Use PyG's optimized softmax instead of manual per-node implementation
             normalized_attention = softmax(attention, edge_index_i)
 
             # Apply attention weights to messages
             #messages = messages * normalized_attention.view(-1, 1)
+
+            # Store raw attention weights for later access
+            self._attention_weights = attention
 
             # Use JIT-compiled function for applying attention
             messages = self.apply_attention(messages, normalized_attention)
@@ -236,7 +248,6 @@ class SchNetEncoderNoEmbed(nn.Module):
                 attentions.append(attention)
 
         # Global pooling (mean of node features per graph)
-        from torch_geometric.nn import global_mean_pool
         pooled = global_mean_pool(h, batch)
 
         # Final output transformation

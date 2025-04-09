@@ -40,7 +40,7 @@ def create_test_args():
     args.output_dim = 16
     args.n_interactions = 2
     args.activation = 'tanh'
-    args.use_attention = True
+    args.use_attention = False
 
     # Classifier settings
     args.n_states = 4
@@ -51,9 +51,9 @@ def create_test_args():
     args.clf_norm = None
 
     # Training settings
-    args.epochs = 3  # Keep this low for testing
+    args.epochs = 50  # Keep this low for testing
     args.batch_size = 64
-    args.lr = 0.001
+    args.lr = 0.0001
     args.weight_decay = 1e-5
     args.clip_grad = None
     args.cpu = True  # Use CPU for testing
