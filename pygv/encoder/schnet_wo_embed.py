@@ -176,7 +176,7 @@ class GCNInteraction(nn.Module):
         return output, attention
 
 
-class SchNetEncoder(nn.Module):
+class SchNetEncoderNoEmbed(nn.Module):
     """SchNet encoder using PyTorch Geometric native operations."""
 
     def __init__(
@@ -189,7 +189,7 @@ class SchNetEncoder(nn.Module):
             activation='tanh',
             use_attention=True
     ):
-        super(SchNetEncoder, self).__init__()
+        super(SchNetEncoderNoEmbed, self).__init__()
 
         self.node_dim = node_dim
         self.output_dim = output_dim

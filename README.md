@@ -13,3 +13,5 @@ pip install matplotlib
 pip install pandas
 pip install joblib
 ```
+Path needs to be exported!
+export PYTHONPATH=/home/iwe81/PycharmProjects/PyGVAMP:$PYTHONPATH

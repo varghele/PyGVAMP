@@ -5,6 +5,8 @@ from pygv.classifier.SoftmaxMLP import SoftmaxMLP
 from torch_geometric.nn.models import MLP
 import os
 import datetime
+from pygv.utils.plotting import plot_vamp_scores
+from tqdm import tqdm
 
 
 class VAMPNet(nn.Module):
@@ -24,7 +26,7 @@ class VAMPNet(nn.Module):
                  classifier_module=None,
                  n_classes=None,
                  classifier_hidden_dim=64,
-                 classifier_num_layers=1,
+                 classifier_num_layers=2,
                  classifier_dropout=0.0,
                  classifier_act='elu',
                  classifier_norm=None,
@@ -251,55 +253,6 @@ class VAMPNet(nn.Module):
             # Regular tensor data
             return self.embedding_module(data)
 
-    # TODO: Implement correctly (not working yet)
-    def fit(self, data_loader, optimizer, n_epochs=100, k=None, verbose=True):
-        """
-        Train the VAMPNet model using the external VAMPScore module.
-
-        Args:
-            data_loader: DataLoader providing batches of (x_t0, x_t1)
-            optimizer: PyTorch optimizer
-            n_epochs: Number of training epochs
-            k: Number of singular values to consider for VAMP score
-            verbose: Whether to print progress
-
-        Returns:
-            List of loss values during training
-        """
-        losses = []
-
-        for epoch in range(n_epochs):
-            epoch_loss = 0.0
-            n_batches = 0
-
-            for batch in data_loader:
-                x_t0, x_t1 = batch
-
-                # Get embeddings
-                chi_t0 = self(x_t0)  # Forward pass for time t
-                chi_t1 = self(x_t1)  # Forward pass for time t+lag
-
-                # Zero gradients
-                optimizer.zero_grad()
-
-                # Calculate VAMP loss using the external VAMPScore module
-                loss = self.vamp_score.loss(chi_t0, chi_t1, k=k)
-
-                # Backward pass and optimization
-                loss.backward()
-                optimizer.step()
-
-                epoch_loss += loss.item()
-                n_batches += 1
-
-            avg_epoch_loss = epoch_loss / n_batches
-            losses.append(avg_epoch_loss)
-
-            if verbose and (epoch % 10 == 0 or epoch == n_epochs - 1):
-                print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {avg_epoch_loss:.4f}")
-
-        return losses
-
     def save(self, filepath, save_optimizer=False, optimizer=None, metadata=None):
         """
         Save the VAMPNet model to disk, including all components and optional metadata.
@@ -418,66 +371,144 @@ class VAMPNet(nn.Module):
             (loaded_model, metadata)
         """
         # Load saved dictionary
-        checkpoint = torch.load(filepath, map_location=map_location)
+        try:
+            checkpoint = torch.load(filepath, map_location=map_location)
+        except Exception as e:
+            raise IOError(f"Error loading model from {filepath}: {str(e)}")
 
         # Extract metadata
         metadata = checkpoint.get('metadata', {})
 
-        # Create VAMP score module
-        vamp_score = vamp_score_class(
-            epsilon=checkpoint['vamp_score_config'].get('epsilon', 1e-6),
-            mode=checkpoint['vamp_score_config'].get('mode', 'regularize')
-        )
+        try:
+            # Create VAMP score module
+            vamp_score_config = checkpoint.get('vamp_score_config', {})
+            vamp_score = vamp_score_class(
+                epsilon=vamp_score_config.get('epsilon', 1e-6),
+                mode=vamp_score_config.get('mode', 'regularize')
+            )
 
-        # Create encoder
-        encoder_params = checkpoint.get('encoder_params', {})
-        encoder = encoder_class(**encoder_params)
+            # Create encoder
+            encoder_params = checkpoint.get('encoder_params', {})
+            encoder = encoder_class(**encoder_params)
 
-        # Create embedding module if needed
-        embedding_module = None
-        if checkpoint['has_embedding']:
-            if 'embedding_config' in checkpoint and embedding_class == MLP:
-                # Create MLP embedding with saved config
-                config = checkpoint['embedding_config']
-                embedding_module = embedding_class(
-                    in_channels=config['in_channels'],
-                    hidden_channels=config['hidden_channels'],
-                    out_channels=config['out_channels'],
-                    num_layers=config['num_layers']
-                )
-            elif embedding_class is not None:
-                # Create custom embedding with default params
-                embedding_module = embedding_class()
+            # Create embedding module if needed
+            embedding_module = None
+            if checkpoint.get('has_embedding', False):
+                if embedding_class is None:
+                    print("Warning: Model was saved with an embedding module, but no embedding_class provided.")
+                else:
+                    if 'embedding_config' in checkpoint and (embedding_class == MLP or
+                                                             hasattr(embedding_class, 'in_channels')):
+                        # Create embedding with saved config
+                        config = checkpoint['embedding_config']
+                        try:
+                            embedding_module = embedding_class(
+                                in_channels=config.get('in_channels'),
+                                hidden_channels=config.get('hidden_channels'),
+                                out_channels=config.get('out_channels'),
+                                num_layers=config.get('num_layers', 2)
+                            )
+                        except TypeError as e:
+                            print(f"Warning: Could not create embedding with saved config: {str(e)}")
+                            print("Creating with default parameters instead.")
+                            embedding_module = embedding_class()
+                    else:
+                        # Create custom embedding with default params
+                        embedding_module = embedding_class()
 
-        # Create classifier module if needed
-        classifier_module = None
-        if checkpoint['has_classifier']:
-            if 'classifier_config' in checkpoint and classifier_class == SoftmaxMLP:
-                # Create SoftmaxMLP classifier with saved config
-                config = checkpoint['classifier_config']
-                classifier_module = classifier_class(
-                    in_channels=config['in_channels'],
-                    hidden_channels=config['hidden_channels'],
-                    out_channels=config['out_channels'],
-                    num_layers=config.get('num_layers', 2)
-                )
-            elif classifier_class is not None:
-                # Create custom classifier with default params
-                classifier_module = classifier_class()
+            # Create classifier module if needed
+            classifier_module = None
+            if checkpoint.get('has_classifier', False):
+                if classifier_class is None:
+                    print("Warning: Model was saved with a classifier module, but no classifier_class provided.")
+                else:
+                    if 'classifier_config' in checkpoint and classifier_class == SoftmaxMLP:
+                        # Create SoftmaxMLP classifier with saved config
+                        config = checkpoint['classifier_config']
+                        try:
+                            classifier_module = classifier_class(
+                                in_channels=config.get('in_channels'),
+                                hidden_channels=config.get('hidden_channels'),
+                                out_channels=config.get('out_channels'),
+                                num_layers=config.get('num_layers', 2)
+                            )
+                        except TypeError as e:
+                            print(f"Warning: Could not create classifier with saved config: {str(e)}")
+                            print("Creating with default parameters instead.")
+                            classifier_module = classifier_class()
+                    else:
+                        # Create custom classifier with default params
+                        classifier_module = classifier_class()
 
-        # Create VAMPNet model
-        model = cls(
-            encoder=encoder,
-            vamp_score=vamp_score,
-            embedding_module=embedding_module,
-            classifier_module=classifier_module,
-            lag_time=checkpoint['lag_time']
-        )
+            # Get lag time with fallback
+            lag_time = checkpoint.get('lag_time', 1)
 
-        # Load state dict
-        model.load_state_dict(checkpoint['model_state_dict'])
+            # Create VAMPNet model
+            model = cls(
+                encoder=encoder,
+                vamp_score=vamp_score,
+                embedding_module=embedding_module,
+                classifier_module=classifier_module,
+                lag_time=lag_time
+            )
 
-        return model, metadata
+            # Load state dict
+            model.load_state_dict(checkpoint['model_state_dict'])
+
+            print(f"Model successfully loaded from {filepath}")
+            return model, metadata
+
+        except KeyError as e:
+            raise KeyError(f"Missing key in checkpoint file: {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"Error reconstructing model: {str(e)}")
+
+    def save_complete_model(self, filepath):
+        """
+        Save the complete VAMPNet model to disk.
+
+        This method saves the entire model structure (including all components)
+        without requiring component classes during loading.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to save the complete model
+        """
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+        # Save the complete model with torch.save
+        torch.save(self, filepath)
+        print(f"Complete model saved to {filepath}")
+
+    @staticmethod
+    def load_complete_model(filepath, map_location=None):
+        """
+        Load a complete VAMPNet model from disk.
+
+        This method loads the entire model structure as it was saved,
+        without requiring component classes to be specified.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the saved complete model
+        map_location : str or torch.device, optional
+            Device to load the model to
+
+        Returns
+        -------
+        VAMPNet
+            Loaded model
+        """
+        try:
+            # Load the complete model
+            model = torch.load(filepath, map_location=map_location)
+            print(f"Complete model loaded from {filepath}")
+            return model
+        except Exception as e:
+            raise RuntimeError(f"Error loading model from {filepath}: {str(e)}")
 
     def get_config(self):
         """
@@ -522,3 +553,183 @@ class VAMPNet(nn.Module):
             }
 
         return config
+
+    def fit(
+            self,
+            data_loader,
+            optimizer=None,
+            n_epochs=100,
+            device=None,
+            learning_rate=0.001,
+            weight_decay=1e-5,
+            save_dir="models",
+            save_every=None,
+            clip_grad_norm=None,
+            verbose=True,
+            plot_scores=True,
+            plot_path=None,
+            smoothing=5,
+            callbacks=None
+    ):
+        """
+        Train the VAMPNet model using the provided data loader.
+
+        Parameters
+        ----------
+        data_loader : DataLoader
+            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs
+        optimizer : torch.optim.Optimizer, optional
+            PyTorch optimizer. If None, Adam optimizer will be created
+        n_epochs : int, default=100
+            Number of training epochs
+        device : str or torch.device, optional
+            Device to train on. If None, will use CUDA if available, else CPU
+        learning_rate : float, default=0.001
+            Learning rate for optimizer (if optimizer is None)
+        weight_decay : float, default=1e-5
+            Weight decay for optimizer (if optimizer is None)
+        save_dir : str, default="models"
+            Directory to save model checkpoints
+        save_every : int, optional
+            Save model every N epochs. If None, only saves final model
+        clip_grad_norm : float, optional
+            Maximum norm for gradient clipping. If None, no clipping is performed
+        verbose : bool, default=True
+            Whether to print training progress
+        plot_scores : bool, default=True
+            Whether to plot VAMP scores after training
+        plot_path : str, optional
+            Path to save the VAMP score plot. If None, uses save_dir/vampnet_training_scores.png
+        smoothing : int, default=5
+            Window size for smoothing the VAMP score plot
+        callbacks : list, optional
+            List of callback functions to call after each epoch
+
+        Returns
+        -------
+        list
+            List of VAMP scores during training
+        """
+        # Set device
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        elif isinstance(device, str):
+            device = torch.device(device)
+
+        # Move model to device
+        self.to(device)
+
+        # Create optimizer if not provided
+        if optimizer is None:
+            optimizer = torch.optim.Adam(
+                self.parameters(),
+                lr=learning_rate,
+                weight_decay=weight_decay
+            )
+
+        # Create save directory if it doesn't exist
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+
+        # Set default plot path
+        if plot_path is None and plot_scores and save_dir:
+            plot_path = os.path.join(save_dir, "vampnet_training_scores.png")
+
+        # Helper function to move batch to device
+        def to_device(batch, device):
+            x_t0, x_t1 = batch
+            return (x_t0.to(device), x_t1.to(device))
+
+        # Training loop
+        vamp_scores = []
+        best_score = float('-inf')
+        best_epoch = 0
+
+        if verbose:
+            print(f"Starting training for {n_epochs} epochs on {device}")
+
+        for epoch in range(n_epochs):
+            self.train()
+            epoch_score_sum = 0.0
+            n_batches = 0
+
+            # Use tqdm for progress bar if verbose
+            iterator = tqdm(data_loader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=True) if verbose else data_loader
+
+            for batch in iterator:
+                # Move batch to device
+                data_t0, data_t1 = to_device(batch, device)
+
+                # Zero gradients
+                optimizer.zero_grad()
+
+                # Forward pass
+                chi_t0 = self(data_t0, apply_classifier=False)
+                chi_t1 = self(data_t1, apply_classifier=False)
+
+                # Calculate VAMP loss (negative VAMP score)
+                loss = self.vamp_score.loss(chi_t0, chi_t1)
+
+                # Get positive VAMP score for logging
+                vamp_score_val = -loss.item()
+
+                # Check for NaN loss
+                if torch.isnan(loss).any():
+                    if verbose:
+                        print(f"Warning: NaN loss detected in epoch {epoch + 1}")
+                    continue
+
+                # Backward pass and optimization
+                loss.backward()
+
+                # Gradient clipping if requested
+                if clip_grad_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=clip_grad_norm)
+
+                optimizer.step()
+
+                # Update metrics
+                epoch_score_sum += vamp_score_val
+                n_batches += 1
+
+            # Calculate average VAMP score for the epoch
+            avg_epoch_score = epoch_score_sum / max(1, n_batches)
+            vamp_scores.append(avg_epoch_score)
+
+            # Print progress for this epoch
+            if verbose:
+                print(f"Epoch {epoch + 1}/{n_epochs}, VAMP Score: {avg_epoch_score:.4f}")
+
+            # Save best model
+            if avg_epoch_score > best_score:
+                best_score = avg_epoch_score
+                best_epoch = epoch
+                if save_dir:
+                    self.save_complete_model(os.path.join(save_dir, "best_model.pt"))
+
+            # Save checkpoint if requested
+            if save_every and (epoch + 1) % save_every == 0 and save_dir:
+                self.save_complete_model(os.path.join(save_dir, f"checkpoint_epoch_{epoch + 1}.pt"))
+
+            # Execute callbacks if provided
+            if callbacks:
+                for callback in callbacks:
+                    callback(self, epoch, avg_epoch_score)
+
+        # Save final model
+        if save_dir:
+            self.save_complete_model(os.path.join(save_dir, "final_model.pt"))
+
+        # Plot the VAMP score curve
+        if plot_scores and plot_path:
+            plot_vamp_scores(
+                scores=vamp_scores,
+                save_path=plot_path,
+                smoothing=smoothing,
+                title="VAMPNet Training VAMP Scores"
+            )
+
+        if verbose:
+            print(f"Training completed. Best VAMP Score: {best_score:.4f} (Epoch {best_epoch + 1})")
+
+        return vamp_scores

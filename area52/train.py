@@ -3,9 +3,10 @@ from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
 # Your imports
-from pygv.dataset.VAMPNetDataset import VAMPNetDataset
+from pygv.dataset.vampnet_dataset import VAMPNetDataset
 from pygv.scores.vamp_score_v0 import VAMPScore
 from pygv.encoder.schnet_wo_embed import SchNetEncoder
+from pygv.encoder.meta import Meta
 from pygv.vampnet import VAMPNet
 from pygv.utils.plotting import plot_vamp_scores
 
@@ -30,8 +31,8 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         topology_file=topology_file,
         lag_time=20,  # Lag time in ns
         n_neighbors=20,  # Number of neighbors for graph construction
-        node_embedding_dim=32,
-        gaussian_expansion_dim=16,
+        node_embedding_dim=16,
+        gaussian_expansion_dim=8,
         selection="name CA",  # Select only C-alpha atoms
         stride=40,  # Take every 2nd frame to reduce dataset size
         cache_dir="testdata",
@@ -55,8 +56,8 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
 
     # Initialize the Meta model
     """encoder = Meta(
-        node_dim=32,
-        edge_dim=16,
+        node_dim=16,
+        edge_dim=8,
         global_dim=64,
         num_node_mlp_layers=2,
         num_edge_mlp_layers=2,
@@ -104,7 +105,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
         return (x_t0.to(device), x_t1.to(device))
 
     # Train for a few epochs to check if it's working
-    n_epochs = 100
+    n_epochs = 1
     print(f"Starting training for {n_epochs} epochs")
 
     # Train the model
@@ -142,7 +143,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
                 loss.backward()
 
                 # Gradient clipping to prevent exploding gradients
-                torch.nn.utils.clip_grad_norm_(vampnet.parameters(), max_norm=1.0)
+                #torch.nn.utils.clip_grad_norm_(vampnet.parameters(), max_norm=1.0)
 
                 optimizer.step()
 
@@ -168,6 +169,7 @@ def train_vampnet(dataset_path="testdata", topology_file="topology.pdb"):
 
     # Save the model
     vampnet.save(filepath="mdl_save/mdl_data.pt")
+    vampnet.save_complete_model(filepath="mdl_save/mdl_full.pt")
 
     # Test the model on a sample from the dataset
     print("Testing model on a sample batch...")

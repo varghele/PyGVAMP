@@ -24,7 +24,7 @@ class EdgeModel(torch.nn.Module):
             act=act,
             norm="BatchNorm",#norm,
             dropout=dropout
-        )
+        ).apply(init_weights)
 
     def forward(self, src, dest, edge_attr, u, batch):
         out = torch.cat([src, dest, edge_attr], dim=1)
@@ -42,7 +42,7 @@ class NodeModel(torch.nn.Module):
             act=act,
             norm="BatchNorm",#norm,
             dropout=dropout
-        )
+        ).apply(init_weights)
         self.node_mlp_2 = MLP(
             in_channels=node_dim + hidden_dim,  # No global_dim
             hidden_channels=hidden_dim,
@@ -51,7 +51,7 @@ class NodeModel(torch.nn.Module):
             act=act,
             norm="BatchNorm",#norm,
             dropout=dropout
-        )
+        ).apply(init_weights)
 
     def forward(self, x, edge_index, edge_attr, u, batch):
         row, col = edge_index
@@ -73,7 +73,7 @@ class GlobalModel(torch.nn.Module):
             act=act,
             norm="BatchNorm",#norm,
             dropout=dropout
-        )
+        ).apply(init_weights)
 
     def forward(self, x, edge_index, edge_attr, u, batch):
         out = torch.cat([

@@ -3,6 +3,12 @@ import torch.nn as nn
 from torch_geometric.nn.models import MLP
 
 
+def init_weights(m):
+    if type(m) == torch.nn.Linear:
+        torch.nn.init.xavier_uniform_(m.weight)
+        m.bias.data.fill_(0.01)
+
+
 class SoftmaxMLP(nn.Module):
     """
     MLP with softmax activation on the final layer.
@@ -40,7 +46,7 @@ class SoftmaxMLP(nn.Module):
                 dropout=dropout,
                 act=act,
                 norm=norm
-            )
+            ).apply(init_weights)
             # Add final layer with softmax
             self.final_layer = nn.Sequential(
                 nn.Linear(hidden_channels, out_channels),

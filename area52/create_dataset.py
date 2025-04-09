@@ -1,4 +1,4 @@
-from pygv.dataset.VAMPNetDataset import VAMPNetDataset
+from pygv.dataset.vampnet_dataset import VAMPNetDataset
 import os
 import glob
 import torch

@@ -6,6 +6,10 @@ from torch_geometric.loader import DataLoader
 from pygv.utils.analysis import analyze_vampnet_outputs
 from pygv.utils.plotting import plot_state_populations, plot_state_evolution, plot_transition_probabilities
 from pygv.utils.ck import run_ck_analysis
+from pygv.dataset.vampnet_dataset import VAMPNetDataset
+from pygv.encoder.schnet_wo_embed import SchNetEncoder
+from pygv.vampnet.vampnet import VAMPNet
+import glob
 
 def run_complete_vampnet_analysis(
         model,
@@ -190,19 +194,72 @@ def run_complete_vampnet_analysis(
     }
 
 
-# Example usage:
-if __name__ == "__main__":
-    # Assuming these are already defined elsewhere:
-    # - model: trained VAMPNet model
-    # - data_loader: PyG DataLoader with trajectory data
+def load_model_and_run_analysis(
+        model_path: str,
+        data_path: str,
+        output_dir: str = "./analysis_results",
+        protein_name: str = "ab42",
+        batch_size: int = 32,
+        lag_times_for_transition: list = [1, 5, 10],
+        lag_times_for_ck: list = [1, 5, 10],
+        ck_steps: int = 5,
+        timestep: float = 1.0,
+        time_unit: str = "ns",
+        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+):
+    print(f"Loading model from: {model_path}")
+    print(f"Using device: {device}")
 
-    results = run_complete_vampnet_analysis(
-        model=model,
-        data_loader=data_loader,
-        output_dir="./analysis_results/my_protein",
-        protein_name="my_protein",
-        lag_times_for_transition=[1, 5, 10, 20],
-        lag_times_for_ck=[1, 5, 10],
-        timestep=0.2,
-        time_unit="ns"
+    try:
+        # Load the complete model
+        model = VAMPNet.load_complete_model(model_path, map_location=device)
+
+        print("Model loaded successfully!")
+        model.eval()
+
+        dataset_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/"
+        # Find all .xtc files in the dataset directory
+        xtc_files = glob.glob(os.path.join(dataset_path, "**/*.xtc"), recursive=True)
+        topology_file = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/topol.pdb"
+
+        dataset = VAMPNetDataset(
+        trajectory_files=xtc_files,
+        topology_file=topology_file,
+        lag_time=20,  # Lag time in ns
+        n_neighbors=20,  # Number of neighbors for graph construction
+        node_embedding_dim=16,
+        gaussian_expansion_dim=8,
+        selection="name CA",  # Select only C-alpha atoms
+        stride=40,  # Take every 2nd frame to reduce dataset size
+        cache_dir="testdata",
+        use_cache=True
     )
+
+        # Load the test data
+        test_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        # Run complete analysis
+        results = run_complete_vampnet_analysis(
+            model=model,
+            data_loader=test_loader,
+            output_dir=output_dir,
+            protein_name=protein_name,
+            batch_size=batch_size,
+            lag_times_for_transition=lag_times_for_transition,
+            lag_times_for_ck=lag_times_for_ck,
+            ck_steps=ck_steps,
+            timestep=timestep,
+            time_unit=time_unit,
+            device=device
+        )
+
+        print(f"Analysis complete! Results stored in: {output_dir}")
+        return results
+
+    except Exception as e:
+        print(f"Error during model loading or analysis: {str(e)}")
+        raise
+
+load_model_and_run_analysis(model_path="mdl_save/mdl_full.pt",
+                            data_path="None")
+
