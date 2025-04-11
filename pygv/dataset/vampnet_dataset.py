@@ -141,7 +141,7 @@ class VAMPNetDataset(Dataset):
         print("Calculating distance range from data samples...")
 
         # Take a reasonable subset of frames to calculate distances
-        sample_size = min(100, self.n_frames)
+        sample_size = self.n_frames #min(100, self.n_frames)
         indices = np.random.choice(self.n_frames, sample_size, replace=False)
 
         min_distances = []
@@ -224,7 +224,7 @@ class VAMPNetDataset(Dataset):
 
         return expanded_features
 
-    def _create_graph_from_frame(self, frame_idx):
+    def _create_graph_from_frame_old(self, frame_idx):
         """
         Create a graph representation for a single frame.
 
@@ -242,7 +242,7 @@ class VAMPNetDataset(Dataset):
         distances = torch.sqrt((diff ** 2).sum(dim=2))  # [n_atoms, n_atoms]
 
         # Find M nearest neighbors for each atom
-        # Set self-distances to infinity to exclude them
+        # Set self-distances to -1 to exclude them
         distances.fill_diagonal_(float(-1))
 
         # Get top-k smallest distances for each atom
@@ -254,6 +254,75 @@ class VAMPNetDataset(Dataset):
         edge_index = torch.stack([source_indices, target_indices], dim=0)
 
         # Get edge distances
+        edge_distances = distances[source_indices, target_indices]
+
+        # Compute Gaussian expanded edge features
+        edge_attr = self._compute_gaussian_expanded_distances(edge_distances)
+
+        # Generate random node features
+        node_attr = torch.randn(self.n_atoms, self.node_embedding_dim)
+
+        # Create PyG Data object
+        graph = Data(
+            x=node_attr,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            num_nodes=self.n_atoms
+        )
+
+        return graph
+
+    def _create_graph_from_frame(self, frame_idx):
+        """
+        Create a graph representation for a single frame.
+
+        Args:
+            frame_idx: Index of the frame to process
+
+        Returns:
+            torch_geometric.data.Data: Graph representation of the frame
+        """
+        # Get coordinates for the frame
+        coords = torch.tensor(self.frames[frame_idx], dtype=torch.float32)
+
+        # Calculate pairwise distances
+        diff = coords.unsqueeze(1) - coords.unsqueeze(0)  # [n_atoms, n_atoms, 3]
+        distances = torch.sqrt((diff ** 2).sum(dim=2))  # [n_atoms, n_atoms]
+
+        # Create a mask to identify self-connections (diagonal elements)
+        diag_mask = torch.eye(self.n_atoms, dtype=torch.bool, device=distances.device)
+
+        # Set self-distances to -1 (keep your original approach)
+        distances[diag_mask] = -1.0
+
+        # Create a mask for valid distances (excluding self-connections)
+        valid_mask = ~diag_mask
+
+        # For each node, get indices of the k-nearest neighbors (excluding self)
+        nn_indices = []
+        for i in range(self.n_atoms):
+            # Get distances from node i to all other nodes
+            node_distances = distances[i]
+            # Mask out the self-connection
+            valid_distances = node_distances[valid_mask[i]]
+            # Get indices of valid nodes (excluding self)
+            valid_indices = torch.nonzero(valid_mask[i], as_tuple=True)[0]
+            # Get top-k nearest neighbors
+            _, top_k_indices = torch.topk(valid_distances, min(self.n_neighbors, len(valid_distances)), largest=False)
+            # Map back to original indices
+            node_nn_indices = valid_indices[top_k_indices]
+            # Add to list
+            nn_indices.append(node_nn_indices)
+
+        # Stack indices for all nodes
+        nn_indices = torch.stack(nn_indices)
+
+        # Create edge indices
+        source_indices = torch.arange(self.n_atoms).repeat_interleave(nn_indices.size(1))
+        target_indices = nn_indices.reshape(-1)
+        edge_index = torch.stack([source_indices, target_indices], dim=0)
+
+        # Get edge distances (non-negative real distances)
         edge_distances = distances[source_indices, target_indices]
 
         # Compute Gaussian expanded edge features

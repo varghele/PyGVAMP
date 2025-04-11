@@ -127,6 +127,10 @@ class VAMPNet(nn.Module):
             # No classifier specified
             self.classifier_module = None
 
+        #self.add_module('embedding_module', embedding_module)
+        self.add_module('encoder', encoder)
+        self.add_module('classifier_module', classifier_module)
+
     def forward(
         self,
         data,

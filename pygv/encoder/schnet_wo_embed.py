@@ -223,7 +223,8 @@ class SchNetEncoderNoEmbed(nn.Module):
             hidden_channels=hidden_dim,
             out_channels=output_dim,
             num_layers=2,
-            act=activation
+            act=activation,
+            #norm="LayerNorm"
         )
 
     def forward(self, x, edge_index, edge_attr, batch=None):

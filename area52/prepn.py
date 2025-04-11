@@ -31,9 +31,9 @@ def create_test_prep_args():
     args.selection = 'name CA'
     args.stride = 1
     args.lag_time = 20.0
-    args.n_neighbors = 20
+    args.n_neighbors = 10
     args.node_embedding_dim = 16
-    args.gaussian_expansion_dim = 8
+    args.gaussian_expansion_dim = 16
 
     # Output settings
     args.output_dir = './area53'

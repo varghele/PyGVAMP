@@ -27,6 +27,8 @@ from pygv.encoder.meta import Meta
 from pygv.scores.vamp_score_v0 import VAMPScore
 from pygv.classifier.SoftmaxMLP import SoftmaxMLP
 
+from tqdm import tqdm
+from pygv.utils.plotting import plot_vamp_scores
 
 def setup_output_directory(args):
     """Setup output directory and return paths"""
@@ -85,7 +87,7 @@ def create_dataset_and_loader(args):
         selection=args.selection,
         stride=args.stride,
         cache_dir=args.cache_dir,
-        use_cache=args.cache_dir is not None
+        use_cache=args.use_cache
     )
 
     print(f"Dataset created with {len(dataset)} samples")
@@ -159,15 +161,26 @@ def create_model(args, dataset):
     # Create classifier if requested
     classifier = None
     if args.n_states > 0:
-        classifier = SoftmaxMLP(
-            in_channels=args.output_dim,
-            hidden_channels=args.clf_hidden_dim,
-            out_channels=args.n_states,
-            num_layers=args.clf_num_layers,
-            dropout=args.clf_dropout,
-            act=args.clf_activation,
-            norm=args.clf_norm
-        )
+        if args.encoder_type == 'schnet':
+            classifier = SoftmaxMLP(
+                in_channels=args.output_dim,
+                hidden_channels=args.clf_hidden_dim,
+                out_channels=args.n_states,
+                num_layers=args.clf_num_layers,
+                dropout=args.clf_dropout,
+                act=args.clf_activation,
+                norm=args.clf_norm
+            )
+        elif args.encoder_type == 'meta':
+            classifier = SoftmaxMLP(
+                in_channels=args.meta_output_dim,
+                hidden_channels=args.clf_hidden_dim,
+                out_channels=args.n_states,
+                num_layers=args.clf_num_layers,
+                dropout=args.clf_dropout,
+                act=args.clf_activation,
+                norm=args.clf_norm
+            )
 
     # Create VAMPNet model
     model = VAMPNet(
@@ -176,6 +189,9 @@ def create_model(args, dataset):
         classifier_module=classifier,
         lag_time=args.lag_time
     )
+
+    #TODO:FIX
+    model.to('cuda')
 
     return model
 
@@ -191,6 +207,32 @@ def train_model(args, model, loader, paths):
         lr=args.lr,
         weight_decay=args.weight_decay
     )
+
+    # Print optimizer parameters
+    print("\nParameters captured by optimizer:")
+    param_count = 0
+    param_tensors = 0
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            # Check if this parameter is in the optimizer
+            in_optimizer = False
+            for group in optimizer.param_groups:
+                for opt_param in group['params']:
+                    if opt_param is param:
+                        in_optimizer = True
+                        break
+                if in_optimizer:
+                    break
+
+            status = "✓" if in_optimizer else "✗"
+            param_count += param.numel() if in_optimizer else 0
+            param_tensors += 1 if in_optimizer else 0
+            print(f"  {status} {name}: shape={param.shape}, size={param.numel()}")
+
+    print(f"\nTotal parameters in optimizer: {param_count:,} in {param_tensors} tensors")
+    print(f"Total model parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+
 
     # Train the model
     print(f"Training model on {device}...")
@@ -209,6 +251,161 @@ def train_model(args, model, loader, paths):
     )
 
     return scores
+
+
+def train_model_new(args, model, loader, paths):
+    """Train the model"""
+    # Set device
+    device = torch.device("cpu" if args.cpu else "cuda" if torch.cuda.is_available() else "cpu")
+
+    # Create optimizer
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=args.lr,
+        weight_decay=args.weight_decay
+    )
+
+    # Print optimizer parameters
+    print("\nParameters captured by optimizer:")
+    param_count = 0
+    param_tensors = 0
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            # Check if this parameter is in the optimizer
+            in_optimizer = False
+            for group in optimizer.param_groups:
+                for opt_param in group['params']:
+                    if opt_param is param:
+                        in_optimizer = True
+                        break
+                if in_optimizer:
+                    break
+
+            status = "✓" if in_optimizer else "✗"
+            param_count += param.numel() if in_optimizer else 0
+            param_tensors += 1 if in_optimizer else 0
+    #        print(f"  {status} {name}: shape={param.shape}, size={param.numel()}")
+
+    print(f"\nTotal parameters in optimizer: {param_count:,} in {param_tensors} tensors")
+    print(f"Total model parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+    # Train the model
+    print(f"Training model on {device}...")
+
+    # Create VAMPScore instance for scoring
+    vamp_scorer = VAMPScore(method='VAMP2')
+
+    # Handle batch normalization for small batches
+    batch_norm_present = False
+    for module in model.modules():
+        if isinstance(module, torch.nn.BatchNorm1d) or isinstance(module, torch.nn.BatchNorm2d):
+            batch_norm_present = True
+            module.eval()  # Keep BatchNorm layers in eval mode
+
+    if batch_norm_present:
+        print("Note: BatchNorm layers are in eval mode to prevent issues with small batches")
+
+    # Create save directory if it doesn't exist
+    os.makedirs(paths['model_dir'], exist_ok=True)
+
+    # Training loop
+    vamp_scores = []
+    best_score = float('-inf')
+    best_epoch = 0
+
+    print(f"Starting training for {args.epochs} epochs on {device}")
+
+    for epoch in range(args.epochs):
+        #model.train()  # Set model to training mode (except BatchNorm layers)
+        epoch_score_sum = 0.0
+        n_batches = 0
+
+        # Use tqdm for progress bar
+        iterator = tqdm(loader, desc=f"Epoch {epoch + 1}/{args.epochs}")
+
+        for batch in iterator:
+            # Move batch to device
+            data_t0, data_t1 = batch
+            data_t0 = data_t0.to(device)
+            data_t1 = data_t1.to(device)
+
+            # Zero gradients
+            optimizer.zero_grad()
+
+            # Forward pass with direct component access - EXACTLY like working script
+            encoding_t0, _ = model.encoder(data_t0.x, data_t0.edge_index, data_t0.edge_attr, data_t0.batch)
+            encoding_t1, _ = model.encoder(data_t1.x, data_t1.edge_index, data_t1.edge_attr, data_t1.batch)
+
+            chi_t0 = model.classifier_module(encoding_t0)
+            chi_t1 = model.classifier_module(encoding_t1)
+
+            # Calculate VAMP loss (negative VAMP score)
+            loss = vamp_scorer.loss(chi_t0, chi_t1)
+
+            # Get positive VAMP score for logging
+            vamp_score_val = -loss.item()
+
+            # Check for NaN loss
+            if torch.isnan(loss).any():
+                print(f"Warning: NaN loss detected in epoch {epoch + 1}")
+                continue
+
+            # Backward pass and optimization
+            loss.backward()
+
+            # Gradient clipping if requested
+            if args.clip_grad is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.clip_grad)
+
+            optimizer.step()
+
+            # Update metrics
+            epoch_score_sum += vamp_score_val
+            n_batches += 1
+
+        # Calculate average VAMP score for the epoch
+        avg_epoch_score = epoch_score_sum / max(1, n_batches)
+        vamp_scores.append(avg_epoch_score)
+
+        # Print progress for this epoch
+        print(f"Epoch {epoch + 1}/{args.epochs}, VAMP Score: {avg_epoch_score:.4f}")
+
+        # Save best model
+        if avg_epoch_score > best_score:
+            best_score = avg_epoch_score
+            best_epoch = epoch
+            if hasattr(model, 'save_complete_model'):
+                model.save_complete_model(os.path.join(paths['model_dir'], "best_model.pt"))
+            else:
+                torch.save(model, os.path.join(paths['model_dir'], "best_model.pt"))
+            print("Complete model saved to", os.path.join(paths['model_dir'], "best_model.pt"))
+
+        # Save checkpoint if requested
+        if args.save_every and (epoch + 1) % args.save_every == 0:
+            if hasattr(model, 'save_complete_model'):
+                model.save_complete_model(os.path.join(paths['model_dir'], f"checkpoint_epoch_{epoch + 1}.pt"))
+            else:
+                torch.save(model, os.path.join(paths['model_dir'], f"checkpoint_epoch_{epoch + 1}.pt"))
+
+    # Save final model
+    if hasattr(model, 'save_complete_model'):
+        model.save_complete_model(os.path.join(paths['model_dir'], "final_model.pt"))
+    else:
+        torch.save(model, os.path.join(paths['model_dir'], "final_model.pt"))
+    print("Complete model saved to", os.path.join(paths['model_dir'], "final_model.pt"))
+
+    # Plot the VAMP score curve
+    plot_vamp_scores(
+        scores=vamp_scores,
+        save_path=os.path.join(paths['plot_dir'], "vamp_scores.png"),
+        smoothing=5,
+        title="VAMPNet Training VAMP Scores"
+    )
+    print("Figure saved to", os.path.join(paths['plots_dir'], "vamp_scores.png"))
+
+    print(f"Training completed. Best VAMP Score: {best_score:.4f} (Epoch {best_epoch + 1})")
+
+    return vamp_scores
 
 
 def main():
