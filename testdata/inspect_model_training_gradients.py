@@ -34,7 +34,7 @@ def create_test_args():
     args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb')
     args.selection = 'name CA'
     args.stride = 1
-    args.lag_time = 20.0
+    args.lag_time = 10.0
     args.n_neighbors = 10
     args.node_embedding_dim = 16
     args.gaussian_expansion_dim = 16
@@ -56,18 +56,29 @@ def create_test_args():
     args.clf_activation = 'relu'
     args.clf_norm = None
 
+    # Embedding settings
+    args.use_embedding=True
+    args.embedding_in_dim=16
+    args.embedding_hidden_dim=32
+    args.embedding_out_dim=16
+    args.embedding_num_layers=3
+    args.embedding_dropout=0.0
+    args.embedding_act='elu'
+    args.embedding_norm=None
+
+
     # Training settings
     args.epochs = 5
     args.batch_size = 50000
-    args.lr = 0.001
+    args.lr = 0.0005
     args.weight_decay = 1e-5
     args.clip_grad = None
-    args.cpu = True  # Use CPU for testing
+    args.cpu = False  # Use CPU for testing
 
     # Output settings
     args.output_dir = './area53'
     args.cache_dir = './area53/cache'
-    args.use_cache = True
+    args.use_cache = False
     args.save_every = 0  # Don't save intermediates
     args.run_name = 'test_run'
 
@@ -116,7 +127,9 @@ def verify_model_training(model, loader, device='cpu', n_iterations=20):
     try:
         # Forward pass - For VAMP, model outputs the encoding
         with torch.no_grad():
+            model.to(device)
             data_t0, data_t1 = batch
+            data_t0, data_t1 = data_t0.to(device), data_t1.to(device)
             encoding_t0, _ = model.encoder(data_t0.x, data_t0.edge_index, data_t0.edge_attr, data_t0.batch)
             encoding_t1, _ = model.encoder(data_t1.x, data_t1.edge_index, data_t1.edge_attr, data_t1.batch)
 
@@ -144,7 +157,13 @@ def verify_model_training(model, loader, device='cpu', n_iterations=20):
         # Forward and backward pass
         model.zero_grad()
 
+        model.to(device)
         data_t0, data_t1 = batch
+        data_t0, data_t1 = data_t0.to(device), data_t1.to(device)
+
+        data_t0.x = model.embedding_module(data_t0.x)
+        data_t1.x = model.embedding_module(data_t1.x)
+
         encoding_t0, _ = model.encoder(data_t0.x, data_t0.edge_index, data_t0.edge_attr, data_t0.batch)
         encoding_t1, _ = model.encoder(data_t1.x, data_t1.edge_index, data_t1.edge_attr, data_t1.batch)
 
@@ -189,7 +208,7 @@ def verify_model_training(model, loader, device='cpu', n_iterations=20):
         traceback.print_exc()
         return {'success': False, 'reason': 'backprop_error'}
 
-    print(f"\n3. Testing training loop for {n_iterations} iterations...")
+    """print(f"\n3. Testing training loop for {n_iterations} iterations...")
 
     # Run a mini training loop
     losses = []
@@ -201,7 +220,9 @@ def verify_model_training(model, loader, device='cpu', n_iterations=20):
             optimizer.zero_grad()
 
             # Forward pass
+            model.to(device)
             data_t0, data_t1 = batch
+            data_t0, data_t1 = data_t0.to(device), data_t1.to(device)
             encoding_t0, _ = model.encoder(data_t0.x, data_t0.edge_index, data_t0.edge_attr, data_t0.batch)
             encoding_t1, _ = model.encoder(data_t1.x, data_t1.edge_index, data_t1.edge_attr, data_t1.batch)
 
@@ -256,7 +277,52 @@ def verify_model_training(model, loader, device='cpu', n_iterations=20):
 
     # Check if loss decreased and score increased
     is_loss_decreasing = losses[0] > losses[-1]
-    is_score_increasing = scores[0] < scores[-1]
+    is_score_increasing = scores[0] < scores[-1]"""
+
+    print(f"\n3.5 Testing training loop for {n_iterations} iterations...")
+
+    # Get consistent batch from loader
+    all_data = []
+    for batch in loader:
+        all_data.append(batch)
+
+    try:
+        for i in range(n_iterations):
+            for batch in loader:
+                # Zero gradients
+                optimizer.zero_grad()
+
+                # Forward pass
+                model.to(device)
+                data_t0, data_t1 = batch
+                data_t0, data_t1 = data_t0.to(device), data_t1.to(device)
+
+                data_t0.x = model.embedding_module(data_t0.x)
+                data_t1.x = model.embedding_module(data_t1.x)
+
+                encoding_t0, _ = model.encoder(data_t0.x, data_t0.edge_index, data_t0.edge_attr, data_t0.batch)
+                encoding_t1, _ = model.encoder(data_t1.x, data_t1.edge_index, data_t1.edge_attr, data_t1.batch)
+
+                chi_t0 = model.classifier_module(encoding_t0)
+                chi_t1 = model.classifier_module(encoding_t1)
+
+                vamp_score = vamp_scorer(chi_t0, chi_t1)
+                vamp_loss = -vamp_score
+
+                # Backward pass
+                vamp_loss.backward()
+
+                # Update weights
+                optimizer.step()
+
+                if i % 5 == 0 or i == n_iterations - 1:
+                    print(
+                        f"  Iteration {i + 1}/{n_iterations}: VAMP Score = {vamp_score.item():.6f}, Loss = {vamp_loss.item():.6f}")
+    except Exception as e:
+        print(f"  ❌ Training loop failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {'success': False, 'reason': 'training_loop_error'}
 
     print(f"\n4. Analyzing training results...")
     print(f"  Initial VAMP score: {scores[0]:.6f}")
@@ -339,7 +405,7 @@ def run_test():
     print(f"Created VAMPNet model with {sum(p.numel() for p in model.parameters())} parameters")
 
     # Verify the model can train
-    verification_result = verify_model_training(model, loader, n_iterations=100)
+    verification_result = verify_model_training(model, loader, n_iterations=5000, device='cuda:0')
 
     if verification_result['success']:
         # If verification passed, proceed with full training

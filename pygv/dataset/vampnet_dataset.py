@@ -317,10 +317,32 @@ class VAMPNetDataset(Dataset):
         # Stack indices for all nodes
         nn_indices = torch.stack(nn_indices)
 
-        # Create edge indices
-        source_indices = torch.arange(self.n_atoms).repeat_interleave(nn_indices.size(1))
-        target_indices = nn_indices.reshape(-1)
+        # Create a set to track all edges for ensuring bidirectionality
+        edge_set = set()
+
+        # First, collect all the original directional edges
+        for i in range(self.n_atoms):
+            for j in nn_indices[i]:
+                edge_set.add((i, j.item()))
+
+        # Create a list of all bidirectional edges
+        bidirectional_edges = []
+        for source, target in edge_set:
+            bidirectional_edges.append((source, target))
+            # Add the reverse edge if it doesn't already exist
+            if (target, source) not in edge_set:
+                bidirectional_edges.append((target, source))
+
+        # Convert to tensors for source and target indices
+        source_indices = torch.tensor([edge[0] for edge in bidirectional_edges], device=distances.device)
+        target_indices = torch.tensor([edge[1] for edge in bidirectional_edges], device=distances.device)
+
+        # Create the edge_index tensor
         edge_index = torch.stack([source_indices, target_indices], dim=0)
+
+        # Quick bidirectionality check
+        edge_pairs = set(zip(edge_index[0].tolist(), edge_index[1].tolist()))
+        assert all((target, source) in edge_pairs for source, target in edge_pairs), "Graph is not bidirectional"
 
         # Get edge distances (non-negative real distances)
         edge_distances = distances[source_indices, target_indices]
@@ -329,11 +351,12 @@ class VAMPNetDataset(Dataset):
         edge_attr = self._compute_gaussian_expanded_distances(edge_distances)
 
         # Generate random node features
-        node_attr = torch.randn(self.n_atoms, self.node_embedding_dim)
+        #node_attr = torch.randn(self.n_atoms, self.node_embedding_dim)
+        node_attr = torch.nn.Embedding(num_embeddings=self.n_atoms, embedding_dim=self.node_embedding_dim)
 
         # Create PyG Data object
         graph = Data(
-            x=node_attr,
+            x=node_attr.weight.data,
             edge_index=edge_index,
             edge_attr=edge_attr,
             num_nodes=self.n_atoms

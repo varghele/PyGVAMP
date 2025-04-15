@@ -14,6 +14,27 @@ def get_train_parser():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
+    # Embedding MLP arguments
+    embedding_group = parser.add_argument_group('Embedding MLP arguments')
+    embedding_group.add_argument('--use_embedding', type=float, default=None,
+                             help='Gradient clipping norm')
+    embedding_group.add_argument('--embedding_in_dim', type=int, default=1,
+                                 help='Input dimension for embedding MLP (usually 1 for atom types)')
+    embedding_group.add_argument('--embedding_hidden_dim', type=int, default=64,
+                                 help='Hidden dimension for embedding MLP layers')
+    embedding_group.add_argument('--embedding_out_dim', type=int, default=128,
+                                 help='Output dimension for embedding MLP')
+    embedding_group.add_argument('--embedding_num_layers', type=int, default=3,
+                                 help='Number of layers in embedding MLP')
+    embedding_group.add_argument('--embedding_dropout', type=float, default=0.1,
+                                 help='Dropout rate for embedding MLP')
+    embedding_group.add_argument('--embedding_act', type=str, default='relu',
+                                 choices=['relu', 'gelu', 'silu', 'tanh'],
+                                 help='Activation function for embedding MLP')
+    embedding_group.add_argument('--embedding_norm', type=str, default='batch',
+                                 choices=['batch', 'layer', 'none'],
+                                 help='Normalization type for embedding MLP')
+
     # Data arguments
     data_group = parser.add_argument_group('Data')
     data_group.add_argument('--traj_dir', required=True,#, nargs='+',

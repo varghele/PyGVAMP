@@ -13,7 +13,8 @@ import argparse
 #sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import functions from training pipeline
-from pipe.training import create_dataset_and_loader, create_model, train_model, setup_output_directory, save_config
+from pipe.training import create_dataset_and_loader, create_model, train_model, setup_output_directory, save_config, \
+    train_model_new
 
 
 def create_test_args():
@@ -64,12 +65,22 @@ def create_test_args():
     args.clf_num_layers = 2
     args.clf_dropout = 0.0
     args.clf_activation = 'elu'
-    args.clf_norm = None# 'LayerNorm'
+    args.clf_norm = 'BatchNorm' # 'LayerNorm'
+
+    # Embedding settings
+    args.use_embedding = True
+    args.embedding_in_dim = 16
+    args.embedding_hidden_dim = 32
+    args.embedding_out_dim = 16
+    args.embedding_num_layers = 4
+    args.embedding_dropout = 0.0
+    args.embedding_act = 'elu'
+    args.embedding_norm = None #'LayerNorm'
 
     # Training settings
-    args.epochs = 500
-    args.batch_size = 500
-    args.lr = 0.001
+    args.epochs = 5000
+    args.batch_size = 5000
+    args.lr = 0.005
     args.weight_decay = 1e-5
     args.clip_grad = None
     args.cpu = False  # Use CPU for testing

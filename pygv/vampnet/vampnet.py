@@ -82,6 +82,7 @@ class VAMPNet(nn.Module):
         self.encoder = encoder
         self.vamp_score = vamp_score
         self.lag_time = lag_time
+        self.optimizer = None
 
         # Set up embedding module if needed
         if embedding_module is not None:
@@ -181,8 +182,7 @@ class VAMPNet(nn.Module):
 
             # Pass through encoder
             # If encoder returns a tuple (like SchNet), extract the first element (graph embeddings)
-            features = self.encoder(embedded_data.x, embedded_data.edge_index, embedded_data.edge_attr,
-                                    embedded_data.batch)
+            features = self.encoder(embedded_data.x, embedded_data.edge_index, embedded_data.edge_attr, embedded_data.batch)
             if isinstance(features, tuple):
                 features = features[0]
         else:
@@ -630,6 +630,7 @@ class VAMPNet(nn.Module):
                 lr=learning_rate,
                 weight_decay=weight_decay
             )
+        self.optimizer = optimizer
 
         # Create save directory if it doesn't exist
         if save_dir:
@@ -652,14 +653,21 @@ class VAMPNet(nn.Module):
         if verbose:
             print(f"Starting training for {n_epochs} epochs on {device}")
 
+        self.train()
+        if self.embedding_module is not None:
+            self.embedding_module.train()
+        if self.encoder is not None:
+            self.encoder.train()
+        if self.classifier_module is not None:
+            self.classifier_module.train()
+
         for epoch in range(n_epochs):
-            self.train()
             epoch_score_sum = 0.0
             n_batches = 0
 
             # Use tqdm for progress bar if verbose
+            # Reset dataset iterator at each epoch to maintain sequential processing
             iterator = tqdm(data_loader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=True) if verbose else data_loader
-
             for batch in iterator:
                 # TODO: Will throw an error if processed batch has size 1, needs to be fixed
                 # Move batch to device
@@ -669,8 +677,8 @@ class VAMPNet(nn.Module):
                 optimizer.zero_grad()
 
                 # Forward pass
-                chi_t0, _ = self(data_t0, apply_classifier=True)
-                chi_t1, _ = self(data_t1, apply_classifier=True)
+                chi_t0, _ = self.forward(data_t0, apply_classifier=True)
+                chi_t1, _ = self.forward(data_t1, apply_classifier=True)
 
                 # Calculate VAMP loss (negative VAMP score)
                 loss = self.vamp_score.loss(chi_t0, chi_t1)
@@ -684,6 +692,8 @@ class VAMPNet(nn.Module):
                         print(f"Warning: NaN loss detected in epoch {epoch + 1}")
                     continue
 
+                params_before = {name: param.clone().detach() for name, param in self.named_parameters()}
+
                 # Backward pass and optimization
                 loss.backward()
 
@@ -691,35 +701,41 @@ class VAMPNet(nn.Module):
                 if clip_grad_norm is not None:
                     torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=clip_grad_norm)
 
-                optimizer.step()
+                self.optimizer.step()
+
+
+                # Run training step (forward, backward, optimizer.step())
+                updated = {name: not torch.allclose(param, params_before[name]) for name, param in
+                           self.named_parameters()}
+                print(f"Parameters updated: {sum(updated.values())}/{len(updated)}")
 
                 # Update metrics
                 epoch_score_sum += vamp_score_val
                 n_batches += 1
 
-            # Calculate average VAMP score for the epoch
-            avg_epoch_score = epoch_score_sum / max(1, n_batches)
-            vamp_scores.append(avg_epoch_score)
+                # Calculate average VAMP score for the epoch
+                avg_epoch_score = epoch_score_sum / max(1, n_batches)
+                vamp_scores.append(avg_epoch_score)
 
-            # Print progress for this epoch
-            if verbose:
-                print(f"Epoch {epoch + 1}/{n_epochs}, VAMP Score: {avg_epoch_score:.4f}")
+                # Print progress for this epoch
+                if verbose:
+                    print(f"Epoch {epoch + 1}/{n_epochs}, VAMP Score: {avg_epoch_score:.4f}")
 
-            # Save best model
-            if avg_epoch_score > best_score:
-                best_score = avg_epoch_score
-                best_epoch = epoch
-                if save_dir:
-                    self.save_complete_model(os.path.join(save_dir, "best_model.pt"))
+                # Save best model
+                if avg_epoch_score > best_score:
+                    best_score = avg_epoch_score
+                    best_epoch = epoch
+                    if save_dir:
+                        self.save_complete_model(os.path.join(save_dir, "best_model.pt"))
 
-            # Save checkpoint if requested
-            if save_every and (epoch + 1) % save_every == 0 and save_dir:
-                self.save_complete_model(os.path.join(save_dir, f"checkpoint_epoch_{epoch + 1}.pt"))
+                # Save checkpoint if requested
+                if save_every and (epoch + 1) % save_every == 0 and save_dir:
+                    self.save_complete_model(os.path.join(save_dir, f"checkpoint_epoch_{epoch + 1}.pt"))
 
-            # Execute callbacks if provided
-            if callbacks:
-                for callback in callbacks:
-                    callback(self, epoch, avg_epoch_score)
+                # Execute callbacks if provided
+                if callbacks:
+                    for callback in callbacks:
+                        callback(self, epoch, avg_epoch_score)
 
         # Save final model
         if save_dir:
