@@ -13,8 +13,7 @@ import argparse
 #sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import functions from training pipeline
-from pipe.training import create_dataset_and_loader, create_model, train_model, setup_output_directory, save_config, \
-    train_model_new
+from pipe.training import create_dataset_and_loader, create_model, train_model, setup_output_directory, save_config
 
 
 def create_test_args():
