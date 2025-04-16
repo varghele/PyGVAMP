@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch_geometric.nn import MetaLayer, MLP
+from torch_geometric.nn import MetaLayer, MLP, global_mean_pool
 try:
     from torch_scatter import scatter_mean, scatter_add
 except ImportError:
@@ -127,11 +127,11 @@ class Meta(torch.nn.Module):
 
         # Determine input dimension for embedding projection
         if embedding_type == "node":
-            embedding_in_dim = hidden_dim
+            embedding_in_dim = node_dim
         elif embedding_type == "global":
-            embedding_in_dim = hidden_dim
+            embedding_in_dim = global_dim
         else:  # combined
-            embedding_in_dim = 2 * hidden_dim
+            embedding_in_dim = node_dim + global_dim
 
         # Embedding projection layer (optional, for reducing dimensions or additional non-linearity)
         self.embedding_projection = nn.Sequential(
@@ -165,14 +165,14 @@ class Meta(torch.nn.Module):
 
         # Message passing
         for layer in self.layers:
-            x, edge_attr, u = layer(x, edge_index, edge_attr, u, batch)
+            x, _, u = layer(x, edge_index, edge_attr, u, batch)
 
         # Prepare embeddings based on type
         if self.embedding_type == "node":
             # For node-level tasks, keep node embeddings
             embeddings = x
             # Can also provide graph-level embeddings by pooling nodes
-            graph_embeddings = nn.global_mean_pool(x, batch)
+            graph_embeddings = global_mean_pool(x, batch)
         elif self.embedding_type == "global":
             # For graph-level tasks, use global features
             embeddings = u
@@ -182,7 +182,7 @@ class Meta(torch.nn.Module):
             node_embeddings = torch.cat([x, u[batch]], dim=1)
             embeddings = node_embeddings
             # Pool to get graph-level embeddings
-            graph_embeddings = nn.global_mean_pool(node_embeddings, batch)
+            graph_embeddings = global_mean_pool(node_embeddings, batch)
 
         # Project embeddings to desired output dimension
         projected_embeddings = self.embedding_projection(embeddings)

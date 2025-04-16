@@ -16,7 +16,7 @@ import json
 
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
 from pygv.utils.pipe_utils import find_trajectory_files
-from args import parse_prep_args
+from pygv.args import parse_prep_args
 
 
 def setup_output_directory(args):

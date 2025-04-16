@@ -17,3 +17,9 @@ pip install pandas
 ```
 Path needs to be exported!
 export PYTHONPATH=/home/iwe81/PycharmProjects/PyGVAMP:$PYTHONPATH
+
+Install module via
+```bash
+pip install -e .
+pip uninstall pygv
+```
