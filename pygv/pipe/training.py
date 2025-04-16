@@ -8,12 +8,11 @@ This script provides a command-line interface for training VAMPNet models
 on molecular dynamics data.
 """
 # Import arguments parser
-from args import parse_train_args
+from pygv.args import parse_train_args
 
 
 import os
 import torch
-import numpy as np
 from torch_geometric.loader import DataLoader
 from datetime import datetime
 
@@ -27,9 +26,8 @@ from pygv.encoder.meta import Meta
 from pygv.scores.vamp_score_v0 import VAMPScore
 from pygv.classifier.SoftmaxMLP import SoftmaxMLP
 
-from tqdm import tqdm
-from pygv.utils.plotting import plot_vamp_scores
 from torch_geometric.nn.models import MLP
+
 
 def setup_output_directory(args):
     """Setup output directory and return paths"""

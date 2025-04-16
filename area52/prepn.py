@@ -14,7 +14,7 @@ import argparse
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import functions from preparation pipeline
-from pipe.preparation import create_and_analyze_dataset, setup_output_directory, save_config, analyze_sample_batch
+from pygv.pipe.preparation import create_and_analyze_dataset, setup_output_directory, save_config, analyze_sample_batch
 
 
 def create_test_prep_args():

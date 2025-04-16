@@ -9,15 +9,12 @@ import os
 import sys
 import argparse
 import torch
-import numpy as np
-import matplotlib.pyplot as plt
-from torch.utils.data import Subset
 
 # Add parent directory to sys.path to import from your package
 #sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import functions from training pipeline
-from pipe.training import create_dataset_and_loader, create_model, train_model, setup_output_directory, save_config
+from pygv.pipe.training import create_dataset_and_loader, create_model, train_model, setup_output_directory, save_config
 from pygv.scores.vamp_score_v0 import VAMPScore
 
 

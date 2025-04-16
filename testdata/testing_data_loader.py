@@ -1,25 +1,13 @@
 # Import arguments parser
-from args import parse_train_args
 
 import argparse
 import os
 import torch
-import numpy as np
 from torch_geometric.loader import DataLoader
-from datetime import datetime
 
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
 from pygv.utils.pipe_utils import find_trajectory_files
 
-from pygv.vampnet import VAMPNet
-from pygv.encoder.schnet_wo_embed import SchNetEncoderNoEmbed
-from pygv.encoder.meta import Meta
-
-from pygv.scores.vamp_score_v0 import VAMPScore
-from pygv.classifier.SoftmaxMLP import SoftmaxMLP
-
-from tqdm import tqdm
-from pygv.utils.plotting import plot_vamp_scores
 
 def create_test_args():
     """Create a simple argument namespace for testing"""

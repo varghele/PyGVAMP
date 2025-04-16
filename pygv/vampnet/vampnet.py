@@ -707,7 +707,7 @@ class VAMPNet(nn.Module):
                 # Run training step (forward, backward, optimizer.step())
                 updated = {name: not torch.allclose(param, params_before[name]) for name, param in
                            self.named_parameters()}
-                print(f"Parameters updated: {sum(updated.values())}/{len(updated)}")
+                #print(f"Parameters updated: {sum(updated.values())}/{len(updated)}")
 
                 # Update metrics
                 epoch_score_sum += vamp_score_val
@@ -717,25 +717,25 @@ class VAMPNet(nn.Module):
                 avg_epoch_score = epoch_score_sum / max(1, n_batches)
                 vamp_scores.append(avg_epoch_score)
 
-                # Print progress for this epoch
-                if verbose:
-                    print(f"Epoch {epoch + 1}/{n_epochs}, VAMP Score: {avg_epoch_score:.4f}")
+            # Print progress for this epoch
+            if verbose:
+                print(f"Epoch {epoch + 1}/{n_epochs}, VAMP Score: {avg_epoch_score:.4f}")
 
-                # Save best model
-                if avg_epoch_score > best_score:
-                    best_score = avg_epoch_score
-                    best_epoch = epoch
-                    if save_dir:
-                        self.save_complete_model(os.path.join(save_dir, "best_model.pt"))
+            # Save best model
+            if avg_epoch_score > best_score:
+                best_score = avg_epoch_score
+                best_epoch = epoch
+                if save_dir:
+                    self.save_complete_model(os.path.join(save_dir, "best_model.pt"))
 
-                # Save checkpoint if requested
-                if save_every and (epoch + 1) % save_every == 0 and save_dir:
-                    self.save_complete_model(os.path.join(save_dir, f"checkpoint_epoch_{epoch + 1}.pt"))
+            # Save checkpoint if requested
+            if save_every and (epoch + 1) % save_every == 0 and save_dir:
+                self.save_complete_model(os.path.join(save_dir, f"checkpoint_epoch_{epoch + 1}.pt"))
 
-                # Execute callbacks if provided
-                if callbacks:
-                    for callback in callbacks:
-                        callback(self, epoch, avg_epoch_score)
+            # Execute callbacks if provided
+            if callbacks:
+                for callback in callbacks:
+                    callback(self, epoch, avg_epoch_score)
 
         # Save final model
         if save_dir:
