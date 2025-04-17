@@ -204,6 +204,81 @@ class VAMPNet(nn.Module):
         else:
             return torch.empty(1), features
 
+    def get_attention(self, data, device=None):
+        """
+        Extract attention maps from the encoder for the given data.
+
+        This function runs the forward pass up to the encoder step and returns
+        the attention matrices if available.
+
+        Parameters
+        ----------
+        data : torch_geometric.data.Data or Batch
+            PyTorch Geometric data object containing graph information
+        device : str or torch.device, optional
+            Device to run computation on. If None, uses the model's current device
+
+        Returns
+        -------
+        tuple
+            (features, attentions) where:
+            - features: The encoded features/embedding
+            - attentions: List of attention matrices or None if attention isn't used
+        """
+        # Set device
+        if device is None:
+            device = next(self.parameters()).device
+
+        # Move data to device if needed
+        if data.x.device != device:
+            data = data.to(device)
+
+        # Set model to eval mode for attention extraction
+        was_training = self.training
+        self.eval()
+
+        with torch.no_grad():
+            # Extract graph components
+            x = data.x
+            edge_index = data.edge_index
+            edge_attr = data.edge_attr if hasattr(data, 'edge_attr') else None
+            batch = data.batch if hasattr(data, 'batch') else None
+
+            # Apply embedding module if available
+            if self.embedding_module is not None:
+                if hasattr(self.embedding_module, 'node_embedding') and hasattr(self.embedding_module,
+                                                                                'edge_embedding'):
+                    # Module has separate functions for node and edge embeddings
+                    x = self.embedding_module.node_embedding(x)
+                    if edge_attr is not None and self.embedding_module.edge_embedding is not None:
+                        edge_attr = self.embedding_module.edge_embedding(edge_attr)
+                else:
+                    # Assume single embedding function for nodes
+                    x = self.embedding_module(x)
+
+            # Pass through encoder to get features and attention
+            encoder_output = self.encoder(x, edge_index, edge_attr, batch)
+
+            # Handle different return types from the encoder
+            if isinstance(encoder_output, tuple) and len(encoder_output) > 1:
+                features, attention_info = encoder_output
+
+                # Check if attention_info is a tuple containing attention
+                if isinstance(attention_info, tuple) and len(attention_info) > 1:
+                    _, attention_maps = attention_info
+                    attentions = attention_maps
+                else:
+                    attentions = attention_info
+            else:
+                features = encoder_output
+                attentions = None
+
+        # Restore training mode
+        if was_training:
+            self.train()
+
+        return features, attentions
+
     def transform(self, data, return_features=False):
         """
         Transform data into state probabilities.

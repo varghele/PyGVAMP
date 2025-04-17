@@ -9,7 +9,7 @@ import os
 import argparse
 
 # Import functions from training pipeline
-from pygv.pipe.training import create_dataset_and_loader, create_model, train_model, setup_output_directory, save_config
+from pygv.pipe.training import run_training
 
 
 def create_test_args():
@@ -17,8 +17,8 @@ def create_test_args():
     args = argparse.Namespace()
 
     # Basic settings
-    #args.encoder_type = 'schnet'
-    args.encoder_type = 'meta'
+    args.encoder_type = 'schnet'
+    #args.encoder_type = 'meta'
 
     # Data settings
     args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/')
@@ -31,16 +31,16 @@ def create_test_args():
     args.gaussian_expansion_dim = 16
 
     # SchNet encoder settings
-    """args.node_dim = 16
+    args.node_dim = 16
     args.edge_dim = 16
     args.hidden_dim = 32
     args.output_dim = 16
     args.n_interactions = 4
     args.activation = 'tanh'
-    args.use_attention = True"""
+    args.use_attention = True
 
     # Meta encoder settings
-    args.meta_node_dim = 16
+    """args.meta_node_dim = 16
     args.meta_edge_dim = 16
     args.meta_global_dim = 32
     args.meta_num_node_mlp_layers = 2
@@ -52,7 +52,7 @@ def create_test_args():
     args.meta_embedding_type = 'global'  # choices: 'node', 'global', 'combined'
     args.meta_activation = 'elu'
     args.meta_norm = 'None'
-    args.meta_dropout = 0.0
+    args.meta_dropout = 0.0"""
 
     # Classifier settings
     args.n_states = 4
@@ -73,7 +73,7 @@ def create_test_args():
     args.embedding_norm = None #'LayerNorm'
 
     # Training settings
-    args.epochs = 5000
+    args.epochs = 100
     args.batch_size = 256
     args.lr = 0.005
     args.weight_decay = 1e-5
@@ -94,24 +94,8 @@ def run_test():
     """Run a VAMPNet training test"""
     # Create test arguments
     args = create_test_args()
-
-    # Setup output directory
-    paths = setup_output_directory(args)
-
-    # Save configuration
-    save_config(args, paths)
-
-    # Create dataset and loader
-    dataset, loader = create_dataset_and_loader(args)
-
-    # Create model
-    model = create_model(args, dataset)
-    print(f"Created VAMPNet model with {sum(p.numel() for p in model.parameters())} parameters")
-
-    # Train model
-    scores = train_model(args, model, loader, paths)
-
-    print(f"Training completed successfully. Results saved to {paths['run_dir']}")
+    # Run training
+    run_training(args)
 
 
 if __name__ == "__main__":

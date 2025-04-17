@@ -278,11 +278,8 @@ def train_model(args, model, loader, paths):
     return scores
 
 
-def main():
+def run_training(args):
     """Main function"""
-    # Parse arguments
-    args = parse_train_args()
-
     # Setup output directory
     paths = setup_output_directory(args)
 
@@ -303,4 +300,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Parse arguments
+    args = parse_train_args()
+
+    run_training(args)

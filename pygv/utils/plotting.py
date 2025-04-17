@@ -4,7 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import List, Tuple, Optional
 from matplotlib.colors import ListedColormap
-
+from pygv.utils.analysis import calculate_transition_matrices
 
 def plot_vamp_scores(scores, save_path=None, smoothing=None, title="VAMPNet Training Performance"):
     """
@@ -91,102 +91,54 @@ def plot_vamp_scores(scores, save_path=None, smoothing=None, title="VAMPNet Trai
     return fig, ax
 
 
-def calculate_transition_matrices(probs: List[np.ndarray], lag_time: int = 1) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Calculate transition probability matrices from state probabilities.
-
-    Parameters
-    ----------
-    probs : List[np.ndarray]
-        List of state probability trajectories, each with shape [n_frames, n_states]
-    lag_time : int, optional
-        Lag time for transition matrix calculation
-
-    Returns
-    -------
-    Tuple[np.ndarray, np.ndarray]
-        Tuple containing (transition_matrix, transition_matrix_without_self_transitions)
-    """
-    # Extract dimensions
-    n_traj = len(probs)
-    n_states = probs[0].shape[1]
-
-    # Initialize transition count matrices
-    transition_counts = np.zeros((n_states, n_states))
-
-    # Process each trajectory
-    for traj in probs:
-        n_frames = traj.shape[0]
-
-        # Skip if trajectory is too short for the lag time
-        if n_frames <= lag_time:
-            print(f"Warning: Trajectory with {n_frames} frames is too short for lag time {lag_time}. Skipping.")
-            continue
-
-        # Hard-assign states based on maximum probability
-        state_assignments = np.argmax(traj, axis=1)
-
-        # Count transitions with the specified lag time
-        for t in range(n_frames - lag_time):
-            from_state = state_assignments[t]
-            to_state = state_assignments[t + lag_time]
-            transition_counts[from_state, to_state] += 1
-
-    # Calculate transition probabilities
-    row_sums = transition_counts.sum(axis=1, keepdims=True)
-
-    # Avoid division by zero
-    row_sums[row_sums == 0] = 1
-
-    # Normalize to get transition probabilities
-    transition_matrix = transition_counts / row_sums
-
-    # Create a copy for non-self transitions
-    transition_matrix_no_self = transition_matrix.copy()
-
-    # Set diagonal to zero for non-self transition matrix
-    np.fill_diagonal(transition_matrix_no_self, 0)
-
-    # Re-normalize non-self transition matrix
-    row_sums_no_self = transition_matrix_no_self.sum(axis=1, keepdims=True)
-    row_sums_no_self[row_sums_no_self == 0] = 1  # Avoid division by zero
-    transition_matrix_no_self = transition_matrix_no_self / row_sums_no_self
-
-    return transition_matrix, transition_matrix_no_self
-
-
-def plot_transition_probabilities(probs: List[np.ndarray],
+def plot_transition_probabilities(probs: np.ndarray,
                                   save_dir: str,
                                   protein_name: str,
-                                  lag_time: int = 1,
+                                  lag_time: float,
+                                  stride: int,
+                                  timestep: float,
                                   cmap_name: str = 'YlOrRd',
-                                  fig_size: Tuple[int, int] = (10, 8),
+                                  fig_size: tuple[int, int] = (10, 8),
                                   font_size: int = 10):
     """
     Plot both standard and non-self transition probability matrices.
 
     Parameters
     ----------
-    probs : List[np.ndarray]
-        List of state probability trajectories
+    probs : np.ndarray
+        State probability trajectory with shape [n_frames, n_states]
     save_dir : str
         Directory to save the output files
     protein_name : str
         Name of the protein for file naming
-    lag_time : int, optional
-        Lag time for transition matrix calculation
+    lag_time : float, optional
+        Lag time for transition matrix calculation in nanoseconds
+    stride : int, optional
+        Stride used when extracting frames from trajectory
+    timestep : float, optional
+        Trajectory timestep in nanoseconds
     cmap_name : str, optional
         Matplotlib colormap name for the heatmaps
-    fig_size : Tuple[int, int], optional
+    fig_size : tuple[int, int], optional
         Figure size in inches
     font_size : int, optional
         Font size for annotations
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        Tuple containing (transition_matrix, transition_matrix_without_self_transitions)
     """
     # Create save directory if it doesn't exist
     os.makedirs(save_dir, exist_ok=True)
 
-    # Calculate transition matrices
-    trans_matrix, trans_matrix_no_self = calculate_transition_matrices(probs, lag_time)
+    # Calculate transition matrices with proper lag time conversion
+    trans_matrix, trans_matrix_no_self = calculate_transition_matrices(
+        probs,
+        lag_time=lag_time,
+        stride=stride,
+        timestep=timestep
+    )
 
     # Get number of states
     n_states = trans_matrix.shape[0]
@@ -261,7 +213,12 @@ def plot_transition_probabilities(probs: List[np.ndarray],
         # Add labels and title
         ax.set_xlabel('To State')
         ax.set_ylabel('From State')
-        title = f"State Transition Probabilities - Lag {lag_time}"
+
+        # Calculate effective lag time in frames for title
+        effective_timestep = timestep * stride  # ns
+        lag_frames = int(round(lag_time / effective_timestep))
+
+        title = f"State Transition Probabilities - Lag {lag_time} ns ({lag_frames} frames)"
         if suffix == "no_self":
             title = f"Non-Self {title}"
         ax.set_title(f'{title}\n{protein_name}')
@@ -270,18 +227,160 @@ def plot_transition_probabilities(probs: List[np.ndarray],
         plt.tight_layout()
 
         # Save outputs
-        plot_path = os.path.join(save_dir, f"{protein_name}_transition_matrix_{suffix}_lag{lag_time}.png")
+        plot_path = os.path.join(save_dir, f"{protein_name}_transition_matrix_{suffix}_lag{lag_time}ns.png")
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
         plt.close()
 
         # Save to CSV
-        csv_path = os.path.join(save_dir, f"{protein_name}_transition_matrix_{suffix}_lag{lag_time}.csv")
+        csv_path = os.path.join(save_dir, f"{protein_name}_transition_matrix_{suffix}_lag{lag_time}ns.csv")
         pd.DataFrame(matrix, index=state_labels, columns=state_labels).to_csv(csv_path)
 
         print(f"Saved {suffix} transition matrix plot to: {plot_path}")
         print(f"Saved {suffix} transition matrix to: {csv_path}")
 
     return trans_matrix, trans_matrix_no_self
+
+
+def plot_state_attention_maps(attention_maps, states_order, n_states, state_populations, save_path=None, n_atoms=None):
+    """
+    Plot node-level attention maps for each state individually and in a combined figure.
+
+    Parameters
+    ----------
+    attention_maps : np.ndarray
+        Attention values for each state [n_states, n_atoms]
+    states_order : np.ndarray
+        Order of states by population
+    n_states : int
+        Number of states
+    state_populations : np.ndarray
+        Population of each state
+    save_path : str, optional
+        Base path to save the figures
+    n_atoms : int, optional
+        Number of atoms (if None, will be inferred from attention_maps)
+    """
+    plt.style.use('default')
+    plt.rcParams['axes.linewidth'] = 1.0
+
+    # Determine number of atoms from the attention maps
+    if n_atoms is None:
+        n_atoms = attention_maps.shape[1]
+
+    # Create x-axis for plotting
+    x_range = np.arange(n_atoms)
+
+    # Find global min and max for consistent colorbar
+    vmin = np.min(attention_maps)
+    vmax = np.max(attention_maps)
+
+    # Create individual plots for each state
+    for i in range(n_states):
+        state_idx = states_order[i]
+
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=150)
+
+        # Plot attention as a bar chart
+        bars = ax.bar(x_range, attention_maps[state_idx], width=0.8,
+                      color=plt.cm.viridis(
+                          (attention_maps[state_idx] - vmin) / (vmax - vmin + 1e-10)))
+
+        # Add horizontal grid lines
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+        # Set axis labels and title
+        ax.set_xlabel('Atom Index', fontsize=12)
+        ax.set_ylabel('Attention Weight', fontsize=12)
+        ax.set_title(f'State {state_idx + 1} Attention Profile\nPopulation: {state_populations[state_idx]:.1%}',
+                     fontsize=14, pad=10)
+
+        # Set x-ticks at reasonable intervals
+        if n_atoms > 50:
+            tick_interval = max(1, n_atoms // 20)
+            ax.set_xticks(x_range[::tick_interval])
+            ax.set_xticklabels([f"{x + 1}" for x in x_range[::tick_interval]], fontsize=8)
+        else:
+            ax.set_xticks(x_range)
+            ax.set_xticklabels([f"{x + 1}" for x in x_range], fontsize=8)
+
+        # Add colorbar
+        sm = plt.cm.ScalarMappable(cmap=plt.cm.viridis,
+                                   norm=plt.Normalize(vmin=vmin, vmax=vmax))
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax)
+        cbar.set_label('Attention Weight', fontsize=10)
+
+        plt.tight_layout()
+
+        # Save individual state plot
+        if save_path:
+            state_save_path = save_path.replace('.png', f'_state_{state_idx + 1}.png')
+            plt.savefig(state_save_path, bbox_inches='tight')
+            print(f"Saved state {state_idx + 1} plot to: {state_save_path}")
+
+        plt.close()
+
+    # Create combined plot
+    # Calculate number of rows and columns needed
+    n_cols = int(np.ceil(np.sqrt(n_states)))
+    n_rows = int(np.ceil(n_states / n_cols))
+
+    # Create combined figure
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), dpi=150)
+    if n_states > 1:
+        axes = axes.flatten()
+    else:
+        axes = [axes]
+
+    # Plot each state
+    for i in range(n_states):
+        state_idx = states_order[i]
+        ax = axes[i]
+
+        # Plot attention as a bar chart
+        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        bars = ax.bar(x_range, attention_maps[state_idx], width=0.8,
+                      color=plt.cm.viridis(norm(attention_maps[state_idx])))
+
+        # Add horizontal grid lines
+        ax.grid(axis='y', linestyle='--', alpha=0.7)
+
+        # Set axis labels and title
+        ax.set_xlabel('Atom Index', fontsize=10)
+        ax.set_ylabel('Attention Weight', fontsize=10)
+        ax.set_title(f'State {state_idx + 1}\nPopulation: {state_populations[state_idx]:.1%}',
+                     fontsize=12, pad=10)
+
+        # Set x-ticks at reasonable intervals
+        if n_atoms > 50:
+            tick_interval = max(1, n_atoms // 10)
+            ax.set_xticks(x_range[::tick_interval])
+            ax.set_xticklabels([f"{x + 1}" for x in x_range[::tick_interval]], fontsize=8)
+        else:
+            ax.set_xticks(x_range)
+            ax.set_xticklabels([f"{x + 1}" for x in x_range], fontsize=8)
+
+    # Remove empty subplots
+    for i in range(n_states, len(axes)):
+        axes[i].remove()
+
+    # Add shared colorbar
+    fig.subplots_adjust(right=0.9)
+    cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+    sm = plt.cm.ScalarMappable(cmap=plt.cm.viridis, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, cax=cbar_ax)
+    cbar.set_label('Attention Weight', fontsize=12)
+
+    fig.suptitle('Attention Profiles by State', fontsize=16, y=0.98)
+    plt.tight_layout(rect=[0, 0, 0.9, 0.95])
+
+    # Save combined plot
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        print(f"Saved combined plot to: {save_path}")
+
+    plt.close()
 
 
 def plot_state_populations(probs: List[np.ndarray],
