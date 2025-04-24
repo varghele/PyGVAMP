@@ -288,7 +288,130 @@ tuple[np.ndarray, np.ndarray]:
     return transition_matrix, transition_matrix_no_self
 
 
-def calculate_state_attention_maps(attentions: np.ndarray,
+def calculate_state_edge_attention_maps(
+        edge_attentions: list,
+        edge_indices: list,
+        probs: np.ndarray,
+        save_dir: str = None,
+        protein_name: str = "protein"
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate attention maps for each state from edge attention values.
+
+    Parameters
+    ----------
+    edge_attentions : list
+        List of edge attention values for each frame [n_frames][n_edges]
+    edge_indices : list
+        List of edge indices for each frame [n_frames][2, n_edges]
+    probs : np.ndarray
+        State probability trajectory with shape [n_frames, n_states]
+    save_dir : str, optional
+        Directory to save attention maps and state populations
+    protein_name : str, optional
+        Name of the protein for file naming
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        state_attention_maps: Average attention maps for each state [n_states, n_atoms, n_atoms]
+        state_populations: Population of each state [n_states]
+    """
+    # Infer the number of states from probabilities
+    num_classes = probs.shape[1]
+
+    # Infer the number of atoms from edge indices
+    num_atoms = 0
+    for edges in edge_indices:
+        if edges is not None:
+            max_idx = np.max(edges)
+            num_atoms = max(num_atoms, max_idx + 1)
+            break
+
+    if num_atoms == 0:
+        raise ValueError("Could not determine the number of atoms from edge indices")
+
+    # Determine state assignments from probabilities
+    state_assignments = np.argmax(probs, axis=1)
+
+    # Calculate state populations
+    unique, counts = np.unique(state_assignments, return_counts=True)
+    state_populations = np.zeros(num_classes)
+    state_populations[unique] = counts
+    state_populations = state_populations / np.sum(state_populations)
+
+    # Initialize state attention maps with zeros
+    state_attention_maps = np.zeros((num_classes, num_atoms, num_atoms))
+
+    # Initialize counters to track how many times each edge appears in each state
+    edge_counts = np.zeros((num_classes, num_atoms, num_atoms))
+
+    # Process each frame with progress bar
+    print(f"Calculating state attention maps for {num_classes} states...")
+    for frame_idx in tqdm(range(min(len(edge_attentions), len(edge_indices), len(state_assignments)))):
+        # Skip frames with missing data
+        if frame_idx >= len(edge_attentions) or edge_attentions[frame_idx] is None or \
+                frame_idx >= len(edge_indices) or edge_indices[frame_idx] is None:
+            continue
+
+        # Get frame data
+        attention = edge_attentions[frame_idx]
+        edges = edge_indices[frame_idx]
+        state = state_assignments[frame_idx]
+
+        # Check dimensions match
+        if len(attention) != edges.shape[1]:
+            continue
+
+        # Process each edge in the frame
+        for i in range(edges.shape[1]):
+            source = int(edges[0, i])
+            target = int(edges[1, i])
+
+            # Ensure indices are within bounds
+            if 0 <= source < num_atoms and 0 <= target < num_atoms:
+                # Add attention value to the corresponding state map
+                state_attention_maps[state, source, target] += attention[i]
+                # Increment edge count
+                edge_counts[state, source, target] += 1
+
+    # Average the attention values by dividing by the counts (avoiding division by zero)
+    mask = edge_counts > 0
+    state_attention_maps[mask] /= edge_counts[mask]
+
+    # Print state populations
+    print(f"\nState populations:")
+    for i in range(num_classes):
+        print(f"State {i + 1}: {state_populations[i]:.2%}")
+
+    # Save results if save_dir is provided
+    if save_dir:
+        # Create save directory if it doesn't exist
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Save state attention maps
+        attention_map_path = os.path.join(save_dir, f"{protein_name}_state_attention_maps.npy")
+        np.save(attention_map_path, state_attention_maps)
+        print(f"Saved state attention maps to: {attention_map_path}")
+
+        # Save state populations
+        populations_path = os.path.join(save_dir, f"{protein_name}_state_populations.npy")
+        np.save(populations_path, state_populations)
+        print(f"Saved state populations to: {populations_path}")
+
+        # Save state counts as text file for easy reference
+        counts_path = os.path.join(save_dir, f"{protein_name}_state_counts.txt")
+        with open(counts_path, "w") as f:
+            f.write("State\tCount\tPopulation\n")
+            for i in range(num_classes):
+                count = int(state_populations[i] * len(state_assignments))
+                f.write(f"{i + 1}\t{count}\t{state_populations[i]:.6f}\n")
+        print(f"Saved state counts to: {counts_path}")
+
+    return state_attention_maps, state_populations
+
+
+def calculate_state_attention_maps_old(attentions: np.ndarray,
                                    neighbor_indices: np.ndarray,
                                    state_assignments: np.ndarray,
                                    num_classes: int,

@@ -15,8 +15,9 @@ import sys
 import torch
 import numpy as np
 
-from pygv.utils.analysis import calculate_state_attention_maps
-from pygv.utils.plotting import plot_transition_probabilities, plot_state_attention_maps
+from pygv.utils.analysis import calculate_state_edge_attention_maps
+from pygv.utils.plotting import (plot_transition_probabilities, plot_state_edge_attention_maps,
+                                 plot_state_attention_weights, plot_all_residue_attention_directions)
 
 from pygv.vampnet.vampnet import VAMPNet
 from pygv.utils.analysis import analyze_vampnet_outputs
@@ -222,17 +223,40 @@ def run_analysis(args=None):
                                   stride=args.stride,
                                   timestep=inferred_timestep)
 
-    # TODO: THIS IS NOT IMPLEMENTED CORRECTLY SO FAR, YOU NEED THE EDGE INDICES AND PROBABLY REVERSE THE EDGE INDICE GROUPING FROM BEFORE
-    # Calculate attention maps with pre-calculated neighbor indices
-    state_attention_maps, state_populations = calculate_state_attention_maps(
-        attentions=attentions,
-        neighbor_indices=neighbor_indices,
-        state_assignments=state_assignments,
-        num_classes=args.n_states,
-        num_atoms=args.num_atoms
+    # Calculate attention maps
+    state_attention_maps, state_populations = calculate_state_edge_attention_maps(
+        edge_attentions=attentions,
+        edge_indices=edge_indices,
+        probs=probs,
+        save_dir=paths['analysis_dir'],
+        protein_name='ab42',  # args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
     )
 
     # Plot attention maps
+    plot_state_edge_attention_maps(
+        state_attention_maps=state_attention_maps,
+        state_populations=state_populations,
+        save_dir=paths['analysis_dir'],
+        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        threshold=0.01  # Optional: hide low attention values
+    )
+
+    # Create residue-level attention plot
+    plot_state_attention_weights(
+        state_attention_maps=state_attention_maps,
+        topology_file=args.top,
+        save_dir=paths['analysis_dir'],
+        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        plot_sum_direction="target"  # Show attention TO residues
+    )
+
+    # Or to get all perspectives at once
+    plot_all_residue_attention_directions(
+        state_attention_maps=state_attention_maps,
+        topology_file=args.top,
+        save_dir=paths['analysis_dir'],
+        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+    )
     """plot_state_attention_maps(attention_maps=state_attention_maps,
                               states_order=,
                               n_states=args.n_states,
