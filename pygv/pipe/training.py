@@ -18,6 +18,8 @@ from datetime import datetime
 
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
 from pygv.utils.pipe_utils import find_trajectory_files
+from pygv.utils.analysis import analyze_vampnet_outputs
+from pygv.utils.ck import run_ck_analysis
 
 from pygv.vampnet import VAMPNet
 from pygv.encoder.schnet_wo_embed import SchNetEncoderNoEmbed
@@ -297,6 +299,53 @@ def run_training(args):
     scores = train_model(args, model, loader, paths)
 
     print(f"Training completed successfully. Results saved to {paths['run_dir']}")
+
+    # Determine device
+    if args.cpu is True:
+        device = torch.device("cpu")
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # TODO: pre-analysis for CK Tests and ITS Plots
+    # Get state transition probabilities, graph embeddings and attention scores
+    probs, embeddings, attentions, edge_indices = analyze_vampnet_outputs(model=model,
+                                                                          data_loader=loader,
+                                                                          save_folder=paths['model_dir'],
+                                                                          batch_size=args.batch_size if hasattr(args,
+                                                                                                                'batch_size') else 32,
+                                                                          device=device,
+                                                                          return_tensors=False
+                                                                          )
+
+    # Get actual timestep of the trajectory
+    # TODO: Check if this is correct!
+    inferred_timestep = dataset._infer_timestep() / 1000  # Timestep in nanoseconds
+
+    # Run Chapman Kolmogorow Test
+    run_ck_analysis(
+        probs=probs,
+        save_dir=paths['plot_dir'],
+        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        lag_times_ns=args.lag_time,
+        steps=10,
+        stride=args.stride,
+        timestep=inferred_timestep
+    )
+    print("CK test complete")
+
+    # Calculate and plot implied timescales
+    # TODO: Implement this
+    max_tau = 250
+    lags = [i for i in range(1, max_tau, 2)]
+    its = get_its(probs, lags)
+    # Using save_path instead of save_folder to match the function signature
+    plot_its(its, lags, save_path=args.save_folder, ylog=False)
+    np.save(os.path.join(args.save_folder, 'ITS.npy'), np.array(its))
+    print("ITS calculation complete")
+
+
+
+
 
 
 if __name__ == "__main__":

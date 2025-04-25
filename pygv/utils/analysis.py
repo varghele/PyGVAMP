@@ -50,8 +50,6 @@ def analyze_vampnet_outputs(
         - edge_attentions: List of edge attention values, one per frame
         - edge_indices: List of edge indices, one per frame
     """
-    import numpy as np
-
     # Set model to evaluation mode
     model.eval()
     model = model.to(device)

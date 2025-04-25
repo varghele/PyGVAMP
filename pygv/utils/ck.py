@@ -210,8 +210,122 @@ def plot_ck_test(pred: np.ndarray, est: np.ndarray, steps: int, tau: int,
     return fig, axes
 
 
-def run_ck_analysis(probs: List[np.ndarray],
-                    save_folder: str,
+def run_ck_analysis(
+        probs: np.ndarray,
+        save_dir: str,
+        protein_name: str,
+        lag_times_ns: list = [1, 5, 10],  # lag times in nanoseconds
+        steps: int = 5,
+        stride: int = 1,
+        timestep: float = 0.001  # trajectory timestep in ns
+):
+    """
+    Run Chapman-Kolmogorov test analysis with multiple lag times in nanoseconds.
+
+    Parameters
+    ----------
+    probs : np.ndarray
+        State probability trajectory with shape [n_frames, n_states]
+    save_dir : str
+        Directory to save results
+    protein_name : str
+        Name of the protein for file naming
+    lag_times_ns : list, optional
+        List of lag times to test in nanoseconds, default [1, 5, 10]
+    steps : int, optional
+        Number of prediction steps, default 5
+    stride : int, optional
+        Stride used when extracting frames from trajectory
+    timestep : float, optional
+        Trajectory timestep in nanoseconds
+
+    Returns
+    -------
+    dict
+        Dictionary of test results for each lag time
+    """
+    # Create save folder
+    ck_folder = os.path.join(save_dir, 'chapman_kolmogorov')
+    os.makedirs(ck_folder, exist_ok=True)
+
+    # Effective timestep in ns (accounting for stride)
+    effective_timestep = timestep * stride
+
+    print(f"Trajectory timestep: {timestep} ns")
+    print(f"Stride: {stride}")
+    print(f"Effective timestep: {effective_timestep} ns")
+
+    results = {}
+
+    # Run test for each lag time
+    for lag_time_ns in lag_times_ns:
+        print(f"\nRunning Chapman-Kolmogorov test with lag time {lag_time_ns} ns...")
+
+        # Convert lag time from ns to frames
+        lag_frames = int(round(lag_time_ns / effective_timestep))
+        print(f"Lag time {lag_time_ns} ns corresponds to {lag_frames} frames")
+
+        # Get test results using existing function
+        predicted, estimated = get_ck_test(probs, steps, lag_frames)
+
+        # Plot results with physical units
+        fig, axes = plot_ck_test(
+            pred=predicted,
+            est=estimated,
+            steps=steps,
+            tau=lag_frames,
+            save_folder=ck_folder,
+            lag_time_unit='ns',  # Use nanoseconds as unit
+            filename=f"{protein_name}_ck_test_lag{lag_time_ns}ns.png",
+            title=f"Chapman-Kolmogorov Test - {protein_name}\nLag Time: {lag_time_ns} ns"
+        )
+
+        # Store results
+        results[lag_time_ns] = {
+            'predicted': predicted,
+            'estimated': estimated,
+            'lag_frames': lag_frames
+        }
+
+        # Calculate error metrics
+        mse = np.mean((predicted - estimated) ** 2)
+        mae = np.mean(np.abs(predicted - estimated))
+        print(f"Lag time {lag_time_ns} ns: MSE = {mse:.4f}, MAE = {mae:.4f}")
+
+    # Create comparison plot of MSE values for different lag times
+    if len(results) > 1:
+        mse_values = []
+        for lag_time_ns in lag_times_ns:
+            if lag_time_ns in results:
+                mse = np.mean((results[lag_time_ns]['predicted'] - results[lag_time_ns]['estimated']) ** 2)
+                mse_values.append(mse)
+            else:
+                mse_values.append(np.nan)
+
+        plt.figure(figsize=(10, 6))
+        plt.bar(range(len(lag_times_ns)), mse_values, tick_label=[f"{lt} ns" for lt in lag_times_ns])
+        plt.ylabel('Mean Squared Error')
+        plt.xlabel('Lag Time (ns)')
+        plt.title(f'Chapman-Kolmogorov Test MSE Comparison - {protein_name}')
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+
+        # Add values on top of bars
+        for i, mse in enumerate(mse_values):
+            if not np.isnan(mse):
+                plt.text(i, mse + 0.005, f'{mse:.4f}', ha='center')
+
+        # Save comparison plot
+        comparison_path = os.path.join(ck_folder, f"{protein_name}_ck_test_comparison.png")
+        plt.savefig(comparison_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"\nSaved lag time comparison plot to {comparison_path}")
+
+    return results
+
+
+# TODO: Delete
+def run_ck_analysis_old(probs: List[np.ndarray],
+                    save_dir: str,
                     protein_name: str,
                     tau_values: List[int] = [1, 5, 10],
                     steps: int = 5,
@@ -223,7 +337,7 @@ def run_ck_analysis(probs: List[np.ndarray],
     ----------
     probs : List[np.ndarray]
         List of state probability trajectories
-    save_folder : str
+    save_dir : str
         Directory to save results
     protein_name : str
         Name of the protein for file naming
@@ -240,7 +354,7 @@ def run_ck_analysis(probs: List[np.ndarray],
         Dictionary of test results for each lag time
     """
     # Create save folder
-    ck_folder = os.path.join(save_folder, 'chapman_kolmogorov')
+    ck_folder = os.path.join(save_dir, 'chapman_kolmogorov')
     os.makedirs(ck_folder, exist_ok=True)
 
     results = {}

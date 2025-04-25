@@ -1,5 +1,5 @@
 # PyGVAMP
-test
+Please always follow the exact installation steps:
 Conda environment creation:
 ```bash
 conda create --name PyGVAMP5 python=3.12
