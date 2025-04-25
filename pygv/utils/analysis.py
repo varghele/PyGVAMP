@@ -6,6 +6,8 @@ from typing import List, Tuple, Optional, Union
 from torch_geometric.data import Data, Batch
 from torch_geometric.loader import DataLoader
 import pickle
+from glob import glob
+import mdtraj as md
 
 # Helper function to move batch to device
 def to_device(batch, device):
@@ -409,6 +411,388 @@ def calculate_state_edge_attention_maps(
         print(f"Saved state counts to: {counts_path}")
 
     return state_attention_maps, state_populations
+
+
+def generate_state_structures(
+        traj_folder: str,
+        topology_file: str,
+        probs: np.ndarray,
+        save_dir: str,
+        protein_name: str,
+        stride: int = 10,
+        n_structures: int = 10,
+        prob_threshold: float = 0.7
+) -> dict:
+    """
+    Generate multiple representative PDB structures for each conformational state.
+
+    Parameters
+    ----------
+    traj_folder : str
+        Path to the folder containing trajectory files
+    topology_file : str
+        Path to the topology file
+    probs : np.ndarray
+        State probabilities for each frame with shape [n_frames, n_states]
+    save_dir : str
+        Directory to save the output PDB files
+    protein_name : str
+        Name of the protein for file naming
+    stride : int, optional
+        Load every nth frame to reduce memory usage (default: 10)
+    n_structures : int, optional
+        Number of structures to generate per state (default: 10)
+    prob_threshold : float, optional
+        Probability threshold for accepting frames as representative of a state (default: 0.7)
+
+    Returns
+    -------
+    dict
+        Dictionary mapping state numbers to lists of PDB file paths,
+        sorted by similarity to average structure
+    """
+    # Make sure output directory exists
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Get trajectory files based on available files
+    dcd_pattern = os.path.join(traj_folder, "*.dcd")
+    xtc_pattern = os.path.join(traj_folder, "*.xtc")
+    traditional_pattern = os.path.join(traj_folder, "r?", "traj*")
+
+    # Check for different trajectory formats
+    traj_files = []
+    for pattern in [dcd_pattern, xtc_pattern, traditional_pattern]:
+        files = sorted(glob(pattern))
+        if files:
+            traj_files.extend(files)
+            print(f"Found {len(files)} trajectory files matching {pattern}")
+
+    if not traj_files:
+        raise ValueError(f"No trajectory files found in {traj_folder}")
+
+    print(f"Total trajectory files found: {len(traj_files)}")
+
+    # Extract number of states from probability array
+    n_states = probs.shape[1]
+    n_frames_total = probs.shape[0]
+
+    print(f"Found probabilities for {n_frames_total} frames with {n_states} states")
+
+    # Create a frame index mapping to track original indices after stride
+    frame_indices = np.arange(0, n_frames_total, stride)
+    strided_probs = probs[frame_indices]
+
+    print(f"Processing trajectories with stride {stride}...")
+    print(f"Original frames: {n_frames_total}, Strided frames: {len(strided_probs)}")
+
+    # Load trajectories with stride
+    trajs = []
+    frame_counts = []
+
+    # Track which original frames correspond to which loaded frames
+    frame_mapping = []
+    current_idx = 0
+
+    print("Loading trajectories...")
+    for traj_file in tqdm(traj_files, desc="Loading trajectories"):
+        try:
+            traj = md.load(traj_file, top=topology_file, stride=stride)
+            trajs.append(traj)
+            n_frames = len(traj)
+            frame_counts.append(n_frames)
+
+            # Add the frame indices for this trajectory chunk
+            frame_mapping.extend(range(current_idx, current_idx + n_frames * stride, stride))
+            current_idx += n_frames * stride
+        except Exception as e:
+            print(f"Warning: Could not load {traj_file}: {str(e)}")
+
+    if not trajs:
+        raise ValueError("Failed to load any trajectories")
+
+    print("Combining trajectories...")
+    combined_traj = md.join(trajs) if len(trajs) > 1 else trajs[0]
+    print(f"Combined trajectory has {len(combined_traj)} frames")
+
+    # Verify we have enough probability data
+    if len(strided_probs) < len(combined_traj):
+        print(
+            f"Warning: Fewer probability entries ({len(strided_probs)}) than trajectory frames ({len(combined_traj)})")
+        # Truncate the trajectory to match
+        combined_traj = combined_traj[:len(strided_probs)]
+    elif len(strided_probs) > len(combined_traj):
+        print(f"Warning: More probability entries ({len(strided_probs)}) than trajectory frames ({len(combined_traj)})")
+        # Truncate the probabilities to match
+        strided_probs = strided_probs[:len(combined_traj)]
+
+    # Get most likely state for each frame (just for comparison with probability-based approach)
+    state_assignments = np.argmax(strided_probs, axis=1)
+    state_counts = np.bincount(state_assignments, minlength=n_states)
+    state_percentages = state_counts / len(state_assignments) * 100
+
+    print("\nState assignment statistics (from most probable state):")
+    for state_idx in range(n_states):
+        print(f"State {state_idx + 1}: {state_counts[state_idx]} frames ({state_percentages[state_idx]:.2f}%)")
+
+    # Dictionary to store generated structure paths
+    state_structures = {}
+
+    # Create summary file
+    summary_path = os.path.join(save_dir, f"{protein_name}_state_structures_summary.txt")
+    with open(summary_path, 'w') as summary_file:
+        summary_file.write(f"State structure analysis for {protein_name}\n")
+        summary_file.write(f"Total states: {n_states}\n\n")
+
+        for state_idx in range(n_states):
+            summary_file.write(f"State {state_idx + 1}:\n")
+            summary_file.write(
+                f"  - Frame count (max probability): {state_counts[state_idx]} ({state_percentages[state_idx]:.2f}%)\n")
+
+    print("\nProcessing states...")
+    for state_idx in range(n_states):
+        state_num = state_idx + 1  # Convert to 1-indexed for output
+        state_structures[state_idx] = []  # Initialize list for this state
+
+        # Create state-specific directory
+        state_dir = os.path.join(save_dir, f"state_{state_num}")
+        os.makedirs(state_dir, exist_ok=True)
+
+        # Get probabilities for this state
+        state_probs = strided_probs[:, state_idx]
+
+        # Find frames where probability exceeds threshold
+        high_prob_indices = np.where(state_probs >= prob_threshold)[0]
+
+        if len(high_prob_indices) == 0:
+            print(f"Warning: No frames found for state {state_num} with probability >= {prob_threshold}")
+            # Fall back to top N frames by probability
+            high_prob_indices = np.argsort(state_probs)[-n_structures:]
+            print(f"Using top {len(high_prob_indices)} frames by probability instead")
+        elif len(high_prob_indices) < n_structures:
+            print(f"Warning: Only {len(high_prob_indices)} frames found for state {state_num} "
+                  f"with probability >= {prob_threshold} (requested {n_structures})")
+        else:
+            print(f"Found {len(high_prob_indices)} frames for state {state_num} with probability >= {prob_threshold}")
+            # If we have more frames than needed, select the highest probability ones
+            if len(high_prob_indices) > n_structures:
+                # Sort by probability (highest first) and take top n_structures
+                sorted_indices = sorted(high_prob_indices, key=lambda i: state_probs[i], reverse=True)
+                high_prob_indices = sorted_indices[:n_structures]
+
+        # Extract frames for this state
+        state_frames = combined_traj[high_prob_indices]
+        state_frame_probs = state_probs[high_prob_indices]
+
+        # Append information to summary
+        with open(summary_path, 'a') as summary_file:
+            summary_file.write(f"  - High probability frames (>= {prob_threshold}): {len(high_prob_indices)}\n")
+
+        if len(high_prob_indices) == 0:
+            with open(summary_path, 'a') as summary_file:
+                summary_file.write("  - No structures generated\n\n")
+            continue
+
+        try:
+            # First align all structures to the first frame
+            aligned_traj = state_frames.superpose(state_frames[0])
+
+            # Calculate average coordinates across all frames
+            average_xyz = np.mean(aligned_traj.xyz, axis=0)
+
+            # Create a new mdtraj trajectory for the average structure
+            average_structure = md.Trajectory(
+                xyz=average_xyz,
+                topology=state_frames.topology
+            )
+
+            # Save the average structure
+            avg_file = os.path.join(state_dir, f"{protein_name}_state_{state_num}_average.pdb")
+            average_structure.save_pdb(avg_file)
+            state_structures[state_idx].append(avg_file)
+
+            # Append to summary
+            with open(summary_path, 'a') as summary_file:
+                summary_file.write(f"  - Average structure: {os.path.basename(avg_file)}\n")
+
+            # Calculate RMSD to average structure for all frames
+            rmsd_to_avg = np.sqrt(np.mean(np.sum((aligned_traj.xyz - average_xyz) ** 2, axis=2), axis=1))
+
+            # Get indices sorted by RMSD (closest to average first)
+            sorted_indices = np.argsort(rmsd_to_avg)
+
+            # Save representative structures
+            with open(summary_path, 'a') as summary_file:
+                summary_file.write("  - Representative structures:\n")
+
+            for rank, idx in enumerate(sorted_indices):
+                frame_idx = high_prob_indices[idx]
+                rmsd = rmsd_to_avg[idx]
+                prob = state_frame_probs[idx]
+
+                # Get original frame index
+                original_idx = frame_mapping[frame_idx] if frame_idx < len(frame_mapping) else -1
+
+                # Output filename with rank, frame index, RMSD, and probability
+                output_file = os.path.join(
+                    state_dir,
+                    f"{protein_name}_state_{state_num}_rank_{rank + 1}_frame_{original_idx}_rmsd_{rmsd:.3f}_prob_{prob:.3f}.pdb"
+                )
+
+                # Save the frame as PDB
+                combined_traj[frame_idx].save_pdb(output_file)
+                state_structures[state_idx].append(output_file)
+
+                # Add to summary
+                with open(summary_path, 'a') as summary_file:
+                    summary_file.write(f"    - {os.path.basename(output_file)}\n")
+
+            with open(summary_path, 'a') as summary_file:
+                summary_file.write("\n")
+
+            print(f"State {state_num}: Saved average structure and {len(sorted_indices)} representative structures")
+
+        except Exception as e:
+            print(f"Error processing state {state_num}: {str(e)}")
+            with open(summary_path, 'a') as summary_file:
+                summary_file.write(f"  - Error: {str(e)}\n\n")
+
+    print(f"Summary saved to {summary_path}")
+    return state_structures
+
+def save_attention_colored_structures(
+        state_structures: dict,
+        state_attention_maps: np.ndarray,
+        save_dir: str,
+        protein_name: str
+) -> dict:
+    """
+    Save new versions of existing state structures with attention values as B-factors
+    and corresponding PyMOL visualization scripts.
+
+    Parameters
+    ----------
+    state_structures : dict
+        Dictionary mapping state numbers to lists of PDB file paths
+    state_attention_maps : np.ndarray
+        Attention maps for each state [n_states, n_atoms, n_atoms]
+    save_dir : str
+        Directory to save the output files
+    protein_name : str
+        Name of the protein for file naming
+
+    Returns
+    -------
+    dict
+        Dictionary mapping state numbers to lists of attention-colored PDB file paths
+    """
+    # Define a simple scaling function to replace sklearn's scale
+    def scale(x):
+        """Scale array to range [0,1]"""
+        x_min = np.min(x)
+        x_max = np.max(x)
+        if x_max > x_min:
+            return (x - x_min) / (x_max - x_min)
+        # Handle case where all values are the same
+        return np.zeros_like(x)
+
+    # Calculate scaled attention scores for each state
+    state_residue_attention = {}
+    for state in range(len(state_attention_maps)):
+        scores = scale(state_attention_maps[state].sum(axis=0))
+        scores = scores * 90  # Scale to 0-90 range
+        state_residue_attention[state] = scores
+
+    attention_structures = {}
+
+    # Create output directory if it doesn't exist
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    # Process each state
+    for state_num, structures in state_structures.items():
+        attention_structures[state_num] = []
+        state_dir = os.path.join(save_dir, f"state_{state_num + 1}_attention")
+        os.makedirs(state_dir, exist_ok=True)
+
+        print(f"Processing state {state_num + 1} structures...")
+
+        # Process each structure in the state
+        for pdb_file in structures:
+            try:
+                # Load structure
+                traj = md.load(pdb_file)
+
+                # Create attention PDB filename
+                base_name = os.path.basename(pdb_file)
+                new_name = base_name.replace('.pdb', '_attention.pdb')
+                output_file = os.path.join(state_dir, new_name)
+
+                # Get attention values for this state
+                attention_values = state_residue_attention[state_num]
+
+                # Check if dimensions match
+                if len(attention_values) != traj.topology.n_residues:
+                    print(f"Warning: Attention map has {len(attention_values)} values, but structure "
+                          f"{base_name} has {traj.topology.n_residues} residues.")
+
+                    # If not enough values, pad with zeros
+                    if len(attention_values) < traj.topology.n_residues:
+                        padding = np.zeros(traj.topology.n_residues - len(attention_values))
+                        attention_values = np.concatenate([attention_values, padding])
+                    else:
+                        # If too many values, truncate
+                        attention_values = attention_values[:traj.topology.n_residues]
+
+                # Set B-factors based on residue indices
+                b_factors = []
+                for atom in traj.topology.atoms:
+                    res_idx = atom.residue.index
+                    if res_idx < len(attention_values):
+                        attention_value = attention_values[res_idx]
+                        b_factors.append(attention_value)
+                    else:
+                        # Fallback for atoms in residues beyond our attention map
+                        b_factors.append(0.0)
+
+                # Check that we have b-factors for all atoms
+                if len(b_factors) != traj.n_atoms:
+                    print(f"Warning: Generated {len(b_factors)} B-factors for {traj.n_atoms} atoms "
+                          f"in structure {base_name}")
+                    # Pad with zeros if needed
+                    if len(b_factors) < traj.n_atoms:
+                        b_factors.extend([0.0] * (traj.n_atoms - len(b_factors)))
+                    else:
+                        # Truncate if too many
+                        b_factors = b_factors[:traj.n_atoms]
+
+                # Save PDB with attention B-factors
+                traj_with_bfactors = traj
+                traj_with_bfactors.save_pdb(output_file, bfactors=b_factors)
+
+                # Create corresponding PyMOL script
+                script_name = new_name.replace('.pdb', '_view.pml')
+                script_path = os.path.join(state_dir, script_name)
+
+                with open(script_path, 'w') as f:
+                    f.write(f"load {new_name}\n")
+                    f.write("bg_color white\n")
+                    f.write("show cartoon\n")
+                    f.write("hide lines\n")
+                    f.write("spectrum b, blue_white_red\n")
+                    f.write("set ray_shadows, 0\n")
+                    f.write("set ray_opaque_background, off\n")
+                    f.write("set cartoon_fancy_helices, 1\n")
+                    f.write("zoom\n")
+                    f.write("ray 1200, 1200\n")
+
+                attention_structures[state_num].append(output_file)
+                print(f"Saved attention-colored structure to {output_file}")
+                print(f"Saved PyMOL script to {script_path}")
+
+            except Exception as e:
+                print(f"Error processing {pdb_file}: {str(e)}")
+
+    return attention_structures
 
 
 def calculate_state_attention_maps_old(attentions: np.ndarray,

@@ -21,7 +21,7 @@ from pygv.utils.pipe_utils import find_trajectory_files
 
 from pygv.vampnet import VAMPNet
 from pygv.encoder.schnet_wo_embed import SchNetEncoderNoEmbed
-from pygv.encoder.meta import Meta
+from pygv.encoder.meta_att import Meta
 
 from pygv.scores.vamp_score_v0 import VAMPScore
 from pygv.classifier.SoftmaxMLP import SoftmaxMLP

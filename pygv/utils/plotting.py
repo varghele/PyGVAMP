@@ -1,11 +1,20 @@
 import os
+import re
+
+import datetime
+from tqdm import tqdm
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from typing import List, Tuple, Optional
 from matplotlib.colors import ListedColormap
+from matplotlib.image import imread
 from pygv.utils.analysis import calculate_transition_matrices
 import mdtraj as md
+
+import subprocess
+from pygv.utils.analysis import calculate_transition_matrices
 
 
 def plot_vamp_scores(scores, save_path=None, smoothing=None, title="VAMPNet Training Performance"):
@@ -730,7 +739,7 @@ def plot_state_attention_weights(
 
     # Set ticks and labels
     ax.set_yticks(np.arange(n_states))
-    ax.set_yticklabels([f"State {i + 1}" for i in range(n_states)], fontweight='bold')
+    ax.set_yticklabels([f"{i + 1}" for i in range(n_states)], fontweight='bold')
 
     # Set x-ticks (showing a subset if too many)
     if n_entities > 30:
@@ -823,7 +832,742 @@ def plot_all_residue_attention_directions(
         plt.close(fig)
 
 
-def plot_state_populations(probs: List[np.ndarray],
+def visualize_state_ensemble(
+        state_structures: dict,
+        save_dir: str,
+        protein_name: str,
+        ray_opaque_background: str = "off",
+        use_transparency: bool = True,
+        image_size: tuple = (1200, 1200)
+):
+    """
+    Create PyMOL visualizations of state ensembles from multiple angles.
+
+    Parameters
+    ----------
+    state_structures : dict
+        Dictionary mapping state numbers to lists of PDB file paths
+    save_dir : str
+        Directory to save the output files
+    protein_name : str
+        Name of the protein for file naming
+    ray_opaque_background : str, optional
+        Whether to use opaque background for ray-traced images ("on" or "off")
+    use_transparency : bool, optional
+        Whether to apply transparency to lower-ranked structures
+    image_size : tuple, optional
+        Size of output images (width, height) in pixels
+    """
+    # Define viewing angles (front, side, top)
+    views = {
+        'front': (0, 0, 0),
+        'side': (90, 0, 0),
+        'top': (0, 90, 0),
+        'iso': (30, 30, 0)
+    }
+
+    # Create the output directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Create a log file for PyMOL output
+    pymol_log = os.path.join(save_dir, f"{protein_name}_pymol.log")
+
+    # Try importing PyMOL
+    try:
+        import pymol
+        from pymol import cmd
+        pymol_imported = True
+        print("Successfully imported PyMOL")
+    except ImportError:
+        pymol_imported = False
+        print("WARNING: Could not import PyMOL Python module.")
+        print("Will attempt to run PyMOL via command line instead.")
+
+    if pymol_imported:
+        try:
+            # Initialize PyMOL in headless mode
+            pymol.finish_launching(['pymol', '-qc'])
+
+            for state_num, structures in state_structures.items():
+                state_dir = os.path.join(save_dir, f"state_{state_num + 1}")
+                img_dir = os.path.join(state_dir, "images")
+                os.makedirs(img_dir, exist_ok=True)
+
+                print(f"Processing state {state_num + 1} with {len(structures)} structures...")
+
+                # Initialize for each state
+                cmd.reinitialize()
+
+                # Set up visualization parameters
+                cmd.bg_color("white")
+                cmd.set("ray_opaque_background", ray_opaque_background)
+                cmd.set("cartoon_fancy_helices", 1)
+                cmd.set("cartoon_transparency", 0)
+                cmd.set("ray_shadows", 0)
+
+                # Load and process structures
+                for i, pdb_file in enumerate(structures):
+                    try:
+                        # Extract distance or RMSD from filename if available
+                        if '_dist_' in pdb_file:
+                            dist = float(pdb_file.split('_dist_')[-1].replace('.pdb', ''))
+                        elif '_rmsd_' in pdb_file:
+                            dist = float(pdb_file.split('_rmsd_')[-1].split('_')[0])
+                        else:
+                            dist = i  # Use index as a fallback
+
+                        # Determine opacity based on rank
+                        opacity = 1.0
+                        if use_transparency:
+                            opacity = 1.0 - (i / len(structures) * 0.8)
+                            opacity = max(0.2, opacity)  # Ensure minimum visibility
+
+                        # Name structure based on state and rank
+                        name = f"state_{state_num + 1}_rank_{i}"
+
+                        # Load structure
+                        cmd.load(pdb_file, name)
+                        cmd.show_as("cartoon", name)
+
+                        # Apply transparency
+                        cmd.set("transparency", 1 - opacity, name)
+
+                        # Color by secondary structure
+                        cmd.color("marine", f"{name} and ss h")
+                        cmd.color("forest", f"{name} and ss s")
+                        cmd.color("wheat", f"{name} and ss l")
+
+                        # Align to first structure
+                        if i > 0:
+                            cmd.align(name, f"state_{state_num + 1}_rank_0")
+
+                    except Exception as e:
+                        print(f"Error processing structure {pdb_file}: {str(e)}")
+
+                # Save combined state
+                try:
+                    combined_pdb = os.path.join(state_dir, f"{protein_name}_state_{state_num + 1}_ensemble.pdb")
+                    cmd.save(combined_pdb, f"state_{state_num + 1}_rank_*")
+                    print(f"Saved combined ensemble to {combined_pdb}")
+                except Exception as e:
+                    print(f"Error saving combined ensemble: {str(e)}")
+
+                # Generate images from different angles
+                for view_name, (x, y, z) in views.items():
+                    try:
+                        # Reset orientation
+                        cmd.reset()
+
+                        # Apply the view rotation
+                        cmd.rotate('x', x)
+                        cmd.rotate('y', y)
+                        cmd.rotate('z', z)
+
+                        # Center and zoom
+                        cmd.center()
+                        cmd.zoom()
+
+                        # Create file path
+                        img_file = os.path.join(img_dir, f"{protein_name}_state_{state_num + 1}_{view_name}.png")
+
+                        # Render image
+                        cmd.ray(image_size[0], image_size[1])
+                        cmd.png(img_file, dpi=300, ray=1)
+
+                        if os.path.exists(img_file):
+                            print(f"Saved {view_name} view to {img_file}")
+                        else:
+                            print(f"Failed to save {view_name} view")
+                    except Exception as e:
+                        print(f"Error generating {view_name} view: {str(e)}")
+
+                # Clean up this state
+                cmd.delete("all")
+
+            # Clean up PyMOL session without killing the process
+            cmd.delete("all")
+            cmd.reinitialize()
+
+        except Exception as e:
+            print(f"ERROR using PyMOL Python API: {str(e)}")
+            pymol_imported = False
+            print("Falling back to command-line approach")
+
+    # If Python API failed or wasn't available, use command line approach
+    if not pymol_imported:
+        print("Using command-line approach for PyMOL visualization")
+
+        # Create a temporary PyMOL script
+        temp_script_path = os.path.join(save_dir, f"{protein_name}_pymol_script.py")
+
+        with open(temp_script_path, 'w') as script:
+            script.write("from pymol import cmd\n\n")
+
+            for state_num, structures in state_structures.items():
+                # Create directories
+                state_dir = os.path.join(save_dir, f"state_{state_num + 1}")
+                img_dir = os.path.join(state_dir, "images")
+                script.write(f"import os\nos.makedirs('{img_dir}', exist_ok=True)\n\n")
+
+                script.write(f"# Processing state {state_num + 1}\n")
+                script.write("cmd.reinitialize()\n")
+
+                # Set up visualization parameters
+                script.write("cmd.bg_color('white')\n")
+                script.write(f"cmd.set('ray_opaque_background', '{ray_opaque_background}')\n")
+                script.write("cmd.set('cartoon_fancy_helices', 1)\n")
+                script.write("cmd.set('cartoon_transparency', 0)\n")
+                script.write("cmd.set('ray_shadows', 0)\n\n")
+
+                # Load and process structures
+                for i, pdb_file in enumerate(structures):
+                    # Determine opacity
+                    opacity = 1.0
+                    if use_transparency:
+                        opacity = 1.0 - (i / len(structures) * 0.8)
+                        opacity = max(0.2, opacity)
+
+                    # Name structure
+                    name = f"state_{state_num + 1}_rank_{i}"
+
+                    script.write(f"# Load structure {i}\n")
+                    script.write(f"try:\n")
+                    script.write(f"    cmd.load(r'{os.path.abspath(pdb_file)}', '{name}')\n")
+                    script.write(f"    cmd.show_as('cartoon', '{name}')\n")
+                    script.write(f"    cmd.set('transparency', {1 - opacity}, '{name}')\n")
+                    script.write(f"    cmd.color('marine', '{name} and ss h')\n")
+                    script.write(f"    cmd.color('forest', '{name} and ss s')\n")
+                    script.write(f"    cmd.color('wheat', '{name} and ss l')\n")
+
+                    if i > 0:
+                        script.write(f"    cmd.align('{name}', 'state_{state_num + 1}_rank_0')\n")
+
+                    script.write(f"except Exception as e:\n")
+                    script.write(f"    print(f'Error processing {pdb_file}: {{str(e)}}')\n\n")
+
+                # Save combined state
+                combined_pdb = os.path.join(state_dir, f"{protein_name}_state_{state_num + 1}_ensemble.pdb")
+                script.write(f"# Save combined ensemble\n")
+                script.write(f"try:\n")
+                script.write(f"    cmd.save(r'{os.path.abspath(combined_pdb)}', 'state_{state_num + 1}_rank_*')\n")
+                script.write(f"    print('Saved combined ensemble to {combined_pdb}')\n")
+                script.write(f"except Exception as e:\n")
+                script.write(f"    print(f'Error saving combined ensemble: {{str(e)}}')\n\n")
+
+                # Generate images from different angles
+                for view_name, (x, y, z) in views.items():
+                    img_file = os.path.join(img_dir, f"{protein_name}_state_{state_num + 1}_{view_name}.png")
+
+                    script.write(f"# Generate {view_name} view\n")
+                    script.write(f"try:\n")
+                    script.write(f"    cmd.reset()\n")
+                    script.write(f"    cmd.rotate('x', {x})\n")
+                    script.write(f"    cmd.rotate('y', {y})\n")
+                    script.write(f"    cmd.rotate('z', {z})\n")
+                    script.write(f"    cmd.center()\n")
+                    script.write(f"    cmd.zoom()\n")
+                    script.write(f"    cmd.ray({image_size[0]}, {image_size[1]})\n")
+                    script.write(f"    cmd.png(r'{os.path.abspath(img_file)}', dpi=300, ray=1)\n")
+                    script.write(f"    print('Saved {view_name} view to {img_file}')\n")
+                    script.write(f"except Exception as e:\n")
+                    script.write(f"    print(f'Error generating {view_name} view: {{str(e)}}')\n\n")
+
+                # Clean up this state
+                script.write("cmd.delete('all')\n\n")
+
+            # Clean up PyMOL session without killing the process
+            script.write("cmd.delete('all')\n")
+            script.write("cmd.reinitialize()\n")
+            script.write("cmd.quit()\n")
+
+        print(f"Created PyMOL script at {temp_script_path}")
+
+        # Execute the script with PyMOL
+        if pymol_executable:
+            print(f"Running PyMOL with script...")
+            try:
+                with open(pymol_log, 'w') as log:
+                    subprocess.run([pymol_executable, '-qc', temp_script_path],
+                                   stdout=log, stderr=log, check=True)
+                print(f"PyMOL execution completed. See log at {pymol_log}")
+            except subprocess.CalledProcessError as e:
+                print(f"ERROR: PyMOL execution failed with return code {e.returncode}")
+        else:
+            print("ERROR: PyMOL executable not found, cannot generate visualizations.")
+            print(f"Please run this script manually with PyMOL: {temp_script_path}")
+
+    print("Visualization process completed")
+
+
+def visualize_attention_ensemble(
+        state_structures: dict,
+        state_attention_maps: np.ndarray,
+        save_dir: str,
+        protein_name: str
+):
+    """
+    Create PyMOL visualizations of existing state structures colored by attention.
+
+    Parameters
+    ----------
+    state_structures : dict
+        Dictionary mapping state numbers to lists of PDB file paths
+    state_attention_maps : np.ndarray
+        Attention maps for each state [n_states, n_atoms, n_atoms]
+    save_dir : str
+        Directory to save the output files
+    protein_name : str
+        Name of the protein for file naming
+    """
+    # Create output directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+
+    # Define viewing angles (front, side, top)
+    views = {
+        'front': (0, 0, 0),
+        'side': (90, 0, 0),
+        'top': (0, 90, 0),
+        'iso': (30, 30, 0)
+    }
+
+    # Define a simple scaling function
+    def scale(x):
+        """Scale array to range [0,1]"""
+        x_min = np.min(x)
+        x_max = np.max(x)
+        if x_max > x_min:
+            return (x - x_min) / (x_max - x_min)
+        # Handle case where all values are the same
+        return np.zeros_like(x)
+
+    # Calculate scaled attention scores for each state
+    state_residue_attention = {}
+    for state in range(len(state_attention_maps)):
+        scores = scale(state_attention_maps[state].sum(axis=0))
+        state_residue_attention[state] = scores
+
+    # Try to import PyMOL
+    try:
+        import pymol
+        from pymol import cmd
+        pymol_imported = True
+        print("Successfully imported PyMOL")
+    except ImportError:
+        pymol_imported = False
+        print("WARNING: Could not import PyMOL Python API.")
+        print("Will create PyMOL script files instead that you can run manually.")
+
+    # Create a function to generate PyMOL script for a state
+    def generate_pymol_script(state_num, structures, state_dir):
+        """Generate a PyMOL script for the given state"""
+        script_path = os.path.join(state_dir, f"{protein_name}_state_{state_num + 1}_attention_view.pml")
+
+        with open(script_path, 'w') as script:
+            script.write("# PyMOL script for visualizing attention-colored structures\n")
+            script.write("reinitialize\n")
+            script.write("bg_color white\n")
+            script.write("set ray_opaque_background, off\n")
+            script.write("set cartoon_fancy_helices, 1\n")
+            script.write("set cartoon_transparency, 0\n")
+            script.write("set ray_shadows, 0\n\n")
+
+            # Load structures and apply attention coloring
+            for i, pdb_file in enumerate(structures):
+                if i == 0:
+                    opacity = 1.0  # First structure fully opaque
+                else:
+                    # Exponential decay starting from 0.7
+                    decay_rate = 1.5  # Adjust this value to control decay speed
+                    opacity = 0.3 * np.exp(-decay_rate * (i - 1))
+
+                name = f"state_{state_num + 1}_rank_{i}"
+                script.write(f"# Load structure {i}\n")
+                script.write(f"load {os.path.abspath(pdb_file)}, {name}\n")
+                script.write(f"show cartoon, {name}\n")
+                script.write(f"set transparency, {1 - opacity}, {name}\n\n")
+
+                # Apply attention values as B-factors
+                script.write(f"# Apply attention values as B-factors\n")
+                for res_idx, attention in enumerate(state_residue_attention[state_num]):
+                    b_factor = attention * 100
+                    script.write(f"alter {name} and resi {res_idx + 1}, b={b_factor}\n")
+
+                # Color by B-factor (attention values)
+                script.write(f"spectrum b, blue_white_red, {name}\n")
+
+                if i > 0:
+                    script.write(f"align {name}, state_{state_num + 1}_rank_0\n")
+
+                script.write("\n")
+
+            # Save combined state
+            combined_pdb = os.path.join(state_dir, f"{protein_name}_state_{state_num + 1}_attention_ensemble.pdb")
+            script.write(f"# Save combined ensemble\n")
+            script.write(f"save {os.path.abspath(combined_pdb)}, state_{state_num + 1}_rank_*\n\n")
+
+            # Generate images from different views
+            img_dir = os.path.join(state_dir, "attention_images")
+            script.write(f"# Create image directory\n")
+            script.write(f"import os\nos.makedirs(r'{img_dir}', exist_ok=True)\n\n")
+
+            script.write(f"# Generate images from different angles\n")
+            for view_name, (x, y, z) in views.items():
+                img_file = os.path.join(img_dir, f"{protein_name}_state_{state_num + 1}_{view_name}_attention.png")
+
+                script.write(f"# {view_name} view\n")
+                script.write(f"reset\n")
+                script.write(f"rotate x, {x}\n")
+                script.write(f"rotate y, {y}\n")
+                script.write(f"rotate z, {z}\n")
+                script.write(f"center\n")
+                script.write(f"zoom\n")
+                script.write(f"ray 1200, 1200\n")
+                script.write(f"png {os.path.abspath(img_file)}, dpi=300, ray=1\n\n")
+
+            script.write("# Clean up\n")
+            script.write("reinitialize\n")
+            script.write("# End of script\n")
+
+        return script_path
+
+    # Process each state
+    pymol_scripts = []
+
+    if pymol_imported:
+        # Initialize PyMOL in headless mode
+        try:
+            pymol.finish_launching(['pymol', '-qc'])
+        except Exception as e:
+            print(f"ERROR: Failed to initialize PyMOL in headless mode: {str(e)}")
+            pymol_imported = False  # Fall back to script generation
+
+    for state_num, structures in state_structures.items():
+        print(f"Processing state {state_num + 1} with attention coloring...")
+
+        state_dir = os.path.join(save_dir, f"state_{state_num + 1}_attention")
+        img_dir = os.path.join(state_dir, "attention_images")
+        os.makedirs(img_dir, exist_ok=True)
+
+        # Generate script for this state
+        script_path = generate_pymol_script(state_num, structures, state_dir)
+        pymol_scripts.append(script_path)
+
+        # If PyMOL API is available, execute the visualization
+        if pymol_imported:
+            try:
+                # Initialize for each state
+                cmd.reinitialize()
+
+                # Set up visualization parameters
+                cmd.bg_color("white")
+                cmd.set("ray_opaque_background", "off")
+                cmd.set("cartoon_fancy_helices", 1)
+                cmd.set("cartoon_transparency", 0)
+                cmd.set("ray_shadows", 0)
+
+                # Load existing structures and apply attention coloring
+                for i, pdb_file in enumerate(structures):
+                    if i == 0:
+                        opacity = 1.0  # First structure fully opaque
+                    else:
+                        # Exponential decay starting from 0.7
+                        decay_rate = 1.5  # Adjust this value to control decay speed
+                        opacity = 0.3 * np.exp(-decay_rate * (i - 1))
+                    name = f"state_{state_num + 1}_rank_{i}"
+
+                    # Load structure
+                    cmd.load(pdb_file, name)
+                    cmd.show_as("cartoon", name)
+                    cmd.set("transparency", 1 - opacity, name)
+
+                    # Apply attention values as B-factors
+                    for res_idx, attention in enumerate(state_residue_attention[state_num]):
+                        b_factor = attention * 100
+                        cmd.alter(f"{name} and resi {res_idx + 1}", f"b={b_factor}")
+
+                    # Color by B-factor (attention values)
+                    cmd.spectrum("b", "blue_white_red", name)
+
+                    if i > 0:
+                        cmd.align(name, f"state_{state_num + 1}_rank_0")
+
+                # Save combined state
+                combined_pdb = os.path.join(state_dir, f"{protein_name}_state_{state_num + 1}_attention_ensemble.pdb")
+                cmd.save(combined_pdb, f"state_{state_num + 1}_rank_*")
+
+                # Generate images from different angles
+                for view_name, (x, y, z) in views.items():
+                    cmd.reset()
+                    cmd.rotate('x', x)
+                    cmd.rotate('y', y)
+                    cmd.rotate('z', z)
+                    cmd.center()
+                    cmd.zoom()
+
+                    img_file = os.path.join(img_dir, f"{protein_name}_state_{state_num + 1}_{view_name}_attention.png")
+                    cmd.ray(1200, 1200)
+                    cmd.png(img_file, dpi=300, ray=1)
+                    print(f"Saved {view_name} attention view to {img_file}")
+
+                cmd.delete("all")
+
+            except Exception as e:
+                print(f"Error processing state {state_num + 1} with PyMOL API: {str(e)}")
+                print(f"You can run the generated script manually: {script_path}")
+        else:
+            print(f"Generated PyMOL script for state {state_num + 1}: {script_path}")
+
+    # Clean up PyMOL session if used
+    if pymol_imported:
+        try:
+            cmd.delete("all")
+            cmd.reinitialize()
+        except:
+            pass
+
+    # Create a combined script that runs all state scripts
+    if not pymol_imported:
+        master_script_path = os.path.join(save_dir, f"{protein_name}_run_all_attention_visualizations.pml")
+        with open(master_script_path, 'w') as master_script:
+            master_script.write("# Master script to run all state attention visualizations\n\n")
+            for script_path in pymol_scripts:
+                master_script.write(f"@{os.path.abspath(script_path)}\n")
+
+        print(f"Created master PyMOL script: {master_script_path}")
+        print("To visualize all states, run PyMOL and execute:")
+        print(f"    @{os.path.abspath(master_script_path)}")
+
+
+def plot_state_network(
+        probs: np.ndarray,
+        state_structures: dict,
+        save_dir: str,
+        protein_name: str,
+        lag_time: int = 1,
+        stride: int = 1,
+        timestep: float = 0.001
+):
+    """
+    Create a network plot showing transitions between non-empty states with representative structures.
+
+    Parameters
+    ----------
+    probs : np.ndarray
+        State probability trajectory with shape [n_frames, n_states] from analyze_vampnet_outputs
+    state_structures : dict
+        Dictionary mapping state numbers to lists of PDB file paths
+    save_dir : str
+        Directory to save the output files
+    protein_name : str
+        Name of the protein
+    lag_time : int, optional
+        Lag time for transition matrix calculation in ns
+    stride : int, optional
+        Stride used when extracting frames from trajectory
+    timestep : float, optional
+        Trajectory timestep in ns
+    """
+    # Create save directory if it doesn't exist
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    try:
+        # Use existing function to calculate transition matrices
+        trans_matrix, trans_matrix_no_self = calculate_transition_matrices(
+            probs=probs,
+            lag_time=lag_time,
+            stride=stride,
+            timestep=timestep
+        )
+
+        # Calculate state populations from probabilities
+        states = np.argmax(probs, axis=1)
+        unique, counts = np.unique(states, return_counts=True)
+        n_states = probs.shape[1]
+        avg_state_pops = np.zeros(n_states)
+        avg_state_pops[unique] = counts / len(states)
+
+        # Identify non-empty states (those with structures or populations)
+        non_empty_states = set()
+        for i, pop in enumerate(avg_state_pops):
+            if pop > 0 and i in state_structures and len(state_structures[i]) > 0:
+                non_empty_states.add(i)
+
+        # If all states are empty, warn and return
+        if not non_empty_states:
+            print("Warning: No non-empty states found. Cannot create network plot.")
+            return
+
+        # Create mapping from old state indices to new contiguous indices
+        non_empty_states = sorted(list(non_empty_states))
+        old_to_new_idx = {old_idx: new_idx for new_idx, old_idx in enumerate(non_empty_states)}
+
+        # Create reduced transition matrix with only non-empty states
+        n_active_states = len(non_empty_states)
+        reduced_trans_matrix = np.zeros((n_active_states, n_active_states))
+        reduced_trans_matrix_no_self = np.zeros((n_active_states, n_active_states))
+        reduced_pops = np.zeros(n_active_states)
+
+        # Fill reduced matrices and populations
+        for i, old_i in enumerate(non_empty_states):
+            reduced_pops[i] = avg_state_pops[old_i]
+            for j, old_j in enumerate(non_empty_states):
+                reduced_trans_matrix[i, j] = trans_matrix[old_i, old_j]
+                reduced_trans_matrix_no_self[i, j] = trans_matrix_no_self[old_i, old_j]
+
+        # Create figure
+        fig, ax = plt.subplots(figsize=(24, 24))
+
+        # Setup node positions with larger radius
+        angles = np.linspace(0, 2 * np.pi, n_active_states, endpoint=False)
+        radius = 2.0  # Increased radius
+        pos = {i: (radius * np.cos(angle), radius * np.sin(angle))
+               for i, angle in enumerate(angles)}
+
+        # Draw transitions with separate curves for forward/backward
+        transition_labels = {}
+        for i in range(n_active_states):
+            for j in range(n_active_states):
+                if i != j and reduced_trans_matrix_no_self[i, j] > 0:
+                    try:
+                        # Forward transitions (blue, outer curve)
+                        if i < j:
+                            color = 'blue'
+                            rad = -0.3
+                        # Backward transitions (red, inner curve)
+                        else:
+                            color = 'red'
+                            rad = -0.3
+
+                        # Draw thicker arrows based on probability
+                        arrow = ax.annotate("",
+                                            xy=pos[j], xycoords='data',
+                                            xytext=pos[i], textcoords='data',
+                                            arrowprops=dict(arrowstyle="-|>",
+                                                            connectionstyle=f"arc3,rad={rad}",
+                                                            color=color,
+                                                            lw=4 * reduced_trans_matrix_no_self[i, j] + 2,
+                                                            # Thicker arrows
+                                                            alpha=0.7,
+                                                            mutation_scale=20))  # Controls arrowhead size
+
+                        # Store transition information
+                        state_pair = tuple(sorted([i, j]))
+                        if state_pair not in transition_labels:
+                            transition_labels[state_pair] = []
+
+                        # Use original state numbers for labels
+                        orig_i = non_empty_states[i]
+                        orig_j = non_empty_states[j]
+                        transition_labels[state_pair].append({
+                            'text': f'S{orig_i + 1}→S{orig_j + 1}: {reduced_trans_matrix_no_self[i, j]:.2f}',
+                            'color': color
+                        })
+                    except Exception as e:
+                        print(f"Warning: Error drawing transition from state {i} to {j}: {str(e)}")
+
+        # Add labels for all transitions
+        for (i, j), labels in transition_labels.items():
+            try:
+                # Calculate middle point
+                mid_x = (pos[i][0] + pos[j][0]) / 2
+                mid_y = (pos[i][1] + pos[j][1]) / 2
+
+                # Calculate perpendicular offset
+                dx = pos[j][0] - pos[i][0]
+                dy = pos[j][1] - pos[i][1]
+                angle = np.arctan2(dy, dx)
+                perp_angle = angle + np.pi / 2
+
+                offset = 0.2
+                offset_x = offset * np.cos(perp_angle)
+                offset_y = offset * np.sin(perp_angle)
+
+                # Stack labels vertically
+                for idx, label in enumerate(labels):
+                    vertical_spacing = 0.15  # Adjust this value to control vertical spacing
+                    y_offset = vertical_spacing * (idx - (len(labels) - 1) / 2)
+
+                    ax.text(mid_x + offset_x,
+                            mid_y + offset_y + y_offset,
+                            label['text'],
+                            ha='center', va='center',
+                            color=label['color'],
+                            bbox=dict(facecolor='white', alpha=0.7),
+                            fontsize=12)
+            except Exception as e:
+                print(f"Warning: Error adding transition label: {str(e)}")
+
+        # Draw nodes and add structure images
+        for i in range(n_active_states):
+            orig_i = non_empty_states[i]
+
+            try:
+                # Load and display structure image
+                img_path = os.path.join(save_dir,
+                                        f"state_{orig_i + 1}/images/{protein_name}_state_{orig_i + 1}_iso.png")
+                if os.path.exists(img_path):
+                    img = imread(img_path)
+                    img_size = 0.8  # Increased image size
+                    ax.imshow(img,
+                              extent=[pos[i][0] - img_size / 2, pos[i][0] + img_size / 2,
+                                      pos[i][1] - img_size / 2, pos[i][1] + img_size / 2])
+                else:
+                    print(f"Warning: Image file not found: {img_path}")
+                    # Draw a placeholder circle
+                    circle = plt.Circle(pos[i], 0.4, fill=True, color='lightgray')
+                    ax.add_patch(circle)
+
+                    # Add state number to the placeholder
+                    ax.text(pos[i][0], pos[i][1], f"S{orig_i + 1}",
+                            ha='center', va='center', fontsize=14, fontweight='bold')
+
+                # Add state label and population with larger font
+                ax.text(pos[i][0], pos[i][1] - 0.5,
+                        f'State {orig_i + 1}\n{reduced_pops[i]:.1%}',
+                        ha='center', va='center',
+                        bbox=dict(facecolor='white', alpha=0.7),
+                        fontsize=14)
+            except Exception as e:
+                print(f"Warning: Error adding state {orig_i + 1} to plot: {str(e)}")
+
+        # Add legend with larger font
+        ax.plot([], [], color='blue', label='Forward transitions', linewidth=4)
+        ax.plot([], [], color='red', label='Backward transitions', linewidth=4)
+        ax.legend(loc='upper right', fontsize=12)
+
+        # Increase plot bounds
+        ax.set_xlim(-2.8, 2.8)
+        ax.set_ylim(-2.8, 2.8)
+        plt.axis('equal')
+        plt.axis('off')
+        plt.title(f'State Transition Network - {protein_name} (Non-empty States Only)', fontsize=16)
+
+        # Save plot with suffix indicating lag time
+        suffix = f"lag{lag_time}"
+        plot_path = os.path.join(save_dir, f"{protein_name}_state_network_{suffix}.png")
+        plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        print(f"Saved state network plot to: {plot_path} with {n_active_states} non-empty states.")
+        print(f"Original states included: {', '.join([f'S{s + 1}' for s in non_empty_states])}")
+
+        # Return information about the network
+        return {
+            'plot_path': plot_path,
+            'transition_matrix': reduced_trans_matrix,
+            'transition_matrix_no_self': reduced_trans_matrix_no_self,
+            'state_populations': reduced_pops,
+            'non_empty_states': non_empty_states
+        }
+
+    except Exception as e:
+        print(f"Error creating state network plot: {str(e)}")
+        import traceback
+        traceback.print_exc()
+
+
+def plot_state_populations_newrec(probs: List[np.ndarray],
                            save_dir: str,
                            protein_name: str):
     """
@@ -892,7 +1636,7 @@ def plot_state_populations(probs: List[np.ndarray],
     return populations
 
 
-def plot_state_evolution(probs: List[np.ndarray],
+def plot_state_evolution_newrec(probs: List[np.ndarray],
                          save_dir: str,
                          protein_name: str,
                          timestep: float = 1.0,

@@ -15,9 +15,12 @@ import sys
 import torch
 import numpy as np
 
-from pygv.utils.analysis import calculate_state_edge_attention_maps
+from pygv.utils.analysis import (calculate_state_edge_attention_maps, generate_state_structures,
+                                 save_attention_colored_structures)
 from pygv.utils.plotting import (plot_transition_probabilities, plot_state_edge_attention_maps,
-                                 plot_state_attention_weights, plot_all_residue_attention_directions)
+                                 plot_state_attention_weights, plot_all_residue_attention_directions,
+                                 visualize_state_ensemble, visualize_attention_ensemble,
+                                 plot_state_network)
 
 from pygv.vampnet.vampnet import VAMPNet
 from pygv.utils.analysis import analyze_vampnet_outputs
@@ -257,6 +260,59 @@ def run_analysis(args=None):
         save_dir=paths['analysis_dir'],
         protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
     )
+    print("Attention analysis complete")
+
+    print("Generating state structures")
+    state_structures = generate_state_structures(
+        traj_folder=args.traj_dir,
+        topology_file=args.top,
+        probs=probs,  # The state probabilities array from your analysis
+        save_dir=paths['analysis_dir'],
+        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        stride=args.stride,
+        n_structures=10,  # Generate 5 representative structures per state
+        prob_threshold=0.0  # Only consider frames with probability ≥ 0.7
+    )
+
+    # Generate visualization
+    visualize_state_ensemble(
+        state_structures=state_structures,
+        save_dir=paths['analysis_dir'],
+        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        image_size=(800, 600)
+    )
+    print("Representative state structures generated")
+
+    # Generate state ensembles with attention values
+    save_attention_colored_structures(
+        state_structures=state_structures,
+        state_attention_maps=state_attention_maps,
+        save_dir=paths['analysis_dir'],
+        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+    )
+
+    # Visualize attention ensembles
+    visualize_attention_ensemble(
+        state_structures=state_structures,
+        state_attention_maps=state_attention_maps,
+        save_dir=paths['analysis_dir'],
+        protein_name='ab42',  # args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+    )
+    print("Attention-colored visualizations generated")
+
+    lag_frames = int(args.lag_time/inferred_timestep)/args.stride
+
+    plot_state_network(
+        probs=probs,
+        state_structures=state_structures,
+        save_dir=paths['analysis_dir'],
+        protein_name='ab42',  # args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        lag_time=args.lag_time,
+        stride=args.stride,
+        timestep=inferred_timestep
+    )
+    print("network of states plotted ")
+
     """plot_state_attention_maps(attention_maps=state_attention_maps,
                               states_order=,
                               n_states=args.n_states,
