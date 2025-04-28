@@ -788,9 +788,9 @@ class VAMPNet(nn.Module):
                 epoch_score_sum += vamp_score_val
                 n_batches += 1
 
-                # Calculate average VAMP score for the epoch
-                avg_epoch_score = epoch_score_sum / max(1, n_batches)
-                vamp_scores.append(avg_epoch_score)
+            # Calculate average VAMP score for the epoch
+            avg_epoch_score = epoch_score_sum / max(1, n_batches)
+            vamp_scores.append(avg_epoch_score)
 
             # Print progress for this epoch
             if verbose:

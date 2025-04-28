@@ -221,7 +221,7 @@ def run_analysis(args=None):
     # Calculate and plot the state transition matrices
     plot_transition_probabilities(probs = probs,
                                   save_dir=paths['analysis_dir'],
-                                  protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT
+                                  protein_name=args.protein_name,
                                   lag_time=args.lag_time,
                                   stride=args.stride,
                                   timestep=inferred_timestep)
@@ -232,7 +232,7 @@ def run_analysis(args=None):
         edge_indices=edge_indices,
         probs=probs,
         save_dir=paths['analysis_dir'],
-        protein_name='ab42',  # args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        protein_name=args.protein_name,
     )
 
     # Plot attention maps
@@ -240,7 +240,7 @@ def run_analysis(args=None):
         state_attention_maps=state_attention_maps,
         state_populations=state_populations,
         save_dir=paths['analysis_dir'],
-        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        protein_name=args.protein_name,
         threshold=0.01  # Optional: hide low attention values
     )
 
@@ -249,7 +249,7 @@ def run_analysis(args=None):
         state_attention_maps=state_attention_maps,
         topology_file=args.top,
         save_dir=paths['analysis_dir'],
-        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        protein_name=args.protein_name,
         plot_sum_direction="target"  # Show attention TO residues
     )
 
@@ -258,7 +258,7 @@ def run_analysis(args=None):
         state_attention_maps=state_attention_maps,
         topology_file=args.top,
         save_dir=paths['analysis_dir'],
-        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        protein_name=args.protein_name,
     )
     print("Attention analysis complete")
 
@@ -268,7 +268,7 @@ def run_analysis(args=None):
         topology_file=args.top,
         probs=probs,  # The state probabilities array from your analysis
         save_dir=paths['analysis_dir'],
-        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        protein_name=args.protein_name,
         stride=args.stride,
         n_structures=10,  # Generate 5 representative structures per state
         prob_threshold=0.0  # Only consider frames with probability ≥ 0.7
@@ -278,7 +278,7 @@ def run_analysis(args=None):
     visualize_state_ensemble(
         state_structures=state_structures,
         save_dir=paths['analysis_dir'],
-        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        protein_name=args.protein_name,
         image_size=(800, 600)
     )
     print("Representative state structures generated")
@@ -288,7 +288,7 @@ def run_analysis(args=None):
         state_structures=state_structures,
         state_attention_maps=state_attention_maps,
         save_dir=paths['analysis_dir'],
-        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        protein_name=args.protein_name,
     )
 
     # Visualize attention ensembles
@@ -296,7 +296,7 @@ def run_analysis(args=None):
         state_structures=state_structures,
         state_attention_maps=state_attention_maps,
         save_dir=paths['analysis_dir'],
-        protein_name='ab42',  # args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        protein_name=args.protein_name,
     )
     print("Attention-colored visualizations generated")
 
@@ -306,7 +306,7 @@ def run_analysis(args=None):
         probs=probs,
         state_structures=state_structures,
         save_dir=paths['analysis_dir'],
-        protein_name='ab42',  # args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
+        protein_name=args.protein_name,
         lag_time=args.lag_time,
         stride=args.stride,
         timestep=inferred_timestep

@@ -20,6 +20,7 @@ from pygv.dataset.vampnet_dataset import VAMPNetDataset
 from pygv.utils.pipe_utils import find_trajectory_files
 from pygv.utils.analysis import analyze_vampnet_outputs
 from pygv.utils.ck import run_ck_analysis
+from pygv.utils.its import analyze_implied_timescales
 
 from pygv.vampnet import VAMPNet
 from pygv.encoder.schnet_wo_embed import SchNetEncoderNoEmbed
@@ -72,10 +73,11 @@ def save_config(args, paths):
             f.write(f"{key} = {value}\n")
 
 
-def create_dataset_and_loader(args):
+def create_dataset_and_loader(args,
+                              is_frame_loader=False):
     """Create dataset and data loader"""
     # Getting all trajectories in traj directory
-    traj_files = find_trajectory_files(args.traj_dir)
+    traj_files = find_trajectory_files(args.traj_dir, file_pattern=args.file_pattern)
 
     print("Creating dataset...")
     dataset = VAMPNetDataset(
@@ -88,18 +90,31 @@ def create_dataset_and_loader(args):
         selection=args.selection,
         stride=args.stride,
         cache_dir=args.cache_dir,
-        use_cache=args.use_cache
+        use_cache=True if args.cache_dir is not None else False
     )
 
     print(f"Dataset created with {len(dataset)} samples")
 
+    # If individual frames are needed (for the tests), return a framewise dataset
+    # Get frames dataset instead of time-lagged pairs dataset
+    frames_dataset = dataset.get_frames_dataset(return_pairs=False)
+
     # Create data loader
-    loader = DataLoader(
-        dataset,
-        shuffle=True,
-        batch_size=args.batch_size,
-        pin_memory=torch.cuda.is_available() and not args.cpu
-    )
+    if is_frame_loader is False:
+        loader = DataLoader(
+            dataset,
+            shuffle=True,
+            batch_size=args.batch_size,
+            pin_memory=torch.cuda.is_available() and not args.cpu
+        )
+    else:
+        # Create data loader
+        loader = DataLoader(
+            frames_dataset,
+            shuffle=False,  # Always false for inference
+            batch_size=args.batch_size,
+            pin_memory=torch.cuda.is_available() and not args.cpu
+        )
 
     return dataset, loader
 
@@ -306,6 +321,11 @@ def run_training(args):
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Generate frames dataset and loader
+    # Here we do not need to return pairs, we need to analyze each frame,
+    # which is why we need to modify the dataloader a bit to return batches of frames
+    dataset, loader = create_dataset_and_loader(args, is_frame_loader=True)
+
     # TODO: pre-analysis for CK Tests and ITS Plots
     # Get state transition probabilities, graph embeddings and attention scores
     probs, embeddings, attentions, edge_indices = analyze_vampnet_outputs(model=model,
@@ -321,12 +341,19 @@ def run_training(args):
     # TODO: Check if this is correct!
     inferred_timestep = dataset._infer_timestep() / 1000  # Timestep in nanoseconds
 
+    # Get lag times up to maximum lag time
+    if args.max_tau is not None:
+        lag_times_ns = [i for i in range(1, args.max_tau, 2)]
+    else:
+        max_tau = 250
+        lag_times_ns = [i for i in range(1, max_tau, 2)]
+
     # Run Chapman Kolmogorow Test
     run_ck_analysis(
         probs=probs,
         save_dir=paths['plot_dir'],
-        protein_name='ab42',#args.protein_name, #TODO: INCLUDE THIS AS AN ARGUMENT,
-        lag_times_ns=args.lag_time,
+        protein_name=args.protein_name,
+        lag_times_ns=[args.lag_time],
         steps=10,
         stride=args.stride,
         timestep=inferred_timestep
@@ -334,13 +361,14 @@ def run_training(args):
     print("CK test complete")
 
     # Calculate and plot implied timescales
-    # TODO: Implement this
-    max_tau = 250
-    lags = [i for i in range(1, max_tau, 2)]
-    its = get_its(probs, lags)
-    # Using save_path instead of save_folder to match the function signature
-    plot_its(its, lags, save_path=args.save_folder, ylog=False)
-    np.save(os.path.join(args.save_folder, 'ITS.npy'), np.array(its))
+    analyze_implied_timescales(
+        probs=probs,
+        save_dir=paths['plot_dir'],
+        protein_name=args.protein_name,
+        lag_times_ns=lag_times_ns,
+        stride=args.stride,
+        timestep=inferred_timestep,
+    )
     print("ITS calculation complete")
 
 

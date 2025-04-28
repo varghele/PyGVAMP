@@ -21,18 +21,22 @@ def create_test_args():
     #args.encoder_type = 'meta'
 
     # Data settings
-    args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/')
-    args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb')
+    args.protein_name = 'TRP'
+    #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/')
+    args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/')
+    args.file_pattern = '*.dcd'
+    #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb')
+    args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb')
     args.selection = 'name CA'
-    args.stride = 1
-    args.lag_time = 10.0
-    args.n_neighbors = 10
+    args.stride = 100
+    args.lag_time = 20.0
+    args.n_neighbors = 7
     args.node_embedding_dim = 16
-    args.gaussian_expansion_dim = 16
+    args.gaussian_expansion_dim = 12 # TODO: This is edge dim!!!
 
     # SchNet encoder settings
     args.node_dim = 16
-    args.edge_dim = 16
+    args.edge_dim = 12
     args.hidden_dim = 32
     args.output_dim = 16
     args.n_interactions = 4
@@ -55,12 +59,12 @@ def create_test_args():
     args.meta_dropout = 0.0"""
 
     # Classifier settings
-    args.n_states = 4
+    args.n_states = 5
     args.clf_hidden_dim = 32
-    args.clf_num_layers = 2
+    args.clf_num_layers = 4
     args.clf_dropout = 0.0
     args.clf_activation = 'elu'
-    args.clf_norm = 'BatchNorm' # 'LayerNorm'
+    args.clf_norm = None #'BatchNorm' # 'LayerNorm'
 
     # Embedding settings
     args.use_embedding = True
@@ -73,19 +77,22 @@ def create_test_args():
     args.embedding_norm = None #'LayerNorm'
 
     # Training settings
-    args.epochs = 100
-    args.batch_size = 256
+    args.epochs = 5
+    args.batch_size = 1000
     args.lr = 0.005
     args.weight_decay = 1e-5
     args.clip_grad = None
     args.cpu = False  # Use CPU for testing
 
+    # Testing settngs
+    args.max_tau = 200
+
     # Output settings
-    args.output_dir = 'area53'
-    args.cache_dir = 'area53/cache'
+    args.output_dir = 'area54'
+    args.cache_dir = 'area54/cache'
     args.use_cache = False
     args.save_every = 0  # Don't save intermediates
-    args.run_name = 'test_run'
+    args.run_name = 'test_run_new'
 
     return args
 
