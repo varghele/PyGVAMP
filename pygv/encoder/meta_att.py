@@ -17,7 +17,7 @@ class EdgeModel(torch.nn.Module):
     def __init__(self, node_dim, edge_dim, hidden_dim, num_edge_mlp_layers, act, norm, dropout):
         super().__init__()
         self.edge_mlp = MLP(
-            in_channels=2 * node_dim + edge_dim, # no global_dim
+            in_channels= 2 * node_dim + edge_dim, # no global_dim
             hidden_channels=hidden_dim,
             out_channels=edge_dim,
             num_layers=num_edge_mlp_layers,

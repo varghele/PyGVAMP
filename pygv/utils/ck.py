@@ -20,6 +20,17 @@ def estimate_koopman_op(traj: Union[np.ndarray, List[np.ndarray]], lag: int) -> 
     np.ndarray
         Estimated Koopman operator with shape [n_states, n_states]
     """
+    # Handle lag=0 special case
+    if lag == 0:
+        if isinstance(traj, list):
+            n_states = traj[0].shape[1]
+        else:
+            n_states = traj.shape[1]
+
+        # For lag=0, return the identity matrix
+        return np.eye(n_states)
+
+    # Normal case (lag > 0)
     if isinstance(traj, list):
         # Handle list of trajectories
         n_states = traj[0].shape[1]

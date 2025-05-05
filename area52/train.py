@@ -21,31 +21,37 @@ def create_test_args():
     #args.encoder_type = 'meta'
 
     # Data settings
-    args.protein_name = 'TRP'
+    args.protein_name = 'ATR'
     #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/')
-    args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/')
-    args.file_pattern = '*.dcd'
+    #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/')
+    args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/r0/')
+    #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/')
+    args.file_pattern = '*.xtc'
+    #args.file_pattern = '*.dcd'
     #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb')
-    args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb')
-    args.selection = 'name CA'
-    args.stride = 100
+    #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb')
+    args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb')
+    #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/topol.pdb')
+    #args.selection = 'name CA'
+    args.selection = '(residue 126 to 146 or residue 221 to 259 or residue 286 to 317) and name CA'
+    args.stride = 10
     args.lag_time = 20.0
-    args.n_neighbors = 7
-    args.node_embedding_dim = 16
-    args.gaussian_expansion_dim = 12 # TODO: This is edge dim!!!
+    args.n_neighbors = 50
+    args.node_embedding_dim = 32
+    args.gaussian_expansion_dim = 16 # TODO: This is edge dim!!!
 
     # SchNet encoder settings
-    args.node_dim = 16
-    args.edge_dim = 12
-    args.hidden_dim = 32
-    args.output_dim = 16
+    args.node_dim = 32
+    args.edge_dim = 16
+    args.hidden_dim = 64
+    args.output_dim = 64
     args.n_interactions = 4
     args.activation = 'tanh'
     args.use_attention = True
 
     # Meta encoder settings
     """args.meta_node_dim = 16
-    args.meta_edge_dim = 16
+    args.meta_edge_dim = 12 # TODO: Gaussian expansion dim
     args.meta_global_dim = 32
     args.meta_num_node_mlp_layers = 2
     args.meta_num_edge_mlp_layers = 2
@@ -54,32 +60,32 @@ def create_test_args():
     args.meta_output_dim = 32
     args.meta_num_meta_layers = 3
     args.meta_embedding_type = 'global'  # choices: 'node', 'global', 'combined'
-    args.meta_activation = 'elu'
+    args.meta_activation = 'leaky_relu'
     args.meta_norm = 'None'
     args.meta_dropout = 0.0"""
 
     # Classifier settings
     args.n_states = 5
     args.clf_hidden_dim = 32
-    args.clf_num_layers = 4
+    args.clf_num_layers = 3
     args.clf_dropout = 0.0
-    args.clf_activation = 'elu'
-    args.clf_norm = None #'BatchNorm' # 'LayerNorm'
+    args.clf_activation = 'leaky_relu'
+    args.clf_norm = 'LayerNorm' # 'BatchNorm' #
 
     # Embedding settings
     args.use_embedding = True
-    args.embedding_in_dim = 16
-    args.embedding_hidden_dim = 32
-    args.embedding_out_dim = 16
-    args.embedding_num_layers = 4
+    args.embedding_in_dim = 92
+    args.embedding_hidden_dim = 64
+    args.embedding_out_dim = 32
+    args.embedding_num_layers = 3
     args.embedding_dropout = 0.0
-    args.embedding_act = 'elu'
-    args.embedding_norm = None #'LayerNorm'
+    args.embedding_act = 'leaky_relu'
+    args.embedding_norm = 'LayerNorm' # 'BatchNorm' #
 
     # Training settings
-    args.epochs = 5
-    args.batch_size = 1000
-    args.lr = 0.005
+    args.epochs = 20
+    args.batch_size = 172
+    args.lr = 0.0005
     args.weight_decay = 1e-5
     args.clip_grad = None
     args.cpu = False  # Use CPU for testing
@@ -90,7 +96,7 @@ def create_test_args():
     # Output settings
     args.output_dir = 'area54'
     args.cache_dir = 'area54/cache'
-    args.use_cache = False
+    args.use_cache = True
     args.save_every = 0  # Don't save intermediates
     args.run_name = 'test_run_new'
 

@@ -7,6 +7,8 @@ VAMPNet Training Pipeline
 This script provides a command-line interface for training VAMPNet models
 on molecular dynamics data.
 """
+from pymol.querying import distance
+
 # Import arguments parser
 from pygv.args import parse_train_args
 
@@ -21,6 +23,7 @@ from pygv.utils.pipe_utils import find_trajectory_files
 from pygv.utils.analysis import analyze_vampnet_outputs
 from pygv.utils.ck import run_ck_analysis
 from pygv.utils.its import analyze_implied_timescales
+from pygv.utils.nn_utils import init_for_vamp
 
 from pygv.vampnet import VAMPNet
 from pygv.encoder.schnet_wo_embed import SchNetEncoderNoEmbed
@@ -87,10 +90,12 @@ def create_dataset_and_loader(args,
         n_neighbors=args.n_neighbors,
         node_embedding_dim=args.node_embedding_dim,
         gaussian_expansion_dim=args.gaussian_expansion_dim,
+        #distance_min=2, #TODO: This needs to be in args
+        #distance_max=8, #TODO: This needs to be in args
         selection=args.selection,
         stride=args.stride,
         cache_dir=args.cache_dir,
-        use_cache=True if args.cache_dir is not None else False
+        use_cache=args.use_cache
     )
 
     print(f"Dataset created with {len(dataset)} samples")
@@ -221,17 +226,8 @@ def create_model(args, dataset):
         lag_time=args.lag_time
     )
 
-    #TODO:FIX
-    def init_for_vamp(model):
-        for m in model.modules():
-            if isinstance(m, torch.nn.Linear):
-                # Initialize with slightly larger weights
-                torch.nn.init.xavier_uniform_(m.weight, gain=1.5)
-                if m.bias is not None:
-                    torch.nn.init.constant_(m.bias, 0.1)  # Small positive bias
-
     # Apply to your model
-    init_for_vamp(model)
+    init_for_vamp(model, method='kaiming_normal')
     model.to('cuda')
 
     return model
@@ -289,7 +285,9 @@ def train_model(args, model, loader, paths):
         plot_scores=True,
         plot_path=paths['scores_plot'],
         smoothing=5,
-        verbose=True
+        verbose=True,
+        show_batch_vamp=True,
+        check_grad_stats=False,
     )
 
     return scores

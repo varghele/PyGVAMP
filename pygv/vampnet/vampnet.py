@@ -6,6 +6,7 @@ from torch_geometric.nn.models import MLP
 import os
 import datetime
 from pygv.utils.plotting import plot_vamp_scores
+from pygv.utils.nn_utils import monitor_gradients
 from tqdm import tqdm
 
 
@@ -133,6 +134,116 @@ class VAMPNet(nn.Module):
         self.add_module('classifier_module', classifier_module)
 
     def forward(
+            self,
+            data,
+            return_features: bool = False,
+            apply_classifier: bool = True
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Transform input data through the model, with improved gradient flow.
+
+        Args:
+            data: Input PyG graph data object
+            return_features: Whether to return encoder features
+            apply_classifier: Whether to apply classifier to get class probabilities
+
+        Returns:
+            If apply_classifier is True:
+                If return_features is True: (class_probs, features)
+                Else: class_probs
+            Else:
+                features
+        """
+        # Extract graph components
+        x = data.x
+        edge_index = data.edge_index
+        edge_attr = data.edge_attr if hasattr(data, 'edge_attr') else None
+        batch = data.batch if hasattr(data, 'batch') else None
+
+        # Apply embedding module to node and edge features if provided
+        if self.embedding_module is not None:
+            # Add a skip connection for better gradient flow
+            if hasattr(self.embedding_module, 'node_embedding') and hasattr(self.embedding_module, 'edge_embedding'):
+                # Module has separate functions for node and edge embeddings
+                embedded_x = self.embedding_module.node_embedding(x)
+                x = embedded_x  # Direct assignment with no skip connection for node features
+
+                if edge_attr is not None and self.embedding_module.edge_embedding is not None:
+                    # Add skip connection for edge features if dimensions match
+                    edge_embedded = self.embedding_module.edge_embedding(edge_attr)
+                    if edge_embedded.size(-1) == edge_attr.size(-1):
+                        edge_attr = edge_embedded + edge_attr  # Skip connection
+                    else:
+                        edge_attr = edge_embedded  # Direct assignment if dimensions don't match
+            else:
+                # Assume single embedding function for nodes
+                x = self.embedding_module(x)
+
+        # Track if we have a batch dimension
+        has_batch = batch is not None
+
+        # Ensure proper batch dimension if missing
+        if not has_batch and len(x) > 1:
+            # Create a batch vector with all zeros (single graph)
+            batch = torch.zeros(x.size(0), device=x.device, dtype=torch.long)
+
+        # Add a small jitter to prevent identical representations (helps with gradient flow)
+        if self.training and x.requires_grad:
+            # Add small noise (1e-6) during training
+            x = x + torch.randn_like(x) * 1e-6
+
+        try:
+            # Pass through encoder
+            features = self.encoder(
+                x=x,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+                batch=batch
+            )
+
+            # Handle case where encoder returns a tuple
+            if isinstance(features, tuple):
+                features = features[0]
+
+        except RuntimeError as e:
+            # Provide helpful error messages for common issues
+            if "Expected tensor for argument" in str(e):
+                raise RuntimeError(f"Encoder error - check input dimensions: {str(e)}\n"
+                                   f"x shape: {x.shape}, edge_index shape: {edge_index.shape}, "
+                                   f"batch: {'is None' if batch is None else batch.shape}")
+            elif "CUDA out of memory" in str(e):
+                raise RuntimeError(f"CUDA out of memory in encoder. Try reducing batch size.")
+            else:
+                # Re-raise the original error
+                raise
+
+        # Apply classifier if requested
+        if apply_classifier and self.classifier_module is not None:
+            # Use try-except for better error messages
+            try:
+                probs = self.classifier_module(features)
+
+                # Check for NaN values
+                if torch.isnan(probs).any():
+                    print("Warning: NaN values detected in classifier output")
+                    # Replace NaN with small values to avoid breaking the loss
+                    probs = torch.nan_to_num(probs, nan=1e-6)
+
+                if return_features:
+                    return probs, features
+                else:
+                    return probs, torch.empty(1)
+            except RuntimeError as e:
+                if "size mismatch" in str(e):
+                    raise RuntimeError(f"Size mismatch in classifier: expected input of shape "
+                                       f"{getattr(self.classifier_module, 'in_channels', 'unknown')}, "
+                                       f"but got {features.shape}")
+                else:
+                    raise
+        else:
+            return torch.empty(1), features
+
+    def forward_old(
         self,
         data,
         return_features: bool = False,
@@ -645,6 +756,8 @@ class VAMPNet(nn.Module):
             save_every=None,
             clip_grad_norm=None,
             verbose=True,
+            show_batch_vamp=False,
+            check_grad_stats=False,
             plot_scores=True,
             plot_path=None,
             smoothing=5,
@@ -675,6 +788,10 @@ class VAMPNet(nn.Module):
             Maximum norm for gradient clipping. If None, no clipping is performed
         verbose : bool, default=True
             Whether to print training progress
+        show_batch_vamp : bool, default=False
+            Print VAMP score during each batch iteration
+        check_grad_stats : bool, default=False
+            Print gradient information
         plot_scores : bool, default=True
             Whether to plot VAMP scores after training
         plot_path : str, optional
@@ -771,6 +888,25 @@ class VAMPNet(nn.Module):
 
                 # Backward pass and optimization
                 loss.backward()
+
+                if show_batch_vamp:
+                    print(f'VAMP score: {vamp_score_val}')
+
+                if check_grad_stats:
+                    # Check for problems with gradients
+                    grad_stats = monitor_gradients(self, epoch)
+                    #print(grad_stats)
+
+                    # Check for gradient problems
+                    if grad_stats:
+                        if grad_stats['max'] > 10.0:
+                            print("⚠️ WARNING: Potential exploding gradients detected!")
+                            if clip_grad_norm is None:
+                                print("Consider adding gradient clipping with clip_grad_norm parameter")
+
+                        if grad_stats['small_percent'] > 50.0:
+                            print("⚠️ WARNING: Potential vanishing gradients detected!")
+                            print("Consider adjusting learning rate or model architecture")
 
                 # Gradient clipping if requested
                 if clip_grad_norm is not None:

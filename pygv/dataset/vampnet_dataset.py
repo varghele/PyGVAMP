@@ -79,6 +79,15 @@ class VAMPNetDataset(Dataset):
             # Process trajectories and create graphs
             self._process_trajectories()
 
+            # TODO: this doesn't work with cached data, see if there is a better alternative
+            # Create trainable node embeddings
+            self.node_embeddings = torch.nn.Parameter(
+                torch.zeros(self.n_atoms, self.node_embedding_dim)
+            )
+
+            # Initialize using position encoding (better than random for large graphs)
+            self._initialize_node_embeddings()
+
             # Determine min and max distances for Gaussian expansion
             if distance_min is None or distance_max is None:
                 self._determine_distance_range()
@@ -224,6 +233,36 @@ class VAMPNetDataset(Dataset):
 
         return expanded_features
 
+    def _initialize_node_embeddings(self):
+        """Initialize node embeddings with position encoding for better gradient flow"""
+        import math
+
+        # Create positional encodings
+        embeddings = torch.zeros(self.n_atoms, self.node_embedding_dim)
+
+        # Use positional encoding for even indices
+        position = torch.arange(0, self.n_atoms).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, self.node_embedding_dim, 2) *
+                             -(math.log(10000.0) / self.node_embedding_dim))
+
+        # Fill even indices with sine
+        embeddings[:, 0::2] = torch.sin(position * div_term)
+
+        # Fill odd indices with cosine if they exist
+        if self.node_embedding_dim > 1:
+            # If odd indices exist
+            if div_term.size(0) < self.node_embedding_dim // 2 + self.node_embedding_dim % 2:
+                # Need to adjust div_term size
+                remaining = self.node_embedding_dim // 2 + self.node_embedding_dim % 2 - div_term.size(0)
+                extension = torch.exp(torch.arange(div_term.size(0), div_term.size(0) + remaining) *
+                                      -(math.log(10000.0) / self.node_embedding_dim))
+                div_term = torch.cat([div_term, extension])
+
+            embeddings[:, 1::2] = torch.cos(position * div_term[:self.node_embedding_dim // 2])
+
+        # Store as plain tensor (not a parameter)
+        self.node_embeddings = embeddings
+
     def _create_graph_from_frame(self, frame_idx):
         """
         Create a graph representation for a single frame.
@@ -302,13 +341,23 @@ class VAMPNetDataset(Dataset):
         # Compute Gaussian expanded edge features
         edge_attr = self._compute_gaussian_expanded_distances(edge_distances)
 
-        # Generate random node features
+        # Check if node_embeddings exists, and create it if not
+        #if not hasattr(self, 'node_embeddings'):
+        #    # Create node embeddings using position encoding
+        #    self._initialize_node_embeddings()
+        #    print("Created node embeddings parameter for the first time")
+
+        # Generate node features base on positional encoding
+        #node_attr = self.node_embeddings.clone()
+        node_attr = torch.zeros(self.n_atoms, self.n_atoms)  # One-hot encoding (n_atoms × n_atoms)
+        for i in range(self.n_atoms):
+            node_attr[i, i] = 1.0
         #node_attr = torch.randn(self.n_atoms, self.node_embedding_dim)
-        node_attr = torch.nn.Embedding(num_embeddings=self.n_atoms, embedding_dim=self.node_embedding_dim)
+        #node_attr = torch.nn.Embedding(num_embeddings=self.n_atoms, embedding_dim=self.node_embedding_dim)
 
         # Create PyG Data object
         graph = Data(
-            x=node_attr.weight.data,
+            x=node_attr,#.weight.data,
             edge_index=edge_index,
             edge_attr=edge_attr,
             num_nodes=self.n_atoms
