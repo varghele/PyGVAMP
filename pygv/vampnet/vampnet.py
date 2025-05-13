@@ -744,7 +744,7 @@ class VAMPNet(nn.Module):
 
         return config
 
-    def fit(
+    def fit_old(
             self,
             data_loader,
             optimizer=None,
@@ -965,3 +965,423 @@ class VAMPNet(nn.Module):
             print(f"Training completed. Best VAMP Score: {best_score:.4f} (Epoch {best_epoch + 1})")
 
         return vamp_scores
+
+    def fit(
+            self,
+            train_loader,
+            test_loader=None,
+            optimizer=None,
+            n_epochs=100,
+            device=None,
+            learning_rate=0.001,
+            weight_decay=1e-5,
+            save_dir="models",
+            save_every=None,
+            clip_grad_norm=None,
+            verbose=True,
+            show_batch_vamp=False,
+            check_grad_stats=False,
+            plot_scores=None, #TODO: Reimplement
+            plot_path=None,
+            smoothing=None,
+            sample_validate_every=100,  # Validate on a sample batch every N batches
+            early_stopping=None,  # Number of epochs with no improvement to trigger early stopping
+            callbacks=None
+    ):
+        """
+        Train the VAMPNet model using the provided data loader.
+
+        Parameters
+        ----------
+        train_loader : DataLoader
+            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs for training
+        test_loader : DataLoader, optional
+            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs for validation
+        optimizer : torch.optim.Optimizer, optional
+            PyTorch optimizer. If None, Adam optimizer will be created
+        n_epochs : int, default=100
+            Number of training epochs
+        device : str or torch.device, optional
+            Device to train on. If None, will use CUDA if available, else CPU
+        learning_rate : float, default=0.001
+            Learning rate for optimizer (if optimizer is None)
+        weight_decay : float, default=1e-5
+            Weight decay for optimizer (if optimizer is None)
+        save_dir : str, default="models"
+            Directory to save model checkpoints
+        save_every : int, optional
+            Save model every N epochs. If None, only saves final model
+        clip_grad_norm : float, optional
+            Maximum norm for gradient clipping. If None, no clipping is performed
+        verbose : bool, default=True
+            Whether to print training progress
+        show_batch_vamp : bool, default=False
+            Print VAMP score during each batch iteration
+        check_grad_stats : bool, default=False
+            Print gradient information
+        sample_validate_every : int, default=100
+            Check validation performance on a single batch every N training batches
+        early_stopping : int, optional
+            Number of epochs without improvement after which to stop training
+        callbacks : list, optional
+            List of callback functions to call after each epoch
+
+        Returns
+        -------
+        dict
+            Dictionary containing training history
+        """
+        # Set device
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        elif isinstance(device, str):
+            device = torch.device(device)
+
+        # Move model to device
+        self.to(device)
+
+        # Create optimizer if not provided
+        if optimizer is None:
+            optimizer = torch.optim.Adam(
+                self.parameters(),
+                lr=learning_rate,
+                weight_decay=weight_decay
+            )
+        self.optimizer = optimizer
+
+        # Create save directory if it doesn't exist
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+
+        # Helper function to move batch to device
+        def to_device(batch, device_):
+            x_t0, x_t1 = batch
+            return (x_t0.to(device_), x_t1.to(device_))
+
+        # Training history
+        history = {
+            'train_scores': [],  # Training scores for each epoch
+            'batch_train_scores': [],  # Training scores for selected batches
+            'batch_val_scores': [],  # Validation scores on samples
+            'batch_indices': [],  # Corresponding batch indices
+            'epoch_val_scores': [],  # Full validation scores per epoch
+            'epochs': []  # Epoch numbers
+        }
+
+        # Initialize variables
+        best_score = float('-inf')
+        best_model_state = None
+        no_improvement_count = 0
+        global_batch = 1
+
+        if verbose:
+            print(f"Starting training for {n_epochs} epochs on {device}")
+            if test_loader is not None:
+                print(f"Using quick validation every {sample_validate_every} batches")
+                print(f"Performing full validation after each epoch")
+            if early_stopping:
+                print(f"Early stopping after {early_stopping} epochs without improvement")
+
+        # Training loop over epochs
+        for epoch in range(n_epochs):
+            # Set model to train mode
+            self.train()
+
+            epoch_score_sum = 0.0
+            n_batches = 0
+
+            # Use tqdm for progress bar if verbose
+            iterator = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=True) if verbose else train_loader
+
+            # Process batches
+            for batch_idx, batch in enumerate(iterator):
+                # Move batch to device
+                data_t0, data_t1 = to_device(batch, device)
+
+                # Zero gradients
+                optimizer.zero_grad()
+
+                # Forward pass
+                chi_t0, _ = self.forward(data_t0, apply_classifier=True)
+                chi_t1, _ = self.forward(data_t1, apply_classifier=True)
+
+                # Calculate VAMP loss (negative VAMP score)
+                loss = self.vamp_score.loss(chi_t0, chi_t1)
+
+                # Get positive VAMP score for logging
+                vamp_score_val = -loss.item()
+
+                # Check for NaN loss
+                if torch.isnan(loss).any():
+                    if verbose:
+                        print(f"Warning: NaN loss detected in epoch {epoch + 1}, batch {batch_idx}")
+                    continue
+
+                # Backward pass
+                loss.backward()
+
+                if check_grad_stats and batch_idx % 500 == 0:
+                    from pygv.utils.analysis import monitor_gradients
+                    grad_stats = monitor_gradients(self, epoch, batch_idx=batch_idx)
+                    if grad_stats:
+                        if grad_stats['max'] > 10.0:
+                            print("⚠️ WARNING: Potential exploding gradients detected!")
+                        if grad_stats['small_percent'] > 50.0:
+                            print("⚠️ WARNING: Potential vanishing gradients detected!")
+
+                # Gradient clipping if requested
+                if clip_grad_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=clip_grad_norm)
+
+                # Optimizer step
+                optimizer.step()
+
+                # Update metrics
+                epoch_score_sum += vamp_score_val
+                n_batches += 1
+
+                # Show batch VAMP score if requested
+                if show_batch_vamp and batch_idx % 10 == 0:
+                    current_avg = epoch_score_sum / n_batches
+                    print(f"Batch {batch_idx}/{len(train_loader)}, VAMP: {vamp_score_val:.4f}, Avg: {current_avg:.4f}")
+
+                # Perform quick validation check at regular intervals
+                if test_loader is not None and global_batch % sample_validate_every == 0:
+                    sample_val_score = self.quick_evaluate(test_loader, device)
+
+                    if sample_val_score is not None:
+                        # Store scores for this batch
+                        history['batch_train_scores'].append(vamp_score_val)
+                        history['batch_val_scores'].append(sample_val_score)
+                        history['batch_indices'].append(global_batch)
+
+                        # Update in progress bar
+                        if verbose:
+                            iterator.set_postfix({
+                                'train_vamp': f"{vamp_score_val:.4f}",
+                                'sample_val': f"{sample_val_score:.4f}"
+                            })
+
+                global_batch += 1
+
+            # End of epoch
+
+            # Calculate average train score for this epoch
+            avg_train_score = epoch_score_sum / max(1, n_batches)
+            history['train_scores'].append(avg_train_score)
+            history['epochs'].append(epoch)
+
+            # Perform full validation after each epoch if test loader exists
+            current_val_score = None
+            if test_loader is not None:
+                current_val_score = self.evaluate(test_loader, device)
+                history['epoch_val_scores'].append(current_val_score)
+
+                if verbose:
+                    print(
+                        f"Epoch {epoch + 1}/{n_epochs}, Train VAMP: {avg_train_score:.4f}, Val VAMP: {current_val_score:.4f}")
+            else:
+                # Use training score if no validation data
+                current_val_score = avg_train_score
+                if verbose:
+                    print(f"Epoch {epoch + 1}/{n_epochs}, Train VAMP: {avg_train_score:.4f}")
+
+            # Check if this is the best model
+            if current_val_score > best_score:
+                best_score = current_val_score
+                no_improvement_count = 0
+
+                # Save best model state
+                best_model_state = {k: v.cpu().clone() for k, v in self.state_dict().items()}
+
+                # Also save to disk if directory specified
+                if save_dir:
+                    self.save_complete_model(os.path.join(save_dir, "best_model.pt"))
+
+                if verbose:
+                    print(f"New best model with score: {best_score:.4f}")
+            else:
+                no_improvement_count += 1
+                if verbose:
+                    print(f"No improvement for {no_improvement_count} epochs. Best score: {best_score:.4f}")
+
+            # Early stopping check
+            if early_stopping and no_improvement_count >= early_stopping:
+                print(f"Early stopping triggered after {no_improvement_count} epochs without improvement")
+                break
+
+            # Save checkpoint if requested
+            if save_every and (epoch + 1) % save_every == 0 and save_dir:
+                self.save_complete_model(os.path.join(save_dir, f"checkpoint_epoch_{epoch + 1}.pt"))
+
+            # Execute callbacks if provided
+            if callbacks:
+                for callback in callbacks:
+                    callback(self, epoch, current_val_score)
+
+        # Save final model
+        if save_dir:
+            self.save_complete_model(os.path.join(save_dir, "final_model.pt"))
+
+        # Load best model if we have one and early stopping was used
+        if best_model_state is not None and no_improvement_count > 0:
+            self.load_state_dict(best_model_state)
+            print(f"Loaded best model with score: {best_score:.4f}")
+
+        # Add best score to history
+        history['best_score'] = best_score
+        history['best_epoch'] = len(
+            history['train_scores']) - no_improvement_count - 1 if no_improvement_count > 0 else len(
+            history['train_scores']) - 1
+
+        return history
+
+
+    def quick_evaluate(self, data_loader, device=None, num_batches=10, verbose=True):
+        """
+        Quickly evaluate model performance by sampling batches from a data loader.
+
+        Parameters
+        ----------
+        data_loader : DataLoader
+            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs
+        device : torch.device, optional
+            Device to use for evaluation
+        num_batches : int, default=10
+            Number of batches to evaluate and average
+        verbose : bool, default=True
+            Whether to print the validation score to console
+
+        Returns
+        -------
+        float
+            Average VAMP score across sampled batches, or None if evaluation fails
+        """
+        try:
+            if data_loader is None or len(data_loader) == 0:
+                return None
+
+            # Set device if not provided
+            if device is None:
+                device = next(self.parameters()).device
+
+            # Helper function to move batch to device
+            def to_device(batch, device_):
+                x_t0, x_t1 = batch
+                return (x_t0.to(device_), x_t1.to(device_))
+
+            # Limit number of batches to data loader size
+            num_batches = min(num_batches, len(data_loader))
+
+            # Evaluate in eval mode with no grad
+            self.eval()
+            batch_scores = []
+            batch_sizes = []
+
+            # Get iterator for the data loader
+            iterator = iter(data_loader)
+
+            with torch.no_grad():
+                # Process the specified number of batches
+                for i in range(num_batches):
+                    try:
+                        # Get the next batch
+                        test_batch = next(iterator)
+                    except StopIteration:
+                        # Restart iterator if we run out of batches
+                        iterator = iter(data_loader)
+                        test_batch = next(iterator)
+
+                    # Move batch to device
+                    test_t0, test_t1 = to_device(test_batch, device)
+                    batch_size = test_t0.size(0) if hasattr(test_t0, 'size') else 0
+
+                    # Forward pass
+                    test_chi_t0, _ = self.forward(test_t0, apply_classifier=True)
+                    test_chi_t1, _ = self.forward(test_t1, apply_classifier=True)
+
+                    # Get VAMP score
+                    test_loss = self.vamp_score.loss(test_chi_t0, test_chi_t1)
+                    test_score = -test_loss.item()
+
+                    batch_scores.append(test_score)
+                    batch_sizes.append(batch_size)
+
+            # Back to training mode
+            self.train()
+
+            # Compute average score
+            if not batch_scores:
+                if verbose:
+                    print("\nNo batches were successfully evaluated")
+                return None
+
+            avg_score = sum(batch_scores) / len(batch_scores)
+
+            # Print validation score to console if requested
+            if verbose:
+                batch_score_str = ", ".join([f"{score:.4f}" for score in batch_scores])
+                print(f"\nQuick validation ({len(batch_scores)} batches): Average VAMP score = {avg_score:.4f}")
+                print(f"Individual batch scores: [{batch_score_str}]")
+
+            return avg_score
+
+        except Exception as e:
+            if verbose:
+                print(f"\nError in quick validation: {str(e)}")
+            return None
+
+    def evaluate(self, data_loader, device=None):
+        """
+        Fully evaluate the model on the given data loader.
+
+        Parameters
+        ----------
+        data_loader : DataLoader
+            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs
+        device : torch.device, optional
+            Device to use for evaluation
+
+        Returns
+        -------
+        float
+            Average VAMP score
+        """
+        if data_loader is None or len(data_loader) == 0:
+            return None
+
+        # Set device if not provided
+        if device is None:
+            device = next(self.parameters()).device
+
+        # Helper function to move batch to device
+        def to_device(batch, device_):
+            x_t0, x_t1 = batch
+            return (x_t0.to(device_), x_t1.to(device_))
+
+        self.eval()
+        test_score_sum = 0.0
+        n_test_batches = 0
+
+        with torch.no_grad():
+            for test_batch in data_loader:
+                # Move batch to device
+                test_t0, test_t1 = to_device(test_batch, device)
+
+                # Forward pass
+                test_chi_t0, _ = self.forward(test_t0, apply_classifier=True)
+                test_chi_t1, _ = self.forward(test_t1, apply_classifier=True)
+
+                # Calculate VAMP score
+                test_loss = self.vamp_score.loss(test_chi_t0, test_chi_t1)
+                test_score = -test_loss.item()
+
+                test_score_sum += test_score
+                n_test_batches += 1
+
+        # Return to training mode
+        self.train()
+
+        # Return average test score
+        return test_score_sum / max(1, n_test_batches)
+

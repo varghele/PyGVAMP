@@ -158,6 +158,10 @@ def get_train_parser():
                              help='Gradient clipping norm')
     train_group.add_argument('--cpu', action='store_true',
                              help='Force CPU usage even if CUDA is available')
+    train_group.add_argument('--val_split', type=float, default=0.1,
+                             help='Amount of data that training will get validated on')
+    train_group.add_argument('--sample_validate_every', type=int, default=100,
+                             help='How often (mini)validation should be performed; every n batches')
 
     # Testing arguments
     test_group = parser.add_argument_group('Testing')

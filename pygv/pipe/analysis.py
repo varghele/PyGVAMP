@@ -241,7 +241,7 @@ def run_analysis(args=None):
         state_populations=state_populations,
         save_dir=paths['analysis_dir'],
         protein_name=args.protein_name,
-        threshold=0.01  # Optional: hide low attention values
+        threshold=0.001  # Optional: hide low attention values
     )
 
     # Create residue-level attention plot
@@ -270,8 +270,8 @@ def run_analysis(args=None):
         save_dir=paths['analysis_dir'],
         protein_name=args.protein_name,
         stride=args.stride,
-        n_structures=10,  # Generate 5 representative structures per state
-        prob_threshold=0.0  # Only consider frames with probability ≥ 0.7
+        n_structures=10,  # Generate 10 representative structures per state
+        prob_threshold=0.0  # Only consider frames with probability ≥ 0.0
     )
 
     # Generate visualization
