@@ -13,10 +13,10 @@ from pygv.args.args_anly import parse_anly_args, parse_config
 import os
 import sys
 import torch
-import numpy as np
+import mdtraj as md
 
 from pygv.utils.analysis import (calculate_state_edge_attention_maps, generate_state_structures,
-                                 save_attention_colored_structures)
+                                 save_attention_colored_structures, extract_residue_indices_from_selection)
 from pygv.utils.plotting import (plot_transition_probabilities, plot_state_edge_attention_maps,
                                  plot_state_attention_weights, plot_all_residue_attention_directions,
                                  visualize_state_ensemble, visualize_attention_ensemble,
@@ -219,12 +219,18 @@ def run_analysis(args=None):
     inferred_timestep = dataset._infer_timestep()/1000 # Timestep in nanoseconds
 
     # Calculate and plot the state transition matrices
-    plot_transition_probabilities(probs = probs,
+    plot_transition_probabilities(probs=probs,
                                   save_dir=paths['analysis_dir'],
                                   protein_name=args.protein_name,
                                   lag_time=args.lag_time,
                                   stride=args.stride,
                                   timestep=inferred_timestep)
+
+    # Get residue index list for sparse selections
+    # Load the topology
+    topology = md.load(args.top).topology
+    residue_indices, residue_names = extract_residue_indices_from_selection(selection_string=args.selection,
+                                                                            topology=topology)
 
     # Calculate attention maps
     state_attention_maps, state_populations = calculate_state_edge_attention_maps(
@@ -241,7 +247,8 @@ def run_analysis(args=None):
         state_populations=state_populations,
         save_dir=paths['analysis_dir'],
         protein_name=args.protein_name,
-        threshold=0.001  # Optional: hide low attention values
+        threshold=0.001,  # Optional: hide low attention values
+        residue_indices=residue_indices
     )
 
     # Create residue-level attention plot
@@ -289,6 +296,8 @@ def run_analysis(args=None):
         state_attention_maps=state_attention_maps,
         save_dir=paths['analysis_dir'],
         protein_name=args.protein_name,
+        residue_indices=residue_indices,
+        residue_names=residue_names
     )
 
     # Visualize attention ensembles

@@ -15,6 +15,52 @@ def to_device(batch, device):
     return (x_t0.to(device), x_t1.to(device))
 
 
+def extract_residue_indices_from_selection(selection_string, topology):
+    """
+    Extract the actual residue indices and names from an MDTraj selection string.
+
+    Parameters
+    ----------
+    selection_string : str
+        MDTraj selection string (e.g. "residue 126 to 146 or residue 221 to 259 and name CA")
+    topology : mdtraj.Topology
+        The trajectory topology containing residue information
+
+    Returns
+    -------
+    tuple
+        - residue_indices: List of residue indices that match the selection
+        - residue_names: List of residue names with indices (e.g. "ALA126")
+    """
+    # Get the atom indices from the selection
+    atom_indices = topology.select(selection_string)
+
+    if len(atom_indices) == 0:
+        raise ValueError(f"Selection '{selection_string}' returned no atoms")
+
+    # Get the residue indices and names for these atoms, avoiding duplicates
+    residue_indices = []
+    residue_names = []
+    seen_residues = set()
+
+    for atom_idx in atom_indices:
+        atom = topology.atom(atom_idx)
+        residue = atom.residue
+
+        # Skip duplicates (multiple atoms from the same residue)
+        if residue.index in seen_residues:
+            continue
+
+        seen_residues.add(residue.index)
+
+        # Get residue number (resSeq) and name
+        residue_indices.append(residue.resSeq)
+        residue_name = f"{residue.name}{residue.resSeq}"
+        residue_names.append(residue_name)
+
+    return residue_indices, residue_names
+
+
 def analyze_vampnet_outputs(
         model,
         data_loader: DataLoader,
@@ -657,7 +703,158 @@ def generate_state_structures(
     print(f"Summary saved to {summary_path}")
     return state_structures
 
+
 def save_attention_colored_structures(
+        state_structures: dict,
+        state_attention_maps: np.ndarray,
+        save_dir: str,
+        protein_name: str,
+        residue_indices: list = None,
+        residue_names: list = None
+) -> dict:
+    """
+    Save new versions of existing state structures with attention values as B-factors
+    and corresponding PyMOL visualization scripts.
+
+    Parameters
+    ----------
+    state_structures : dict
+        Dictionary mapping state numbers to lists of PDB file paths
+    state_attention_maps : np.ndarray
+        Attention maps for each state [n_states, n_atoms, n_atoms]
+    save_dir : str
+        Directory to save the output files
+    protein_name : str
+        Name of the protein for file naming
+    residue_indices : list, optional
+        List of residue indices that correspond to atoms in attention maps
+    residue_names : list, optional
+        List of residue names with numbers (e.g., "ALA126")
+
+    Returns
+    -------
+    dict
+        Dictionary mapping state numbers to lists of attention-colored PDB file paths
+    """
+    # Define a simple scaling function to replace sklearn's scale
+    def scale(x):
+        """Scale array to range [0,1]"""
+        x_min = np.min(x)
+        x_max = np.max(x)
+        if x_max > x_min:
+            return (x - x_min) / (x_max - x_min)
+        # Handle case where all values are the same
+        return np.zeros_like(x)
+
+    # Calculate scaled attention scores for each state
+    state_residue_attention = {}
+    for state in range(len(state_attention_maps)):
+        # If residue indices are provided, use them to map attention to residues
+        if residue_indices is not None:
+            # Map attention to residues if needed
+            scores = scale(state_attention_maps[state].sum(axis=0))
+        else:
+            # Otherwise use atom-level attention directly
+            scores = scale(state_attention_maps[state].sum(axis=0))
+
+        scores = scores * 90  # Scale to 0-90 range
+        state_residue_attention[state] = scores
+
+    attention_structures = {}
+
+    # Create output directory if it doesn't exist
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    # Process each state
+    for state_num, structures in state_structures.items():
+        attention_structures[state_num] = []
+        state_dir = os.path.join(save_dir, f"state_{state_num + 1}_attention")
+        os.makedirs(state_dir, exist_ok=True)
+
+        print(f"Processing state {state_num + 1} structures...")
+
+        # Process each structure in the state
+        for pdb_file in structures:
+            try:
+                # Load structure
+                traj = md.load(pdb_file)
+
+                # Create attention PDB filename
+                base_name = os.path.basename(pdb_file)
+                new_name = base_name.replace('.pdb', '_attention.pdb')
+                output_file = os.path.join(state_dir, new_name)
+
+                # Get attention values for this state
+                attention_values = state_residue_attention[state_num]
+
+                # Create a mapping from PDB residue numbers to attention values
+                attention_map = {}
+                if residue_indices is not None:
+                    # Map between selected residue indices and attention values
+                    for i, res_idx in enumerate(residue_indices):
+                        if i < len(attention_values):
+                            attention_map[res_idx] = attention_values[i]
+
+                # Set B-factors based on residue indices
+                b_factors = []
+                for atom in traj.topology.atoms:
+                    res_idx = atom.residue.resSeq
+
+                    if residue_indices is not None:
+                        # Use residue mapping
+                        attention_value = attention_map.get(res_idx, 0.0)
+                        b_factors.append(attention_value)
+                    else:
+                        # Use atom indices directly
+                        atom_idx = atom.index
+                        if atom_idx < len(attention_values):
+                            b_factors.append(attention_values[atom_idx])
+                        else:
+                            b_factors.append(0.0)
+
+                # Save PDB with attention B-factors
+                traj.save_pdb(output_file, bfactors=b_factors)
+
+                # Create corresponding PyMOL script
+                script_name = new_name.replace('.pdb', '_view.pml')
+                script_path = os.path.join(state_dir, script_name)
+
+                with open(script_path, 'w') as f:
+                    f.write(f"load {new_name}\n")
+                    f.write("bg_color white\n")
+                    f.write("show cartoon\n")
+                    f.write("hide lines\n")
+                    f.write("spectrum b, blue_white_red\n")
+                    f.write("set ray_shadows, 0\n")
+                    f.write("set ray_opaque_background, off\n")
+                    f.write("set cartoon_fancy_helices, 1\n")
+
+                    # If we have specific residue indices, add labels
+                    # TODO: Only re-enable if you want labels next to high attention residues
+                    #if residue_names is not None:
+                    #    # Add labels for high-attention residues (top quartile)
+                    #    if len(attention_values) > 0:
+                    #        high_threshold = np.percentile(attention_values, 75)
+                    #        for i, res_idx in enumerate(residue_indices):
+                    #            if i < len(attention_values) and attention_values[i] >= high_threshold:
+                    #                res_name = residue_names[i]
+                    #                f.write(f"label chain A and resi {res_idx}, '{res_name}'\n")
+
+                    f.write("zoom\n")
+                    f.write("ray 1200, 1200\n")
+
+                attention_structures[state_num].append(output_file)
+                print(f"Saved attention-colored structure to {output_file}")
+                print(f"Saved PyMOL script to {script_path}")
+
+            except Exception as e:
+                print(f"Error processing {pdb_file}: {str(e)}")
+
+    return attention_structures
+
+
+def save_attention_colored_structures_old(
         state_structures: dict,
         state_attention_maps: np.ndarray,
         save_dir: str,

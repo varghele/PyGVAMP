@@ -13,22 +13,29 @@ from matplotlib.image import imread
 from pygv.utils.analysis import calculate_transition_matrices
 import mdtraj as md
 
+import matplotlib.gridspec as gridspec
+
 import subprocess
 from pygv.utils.analysis import calculate_transition_matrices
 
 
-def plot_vamp_scores(scores, save_path=None, smoothing=None, title="VAMPNet Training Performance"):
+def plot_vamp_scores(history, save_path=None, smoothing=None, title="VAMPNet Training Performance"):
     """
-    Plot the VAMP score curve from training.
+    Plot VAMP scores from training, showing both epoch averages and batch-level evolution.
 
     Parameters:
     -----------
-    scores : list
-        List of VAMP scores across epochs
+    history : dict
+        Dictionary containing training history:
+        - 'train_scores': List of per-epoch training scores
+        - 'epoch_val_scores': List of per-epoch validation scores (optional)
+        - 'batch_train_scores': List of batch-level training scores (optional)
+        - 'batch_val_scores': List of batch-level validation scores (optional)
+        - 'batch_indices': Batch indices for the batch scores (optional)
     save_path : str, optional
         Path to save the figure. If None, the figure is not saved.
     smoothing : int, optional
-        Window size for smoothing the curve. If None, no smoothing is applied.
+        Window size for smoothing the epoch curves. If None, no smoothing is applied.
     title : str, default="VAMPNet Training Performance"
         Title for the plot
 
@@ -39,38 +46,85 @@ def plot_vamp_scores(scores, save_path=None, smoothing=None, title="VAMPNet Trai
     """
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    # Convert negative losses to positive VAMP scores if needed
-    vamp_scores = [-score if score < 0 else score for score in scores]
+    # Check what data is available
+    has_epoch_scores = 'train_scores' in history and len(history['train_scores']) > 0
+    has_batch_data = ('batch_train_scores' in history and
+                      'batch_indices' in history and
+                      len(history['batch_train_scores']) > 0)
+    has_val_scores = 'epoch_val_scores' in history and len(history['epoch_val_scores']) > 0
+    has_batch_val = ('batch_val_scores' in history and len(history['batch_val_scores']) > 0)
 
-    # Create x-axis (epochs)
-    epochs = np.arange(1, len(vamp_scores) + 1)
+    # Plot batch-level data as background dots to show score evolution between epochs
+    if has_batch_data:
+        batch_indices = np.array(history['batch_indices'])
+        batch_scores = np.array(history['batch_train_scores'])
 
-    # Plot raw VAMP scores
-    ax.plot(epochs, vamp_scores, 'b-', alpha=0.3, label='Raw VAMP Score')
+        # Convert batch indices to epoch numbers (approximate)
+        if has_epoch_scores:
+            # Estimate batches per epoch based on the largest batch index and number of epochs
+            epochs = len(history['train_scores'])
+            if epochs > 0:
+                batches_per_epoch = batch_indices[-1] / epochs
+                batch_to_epoch = batch_indices / batches_per_epoch
+            else:
+                batch_to_epoch = batch_indices
+        else:
+            batch_to_epoch = batch_indices
 
-    # Apply smoothing if specified
-    if smoothing is not None and smoothing > 1:
-        # Simple moving average
-        kernel_size = min(smoothing, len(vamp_scores))
-        kernel = np.ones(kernel_size) / kernel_size
-        smoothed_scores = np.convolve(vamp_scores, kernel, mode='valid')
+        #TODO: Re-Evaluate if scatter or line plot is better
+        """# Plot batch-level training scores with low alpha for clarity
+        ax.scatter(batch_to_epoch, batch_scores, color='blue', alpha=0.15, s=15,
+                   label='Batch samples' if not has_epoch_scores else None)
 
-        # Adjust x-axis for the convolution
-        smooth_epochs = epochs[kernel_size - 1:]
-        if len(smooth_epochs) == len(smoothed_scores) - 1:
-            smooth_epochs = epochs[kernel_size - 1:len(smoothed_scores) + kernel_size - 1]
+        # Plot batch-level validation scores if available
+        if has_batch_val:
+            batch_val_scores = np.array(history['batch_val_scores'])
+            ax.scatter(batch_to_epoch, batch_val_scores, color='red', alpha=0.15, s=15,
+                       label='Validation samples' if not has_val_scores else None)"""
 
-        ax.plot(smooth_epochs, smoothed_scores, 'r-', linewidth=2,
-                label=f'Smoothed (window={smoothing})')
+        # Plot batch-level training scores as thin lines
+        ax.plot(batch_to_epoch, batch_scores, 'b-', linewidth=0.8, alpha=0.3,
+                label='Batch train' if not has_epoch_scores else None)
 
-    # Add min/max markers
-    max_score = max(vamp_scores)
-    max_epoch = vamp_scores.index(max_score) + 1
-    ax.plot(max_epoch, max_score, 'ro', markersize=8)
-    ax.annotate(f'Max: {max_score:.4f}',
-                xy=(max_epoch, max_score),
-                xytext=(max_epoch + 1, max_score),
-                fontsize=10)
+        # Plot batch-level validation scores if available
+        if has_batch_val and len(history['batch_val_scores']) > 0:
+            batch_val_scores = np.array(history['batch_val_scores'])
+            # Make sure the array lengths match
+            min_len = min(len(batch_to_epoch), len(batch_val_scores))
+            ax.plot(batch_to_epoch[:min_len], batch_val_scores[:min_len],
+                    'r-', linewidth=0.8, alpha=0.3,
+                    label='Batch val' if not has_val_scores else None)
+
+    # Plot epoch-level scores as main curves
+    if has_epoch_scores:
+        epochs = np.arange(1, len(history['train_scores']) + 1)
+
+        # Plot training scores
+        ax.plot(epochs, history['train_scores'], 'b-', alpha=0.7, linewidth=2, label='Train (epoch avg)')
+
+        # Apply smoothing if requested
+        if smoothing is not None and smoothing > 1:
+            kernel_size = min(smoothing, len(history['train_scores']))
+            kernel = np.ones(kernel_size) / kernel_size
+            smoothed_scores = np.convolve(history['train_scores'], kernel, mode='valid')
+
+            # Adjust x-axis for the convolution
+            smooth_epochs = epochs[kernel_size - 1:]
+            if len(smooth_epochs) == len(smoothed_scores) - 1:
+                smooth_epochs = epochs[kernel_size - 1:len(smoothed_scores) + kernel_size - 1]
+
+            ax.plot(smooth_epochs, smoothed_scores, 'b--', linewidth=1.5,
+                    label=f'Smoothed (window={smoothing})')
+
+        # Plot validation scores if available
+        if has_val_scores:
+            ax.plot(epochs, history['epoch_val_scores'], 'r-', alpha=0.7, linewidth=2, label='Validation')
+
+            # Apply smoothing to validation scores
+            if smoothing is not None and smoothing > 1 and len(history['epoch_val_scores']) > smoothing:
+                val_smooth = np.convolve(history['epoch_val_scores'], kernel, mode='valid')
+                ax.plot(smooth_epochs, val_smooth, 'r--', linewidth=1.5,
+                        label=f'Validation (smoothed)')
 
     # Add styling
     ax.set_title(title, fontsize=14, pad=10)
@@ -79,16 +133,10 @@ def plot_vamp_scores(scores, save_path=None, smoothing=None, title="VAMPNet Trai
     ax.tick_params(axis='both', labelsize=10)
     ax.grid(True, linestyle='--', alpha=0.7)
 
-    # Add legend if smoothing was applied
-    if smoothing is not None:
-        ax.legend()
-
-    # Show final VAMP score
-    final_score = vamp_scores[-1]
-    ax.annotate(f'Final: {final_score:.4f}',
-                xy=(len(vamp_scores), final_score),
-                xytext=(len(vamp_scores) - 5, final_score),
-                fontsize=10)
+    # Add legend (always include it for clarity)
+    handles, labels = ax.get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))  # Remove duplicate labels
+    ax.legend(by_label.values(), by_label.keys(), loc='best')
 
     # Formatting
     plt.tight_layout()
@@ -97,7 +145,6 @@ def plot_vamp_scores(scores, save_path=None, smoothing=None, title="VAMPNet Trai
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Figure saved to {save_path}")
-    plt.close()
 
     return fig, ax
 
@@ -402,7 +449,8 @@ def plot_state_edge_attention_maps(
         cmap_name: str = 'viridis',
         figsize: tuple = (10, 10),
         threshold: float = None,
-        focus_atom: int = None
+        focus_atom: int = None,
+        residue_indices: list = None,
 ):
     """
     Plot edge-level attention maps for each state.
@@ -425,6 +473,9 @@ def plot_state_edge_attention_maps(
         Minimum attention value to display (None for no threshold)
     focus_atom : int, optional
         If provided, highlight connections to/from this atom
+    residue_indices : list, optional
+        List of residue indices corresponding to the atoms in the attention maps
+        If provided, tick labels will show actual residue numbers instead of atom indices
     """
     plt.style.use('default')
     plt.rcParams['axes.linewidth'] = 1.0
@@ -435,6 +486,12 @@ def plot_state_edge_attention_maps(
 
     # Order states by population (highest first)
     states_order = np.argsort(-state_populations)
+
+    # Convert residue indices to actual tick labels if provided
+    if residue_indices is not None:
+        tick_labels = [str(res) for res in residue_indices]
+    else:
+        tick_labels = [str(i + 1) for i in range(n_atoms)]
 
     # Calculate global min and max for consistent colorbar
     vmin = np.min([m.min() for m in state_attention_maps])
@@ -489,12 +546,19 @@ def plot_state_edge_attention_maps(
         # Set reasonable tick frequency
         if n_atoms > 30:
             tick_interval = max(1, n_atoms // 15)
-            ticks = np.arange(0, n_atoms, tick_interval)
-            plt.xticks(ticks, [str(t + 1) for t in ticks])
-            plt.yticks(ticks, [str(t + 1) for t in ticks])
+            tick_positions = np.arange(0, n_atoms, tick_interval)
+            ax.set_xticks(tick_positions)
+            ax.set_yticks(tick_positions)
+
+            # Use actual residue numbers if provided
+            ax.set_xticklabels([tick_labels[pos] for pos in tick_positions])
+            ax.set_yticklabels([tick_labels[pos] for pos in tick_positions])
         else:
-            plt.xticks(np.arange(n_atoms), [str(i + 1) for i in range(n_atoms)])
-            plt.yticks(np.arange(n_atoms), [str(i + 1) for i in range(n_atoms)])
+            # For small proteins, show all residues
+            ax.set_xticks(np.arange(n_atoms))
+            ax.set_yticks(np.arange(n_atoms))
+            ax.set_xticklabels(tick_labels)
+            ax.set_yticklabels(tick_labels)
 
         # Add colorbar
         cbar = plt.colorbar(im)
@@ -555,17 +619,18 @@ def plot_state_edge_attention_maps(
 
         # Set reasonable tick frequency for smaller plots
         if n_atoms > 30:
-            tick_interval = max(1, n_atoms // 10)
-            ticks = np.arange(0, n_atoms, tick_interval)
-            ax.set_xticks(ticks)
-            ax.set_xticklabels([str(t + 1) for t in ticks], rotation=90, fontsize=8)
-            ax.set_yticks(ticks)
-            ax.set_yticklabels([str(t + 1) for t in ticks], fontsize=8)
+            tick_interval = max(1, n_atoms // 15)
+            tick_positions = np.arange(0, n_atoms, tick_interval)
+            ax.set_xticks(tick_positions)
+            ax.set_yticks(tick_positions)
+
+            ax.set_xticklabels([tick_labels[pos] for pos in tick_positions], rotation=90, fontsize=8)
+            ax.set_yticklabels([tick_labels[pos] for pos in tick_positions], fontsize=8)
         else:
-            ax.set_xticks(np.arange(0, n_atoms, 2))
-            ax.set_xticklabels([str(i + 1) for i in range(0, n_atoms, 2)], rotation=90, fontsize=8)
-            ax.set_yticks(np.arange(0, n_atoms, 2))
-            ax.set_yticklabels([str(i + 1) for i in range(0, n_atoms, 2)], fontsize=8)
+            ax.set_xticks(np.arange(n_atoms))
+            ax.set_yticks(np.arange(n_atoms))
+            ax.set_xticklabels(tick_labels, rotation=90, fontsize=8)
+            ax.set_yticklabels(tick_labels, fontsize=8)
 
         # Add labels only to the first column and last row
         if i % n_cols == 0:
@@ -599,12 +664,14 @@ def plot_state_edge_attention_maps(
 
 def plot_state_attention_weights(
         state_attention_maps: np.ndarray,
-        topology_file: str,
+        topology_file: str = None,
         save_dir: str = None,
         protein_name: str = "protein",
         plot_sum_direction: str = "target",
         cmap_name: str = "viridis",
-        figsize: tuple = (12, 6)
+        figsize: tuple = (12, 6),
+        residue_indices: list = None,
+        residue_names: list = None,
 ):
     """
     Plot average attention weights for residues across different states.
@@ -625,6 +692,10 @@ def plot_state_attention_weights(
         Matplotlib colormap name for heatmap
     figsize : tuple, optional
         Figure size in inches
+    residue_indices : list, optional
+        List of residue indices corresponding to selected atoms
+    residue_names : list, optional
+        List of residue names with indices (e.g., "ALA126") for labels
     """
 
     def minmax_scale(x, axis=None):
@@ -636,65 +707,89 @@ def plot_state_attention_weights(
             return np.zeros_like(x)
         return (x - x_min) / (x_max - x_min + 1e-10)  # Add epsilon to avoid division by zero
 
-    # Load topology to get residue information
-    try:
-        top = md.load(topology_file).topology
-    except Exception as e:
-        print(f"Error loading topology file: {str(e)}")
-        print("Using atom indices instead of residue names")
-        top = None
-
     # Get dimensions from the attention maps
     n_states, n_atoms, _ = state_attention_maps.shape
     print(f"Processing attention maps: {n_states} states, {n_atoms} atoms")
 
-    # Get atom-to-residue mapping and residue names if topology is available
-    atom_to_res = {}
-    res_names = []
+    # If residue_indices and residue_names are provided, use them directly
+    if residue_indices is not None and residue_names is not None:
+        # Use provided residue information
+        n_residues = len(residue_indices)
+        print(f"Using provided residue information: {n_residues} residues")
 
-    if top is not None:
-        # Map atoms to residues
-        for atom in top.atoms:
-            res = atom.residue
-            res_idx = res.index
-            res_name = f"{res.name}{res.resSeq}"
-
-            # Store atom to residue mapping
-            atom_to_res[atom.index] = res_idx
-
-            # Add residue name if not already in list
-            if res_idx >= len(res_names):
-                res_names.append(res_name)
-
-        n_residues = len(res_names)
-        print(f"Found {n_residues} residues in topology")
-
-        # Create residue-level attention maps
-        residue_attention_maps = np.zeros((n_states, n_residues, n_residues))
-
-        # Map atom-level attention to residue-level
-        print("Mapping atom attention to residue attention...")
-        for atom_i in range(min(n_atoms, len(atom_to_res))):
-            if atom_i in atom_to_res:
-                res_i = atom_to_res[atom_i]
-                if res_i < n_residues:
-                    for atom_j in range(min(n_atoms, len(atom_to_res))):
-                        if atom_j in atom_to_res:
-                            res_j = atom_to_res[atom_j]
-                            if res_j < n_residues:
-                                residue_attention_maps[:, res_i, res_j] += state_attention_maps[:, atom_i, atom_j]
+        # Convert attention maps from atom-level to residue-level if needed
+        if n_atoms != n_residues:
+            print("Warning: Number of atoms in attention maps doesn't match number of provided residues.")
+            print("Make sure the attention maps correspond to the selected residues.")
 
         # Use residue-level maps and names for plotting
-        attention_maps = residue_attention_maps
-        labels = res_names
+        attention_maps = state_attention_maps
+        labels = residue_names  # Use provided residue names
         n_entities = n_residues
         entity_name = "Residue"
     else:
-        # Use atom-level maps and indices for plotting
-        attention_maps = state_attention_maps
-        labels = [str(i) for i in range(1, n_atoms + 1)]
-        n_entities = n_atoms
-        entity_name = "Atom"
+        # Try to load topology and extract residue information if available
+        try:
+            if topology_file:
+                top = md.load(topology_file).topology
+
+                # Extract residue names and indices
+                residue_map = {}
+                res_names = []
+
+                # Map atoms to residues
+                for atom in top.atoms:
+                    res = atom.residue
+                    res_idx = res.index
+                    res_name = f"{res.name}{res.resSeq}"
+
+                    # Store atom to residue mapping
+                    residue_map[atom.index] = res_idx
+
+                    # Add residue name if not already in list
+                    if res_idx >= len(res_names):
+                        res_names.extend([''] * (res_idx - len(res_names) + 1))
+                        res_names[res_idx] = res_name
+
+                n_residues = len(res_names)
+                print(f"Found {n_residues} residues in topology")
+
+                # Create residue-level attention maps
+                residue_attention_maps = np.zeros((n_states, n_residues, n_residues))
+
+                # Map atom-level attention to residue-level
+                print("Mapping atom attention to residue attention...")
+                for atom_i in range(min(n_atoms, len(residue_map))):
+                    if atom_i in residue_map:
+                        res_i = residue_map[atom_i]
+                        if res_i < n_residues:
+                            for atom_j in range(min(n_atoms, len(residue_map))):
+                                if atom_j in residue_map:
+                                    res_j = residue_map[atom_j]
+                                    if res_j < n_residues:
+                                        residue_attention_maps[:, res_i, res_j] += state_attention_maps[:, atom_i,
+                                                                                   atom_j]
+
+                # Use residue-level maps and names for plotting
+                attention_maps = residue_attention_maps
+                labels = res_names
+                n_entities = n_residues
+                entity_name = "Residue"
+            else:
+                # If topology not provided, use atom-level maps and indices
+                attention_maps = state_attention_maps
+                labels = [str(i) for i in range(1, n_atoms + 1)]
+                n_entities = n_atoms
+                entity_name = "Atom"
+        except Exception as e:
+            print(f"Error processing topology: {str(e)}")
+            print("Using atom indices instead of residue names")
+
+            # Fall back to atom-level maps and indices
+            attention_maps = state_attention_maps
+            labels = [str(i) for i in range(1, n_atoms + 1)]
+            n_entities = n_atoms
+            entity_name = "Atom"
 
     # Calculate attention scores by summing in specified direction
     scores = np.zeros((n_states, n_entities))
@@ -759,7 +854,7 @@ def plot_state_attention_weights(
 
     # Add colorbar
     cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label('Normalized Attention', fontweight='bold')
+    cbar.set_label('Norm. Attention', fontweight='bold')
 
     # Add grid lines for better readability
     ax.set_xticks(np.arange(-0.5, n_entities, 1), minor=True)
@@ -770,7 +865,7 @@ def plot_state_attention_weights(
     direction_text = "from" if plot_sum_direction == "source" else "to" if plot_sum_direction == "target" else "total for"
     plt.title(f"{protein_name}: Attention {direction_text} Each {entity_name} by State", fontweight='bold')
 
-    plt.tight_layout()
+    #plt.tight_layout()
 
     # Save figure if directory is specified
     if save_dir:
@@ -788,7 +883,9 @@ def plot_all_residue_attention_directions(
         state_attention_maps: np.ndarray,
         topology_file: str,
         save_dir: str = None,
-        protein_name: str = "protein"
+        protein_name: str = "protein",
+        residue_indices: list = None,
+        residue_names: list = None
 ):
     """
     Plot residue attention weights in all directions (source, target, both).
@@ -803,6 +900,10 @@ def plot_all_residue_attention_directions(
         Directory to save the figures
     protein_name : str, optional
         Name of the protein for plot titles and filenames
+    residue_indices : list, optional
+        List of residue indices corresponding to selected atoms
+    residue_names : list, optional
+        List of residue names with indices (e.g., "ALA126")
     """
     # Plot attention in all directions
     directions = ["source", "target", "both"]
@@ -818,7 +919,9 @@ def plot_all_residue_attention_directions(
             topology_file=topology_file,
             save_dir=save_dir,
             protein_name=protein_name,
-            plot_sum_direction=direction
+            plot_sum_direction=direction,
+            residue_indices=residue_indices,
+            residue_names=residue_names
         )
 
         # Update title with more descriptive text

@@ -744,228 +744,6 @@ class VAMPNet(nn.Module):
 
         return config
 
-    def fit_old(
-            self,
-            data_loader,
-            optimizer=None,
-            n_epochs=100,
-            device=None,
-            learning_rate=0.001,
-            weight_decay=1e-5,
-            save_dir="models",
-            save_every=None,
-            clip_grad_norm=None,
-            verbose=True,
-            show_batch_vamp=False,
-            check_grad_stats=False,
-            plot_scores=True,
-            plot_path=None,
-            smoothing=5,
-            callbacks=None
-    ):
-        """
-        Train the VAMPNet model using the provided data loader.
-
-        Parameters
-        ----------
-        data_loader : DataLoader
-            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs
-        optimizer : torch.optim.Optimizer, optional
-            PyTorch optimizer. If None, Adam optimizer will be created
-        n_epochs : int, default=100
-            Number of training epochs
-        device : str or torch.device, optional
-            Device to train on. If None, will use CUDA if available, else CPU
-        learning_rate : float, default=0.001
-            Learning rate for optimizer (if optimizer is None)
-        weight_decay : float, default=1e-5
-            Weight decay for optimizer (if optimizer is None)
-        save_dir : str, default="models"
-            Directory to save model checkpoints
-        save_every : int, optional
-            Save model every N epochs. If None, only saves final model
-        clip_grad_norm : float, optional
-            Maximum norm for gradient clipping. If None, no clipping is performed
-        verbose : bool, default=True
-            Whether to print training progress
-        show_batch_vamp : bool, default=False
-            Print VAMP score during each batch iteration
-        check_grad_stats : bool, default=False
-            Print gradient information
-        plot_scores : bool, default=True
-            Whether to plot VAMP scores after training
-        plot_path : str, optional
-            Path to save the VAMP score plot. If None, uses save_dir/vampnet_training_scores.png
-        smoothing : int, default=5
-            Window size for smoothing the VAMP score plot
-        callbacks : list, optional
-            List of callback functions to call after each epoch
-
-        Returns
-        -------
-        list
-            List of VAMP scores during training
-        """
-        # Set device
-        if device is None:
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        elif isinstance(device, str):
-            device = torch.device(device)
-
-        # Move model to device
-        self.to(device)
-
-        # Create optimizer if not provided
-        if optimizer is None:
-            optimizer = torch.optim.Adam(
-                self.parameters(),
-                lr=learning_rate,
-                weight_decay=weight_decay
-            )
-        self.optimizer = optimizer
-
-        # Create save directory if it doesn't exist
-        if save_dir:
-            os.makedirs(save_dir, exist_ok=True)
-
-        # Set default plot path
-        if plot_path is None and plot_scores and save_dir:
-            plot_path = os.path.join(save_dir, "vampnet_training_scores.png")
-
-        # Helper function to move batch to device
-        def to_device(batch, device):
-            x_t0, x_t1 = batch
-            return (x_t0.to(device), x_t1.to(device))
-
-        # Training loop
-        vamp_scores = []
-        best_score = float('-inf')
-        best_epoch = 0
-
-        if verbose:
-            print(f"Starting training for {n_epochs} epochs on {device}")
-
-        self.train()
-        if self.embedding_module is not None:
-            self.embedding_module.train()
-        if self.encoder is not None:
-            self.encoder.train()
-        if self.classifier_module is not None:
-            self.classifier_module.train()
-
-        for epoch in range(n_epochs):
-            epoch_score_sum = 0.0
-            n_batches = 0
-
-            # Use tqdm for progress bar if verbose
-            # Reset dataset iterator at each epoch to maintain sequential processing
-            iterator = tqdm(data_loader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=True) if verbose else data_loader
-            for batch in iterator:
-                # TODO: Will throw an error if processed batch has size 1, needs to be fixed
-                # Move batch to device
-                data_t0, data_t1 = to_device(batch, device)
-
-                # Zero gradients
-                optimizer.zero_grad()
-
-                # Forward pass
-                chi_t0, _ = self.forward(data_t0, apply_classifier=True)
-                chi_t1, _ = self.forward(data_t1, apply_classifier=True)
-
-                # Calculate VAMP loss (negative VAMP score)
-                loss = self.vamp_score.loss(chi_t0, chi_t1)
-
-                # Get positive VAMP score for logging
-                vamp_score_val = -loss.item()
-
-                # Check for NaN loss
-                if torch.isnan(loss).any():
-                    if verbose:
-                        print(f"Warning: NaN loss detected in epoch {epoch + 1}")
-                    continue
-
-                params_before = {name: param.clone().detach() for name, param in self.named_parameters()}
-
-                # Backward pass and optimization
-                loss.backward()
-
-                if show_batch_vamp:
-                    print(f'VAMP score: {vamp_score_val}')
-
-                if check_grad_stats:
-                    # Check for problems with gradients
-                    grad_stats = monitor_gradients(self, epoch)
-                    #print(grad_stats)
-
-                    # Check for gradient problems
-                    if grad_stats:
-                        if grad_stats['max'] > 10.0:
-                            print("⚠️ WARNING: Potential exploding gradients detected!")
-                            if clip_grad_norm is None:
-                                print("Consider adding gradient clipping with clip_grad_norm parameter")
-
-                        if grad_stats['small_percent'] > 50.0:
-                            print("⚠️ WARNING: Potential vanishing gradients detected!")
-                            print("Consider adjusting learning rate or model architecture")
-
-                # Gradient clipping if requested
-                if clip_grad_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=clip_grad_norm)
-
-                self.optimizer.step()
-
-
-                # Run training step (forward, backward, optimizer.step())
-                updated = {name: not torch.allclose(param, params_before[name]) for name, param in
-                           self.named_parameters()}
-                #print(f"Parameters updated: {sum(updated.values())}/{len(updated)}")
-
-                # Update metrics
-                epoch_score_sum += vamp_score_val
-                n_batches += 1
-
-            # Calculate average VAMP score for the epoch
-            avg_epoch_score = epoch_score_sum / max(1, n_batches)
-            vamp_scores.append(avg_epoch_score)
-
-            # Print progress for this epoch
-            if verbose:
-                print(f"Epoch {epoch + 1}/{n_epochs}, VAMP Score: {avg_epoch_score:.4f}")
-
-            # Save best model
-            if avg_epoch_score > best_score:
-                best_score = avg_epoch_score
-                best_epoch = epoch
-                if save_dir:
-                    self.save_complete_model(os.path.join(save_dir, "best_model.pt"))
-
-            # Save checkpoint if requested
-            if save_every and (epoch + 1) % save_every == 0 and save_dir:
-                self.save_complete_model(os.path.join(save_dir, f"checkpoint_epoch_{epoch + 1}.pt"))
-
-            # Execute callbacks if provided
-            if callbacks:
-                for callback in callbacks:
-                    callback(self, epoch, avg_epoch_score)
-
-        # Save final model
-        if save_dir:
-            self.save_complete_model(os.path.join(save_dir, "final_model.pt"))
-
-        # Plot the VAMP score curve
-        if plot_scores and plot_path:
-            plot_vamp_scores(
-                scores=vamp_scores,
-                save_path=plot_path,
-                smoothing=smoothing,
-                title="VAMPNet Training VAMP Scores"
-            )
-
-        if verbose:
-            print(f"Training completed. Best VAMP Score: {best_score:.4f} (Epoch {best_epoch + 1})")
-
-        return vamp_scores
-
     def fit(
             self,
             train_loader,
@@ -981,9 +759,9 @@ class VAMPNet(nn.Module):
             verbose=True,
             show_batch_vamp=False,
             check_grad_stats=False,
-            plot_scores=None, #TODO: Reimplement
+            plot_scores=True,
             plot_path=None,
-            smoothing=None,
+            smoothing=5,
             sample_validate_every=100,  # Validate on a sample batch every N batches
             early_stopping=None,  # Number of epochs with no improvement to trigger early stopping
             callbacks=None
@@ -1019,6 +797,12 @@ class VAMPNet(nn.Module):
             Print VAMP score during each batch iteration
         check_grad_stats : bool, default=False
             Print gradient information
+        plot_scores : bool, default=True
+            Whether to plot training and validation scores after training
+        plot_path : str, optional
+            Path to save the score plots. If None, uses save_dir/vampnet_training_scores.png
+        smoothing : int, default=5
+            Window size for smoothing the score plots
         sample_validate_every : int, default=100
             Check validation performance on a single batch every N training batches
         early_stopping : int, optional
@@ -1233,6 +1017,19 @@ class VAMPNet(nn.Module):
         history['best_epoch'] = len(
             history['train_scores']) - no_improvement_count - 1 if no_improvement_count > 0 else len(
             history['train_scores']) - 1
+
+        # Plot training performance if requested
+        if plot_scores and plot_path:
+            # Import here to avoid circular imports
+            try:
+                plot_vamp_scores(
+                    history=history,
+                    save_path=plot_path,
+                    smoothing=smoothing,
+                    title=f"VAMPNet Training Performance (lag={self.lag_time})"
+                )
+            except Exception as e:
+                print(f"Warning: Could not create training plot: {e}")
 
         return history
 
