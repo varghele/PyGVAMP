@@ -98,7 +98,8 @@ def load_model(model_path, args, device):
 def create_dataset_and_loader(args):
     """Create dataset and data loader"""
     # Getting all trajectories in traj directory
-    traj_files = find_trajectory_files(args.traj_dir)
+    traj_files = find_trajectory_files(dataset_path=args.traj_dir,
+                                       file_pattern=args.file_pattern)
 
     print("Creating dataset...")
     dataset = VAMPNetDataset(
