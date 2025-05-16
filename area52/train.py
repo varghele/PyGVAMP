@@ -50,7 +50,7 @@ def create_test_args():
     args.gaussian_expansion_dim = 16 # TODO: This is edge dim!!!
 
     # SchNet encoder settings
-    args.node_dim = 16
+    args.node_dim = 39
     args.edge_dim = 16
     args.hidden_dim = 32
     args.output_dim = 16
@@ -84,12 +84,12 @@ def create_test_args():
     # Embedding settings
     args.use_embedding = True
     args.embedding_in_dim = 39 # TODO:This is num of atoms/molecules
-    args.embedding_hidden_dim = 32
-    args.embedding_out_dim = 16
-    args.embedding_num_layers = 2
+    args.embedding_hidden_dim = 39
+    args.embedding_out_dim = 39
+    args.embedding_num_layers = 1
     args.embedding_dropout = 0.01
     args.embedding_act = 'leaky_relu'
-    args.embedding_norm = 'LayerNorm' # 'BatchNorm' #
+    args.embedding_norm = None # 'BatchNorm' #
 
     # Training settings
     args.epochs = 25
