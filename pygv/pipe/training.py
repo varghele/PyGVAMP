@@ -7,21 +7,28 @@ VAMPNet Training Pipeline
 This script provides a command-line interface for training VAMPNet models
 on molecular dynamics data.
 """
+from pymol.querying import distance
+
 # Import arguments parser
 from pygv.args import parse_train_args
 
 
 import os
 import torch
+from torch.utils.data import random_split
 from torch_geometric.loader import DataLoader
 from datetime import datetime
 
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
 from pygv.utils.pipe_utils import find_trajectory_files
+from pygv.utils.analysis import analyze_vampnet_outputs
+from pygv.utils.ck import run_ck_analysis
+from pygv.utils.its import analyze_implied_timescales
+from pygv.utils.nn_utils import init_for_vamp
 
 from pygv.vampnet import VAMPNet
-from pygv.encoder.schnet_wo_embed import SchNetEncoderNoEmbed
-from pygv.encoder.meta import Meta
+from pygv.encoder.schnet_wo_embed_v2 import SchNetEncoderNoEmbed
+from pygv.encoder.meta_att import Meta
 
 from pygv.scores.vamp_score_v0 import VAMPScore
 from pygv.classifier.SoftmaxMLP import SoftmaxMLP
@@ -70,10 +77,79 @@ def save_config(args, paths):
             f.write(f"{key} = {value}\n")
 
 
-def create_dataset_and_loader(args):
+# TODO: Remove
+def create_dataset_and_loader_old(args,
+                              is_frame_loader=False):
     """Create dataset and data loader"""
     # Getting all trajectories in traj directory
-    traj_files = find_trajectory_files(args.traj_dir)
+    traj_files = find_trajectory_files(args.traj_dir, file_pattern=args.file_pattern)
+
+    print("Creating dataset...")
+    dataset = VAMPNetDataset(
+        trajectory_files=traj_files,
+        topology_file=args.top,
+        lag_time=args.lag_time,
+        n_neighbors=args.n_neighbors,
+        node_embedding_dim=args.node_embedding_dim,
+        gaussian_expansion_dim=args.gaussian_expansion_dim,
+        #distance_min=2, #TODO: This needs to be in args
+        #distance_max=8, #TODO: This needs to be in args
+        selection=args.selection,
+        stride=args.stride,
+        cache_dir=args.cache_dir,
+        use_cache=args.use_cache
+    )
+
+    print(f"Dataset created with {len(dataset)} samples")
+
+    # If individual frames are needed (for the tests), return a framewise dataset
+    # Get frames dataset instead of time-lagged pairs dataset
+    frames_dataset = dataset.get_frames_dataset(return_pairs=False)
+
+    # Create data loader
+    if is_frame_loader is False:
+        loader = DataLoader(
+            dataset,
+            shuffle=True,
+            batch_size=args.batch_size,
+            pin_memory=torch.cuda.is_available() and not args.cpu
+        )
+    else:
+        # Create data loader
+        loader = DataLoader(
+            frames_dataset,
+            shuffle=False,  # Always false for inference
+            batch_size=args.batch_size,
+            pin_memory=torch.cuda.is_available() and not args.cpu
+        )
+
+    return dataset, loader
+
+def create_dataset_and_loader(args,
+                              is_frame_loader=False,
+                              test_split: float = 0.2,
+                              seed: int = 42):
+    """
+    Create dataset and data loaders for training and testing.
+
+    Parameters
+    ----------
+    args : Namespace
+        Arguments containing dataset and loader configurations.
+    is_frame_loader : bool, default=False
+        Whether to create a frame-wise dataset loader (for inference).
+    test_split : float, default=0.2
+        Fraction of the dataset to use for testing.
+    seed : int, default=42
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    tuple
+        (dataset, train_dataset, train_loader, test_dataset, test_loader)
+    """
+    # Getting all trajectories in traj directory
+    traj_files = find_trajectory_files(args.traj_dir, file_pattern=args.file_pattern)
 
     print("Creating dataset...")
     dataset = VAMPNetDataset(
@@ -91,18 +167,49 @@ def create_dataset_and_loader(args):
 
     print(f"Dataset created with {len(dataset)} samples")
 
-    # Create data loader
-    loader = DataLoader(
-        dataset,
-        shuffle=True,
-        batch_size=args.batch_size,
-        pin_memory=torch.cuda.is_available() and not args.cpu
-    )
+    # Split dataset into training and testing sets
+    test_size = int(len(dataset) * test_split)
+    train_size = len(dataset) - test_size
 
-    return dataset, loader
+    # Set random seed for reproducibility
+    generator = torch.Generator().manual_seed(seed)
+
+    train_dataset, test_dataset = random_split(dataset, [train_size, test_size], generator=generator)
+
+    print(f"Training set: {len(train_dataset)} samples")
+    print(f"Testing set: {len(test_dataset)} samples")
+
+    # If individual frames are needed (for the tests), return a framewise dataset
+    if is_frame_loader:
+        # Get frames dataset instead of time-lagged pairs dataset
+        frames_dataset = dataset.get_frames_dataset(return_pairs=False)
+
+        train_loader = DataLoader(
+            frames_dataset,
+            shuffle=False,  # Always false for inference
+            batch_size=args.batch_size,
+            pin_memory=torch.cuda.is_available() and not args.cpu
+        )
+        test_loader = None  # Frame loader is typically used for inference only
+    else:
+        # Create data loaders for training and testing
+        train_loader = DataLoader(
+            train_dataset,
+            shuffle=True,
+            batch_size=args.batch_size,
+            pin_memory=torch.cuda.is_available() and not args.cpu
+        )
+        test_loader = DataLoader(
+            test_dataset,
+            shuffle=True,
+            batch_size=args.batch_size,
+            pin_memory=torch.cuda.is_available() and not args.cpu
+        )
+
+    return dataset, train_dataset, train_loader, test_dataset, test_loader
 
 
-def create_model(args, dataset):
+def create_model(args):
     """Create VAMPNet model"""
     # Create encoder based on selected type
     if args.encoder_type.lower() == 'schnet':
@@ -204,23 +311,14 @@ def create_model(args, dataset):
         lag_time=args.lag_time
     )
 
-    #TODO:FIX
-    def init_for_vamp(model):
-        for m in model.modules():
-            if isinstance(m, torch.nn.Linear):
-                # Initialize with slightly larger weights
-                torch.nn.init.xavier_uniform_(m.weight, gain=1.5)
-                if m.bias is not None:
-                    torch.nn.init.constant_(m.bias, 0.1)  # Small positive bias
-
     # Apply to your model
-    init_for_vamp(model)
+    init_for_vamp(model, method='kaiming_normal')
     model.to('cuda')
 
     return model
 
 
-def train_model(args, model, loader, paths):
+def train_model(args, model, train_loader, test_loader, paths):
     """Train the model"""
     # Set device
     device = torch.device("cpu" if args.cpu else "cuda" if torch.cuda.is_available() else "cpu")
@@ -261,7 +359,8 @@ def train_model(args, model, loader, paths):
     # Train the model
     print(f"Training model on {device}...")
     scores = model.fit(
-        data_loader=loader,
+        train_loader=train_loader,
+        test_loader=test_loader,
         optimizer=optimizer,
         n_epochs=args.epochs,
         device=device,
@@ -272,17 +371,17 @@ def train_model(args, model, loader, paths):
         plot_scores=True,
         plot_path=paths['scores_plot'],
         smoothing=5,
-        verbose=True
+        verbose=True,
+        show_batch_vamp=True,
+        check_grad_stats=False,
+        sample_validate_every=args.sample_validate_every
     )
 
     return scores
 
 
-def main():
+def run_training(args):
     """Main function"""
-    # Parse arguments
-    args = parse_train_args()
-
     # Setup output directory
     paths = setup_output_directory(args)
 
@@ -290,17 +389,84 @@ def main():
     save_config(args, paths)
 
     # Create dataset and loader
-    dataset, loader = create_dataset_and_loader(args)
+    dataset, train_dataset, train_loader, test_dataset, test_loader = create_dataset_and_loader(args,test_split=args.val_split)
 
     # Create model
-    model = create_model(args, dataset)
+    model = create_model(args)
     print(f"Created VAMPNet model with {sum(p.numel() for p in model.parameters())} parameters")
 
     # Train model
-    scores = train_model(args, model, loader, paths)
+    scores = train_model(args=args,
+                         model=model,
+                         train_loader=train_loader,
+                         test_loader=test_loader,
+                         paths=paths)
 
     print(f"Training completed successfully. Results saved to {paths['run_dir']}")
 
+    # Determine device
+    if args.cpu is True:
+        device = torch.device("cpu")
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Generate frames dataset and loader
+    # Here we do not need to return pairs, we need to analyze each frame,
+    # which is why we need to modify the dataloader a bit to return batches of frames
+    dataset, train_dataset, train_loader, _, _ = create_dataset_and_loader(args, is_frame_loader=True)
+
+    # TODO: pre-analysis for CK Tests and ITS Plots
+    # Get state transition probabilities, graph embeddings and attention scores
+    probs, embeddings, attentions, edge_indices = analyze_vampnet_outputs(model=model,
+                                                                          data_loader=train_loader,
+                                                                          save_folder=paths['model_dir'],
+                                                                          batch_size=args.batch_size if hasattr(args,
+                                                                                                                'batch_size') else 32,
+                                                                          device=device,
+                                                                          return_tensors=False
+                                                                          )
+
+    # Get actual timestep of the trajectory
+    # TODO: Check if this is correct!
+    inferred_timestep = dataset._infer_timestep() / 1000  # Timestep in nanoseconds
+
+    # Get lag times up to maximum lag time
+    if args.max_tau is not None:
+        lag_times_ns = [i for i in range(1, args.max_tau, 2)]
+    else:
+        max_tau = 250
+        lag_times_ns = [i for i in range(1, max_tau, 2)]
+
+    # Run Chapman Kolmogorow Test
+    run_ck_analysis(
+        probs=probs,
+        save_dir=paths['plot_dir'],
+        protein_name=args.protein_name,
+        lag_times_ns=[args.lag_time],
+        steps=10,
+        stride=args.stride,
+        timestep=inferred_timestep
+    )
+    print("CK test complete")
+
+    # Calculate and plot implied timescales
+    analyze_implied_timescales(
+        probs=probs,
+        save_dir=paths['plot_dir'],
+        protein_name=args.protein_name,
+        lag_times_ns=lag_times_ns,
+        stride=args.stride,
+        timestep=inferred_timestep,
+    )
+    print("ITS calculation complete")
+
+
+
+
+
 
 if __name__ == "__main__":
-    main()
+    # Parse arguments
+    args = parse_train_args()
+
+    run_training(args)

@@ -79,6 +79,15 @@ class VAMPNetDataset(Dataset):
             # Process trajectories and create graphs
             self._process_trajectories()
 
+            # TODO: this doesn't work with cached data, see if there is a better alternative
+            # Create trainable node embeddings
+            self.node_embeddings = torch.nn.Parameter(
+                torch.zeros(self.n_atoms, self.node_embedding_dim)
+            )
+
+            # Initialize using position encoding (better than random for large graphs)
+            self._initialize_node_embeddings()
+
             # Determine min and max distances for Gaussian expansion
             if distance_min is None or distance_max is None:
                 self._determine_distance_range()
@@ -224,53 +233,35 @@ class VAMPNetDataset(Dataset):
 
         return expanded_features
 
-    def _create_graph_from_frame_old(self, frame_idx):
-        """
-        Create a graph representation for a single frame.
+    def _initialize_node_embeddings(self):
+        """Initialize node embeddings with position encoding for better gradient flow"""
+        import math
 
-        Args:
-            frame_idx: Index of the frame to process
+        # Create positional encodings
+        embeddings = torch.zeros(self.n_atoms, self.node_embedding_dim)
 
-        Returns:
-            torch_geometric.data.Data: Graph representation of the frame
-        """
-        # Get coordinates for the frame
-        coords = torch.tensor(self.frames[frame_idx], dtype=torch.float32)
+        # Use positional encoding for even indices
+        position = torch.arange(0, self.n_atoms).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, self.node_embedding_dim, 2) *
+                             -(math.log(10000.0) / self.node_embedding_dim))
 
-        # Calculate pairwise distances
-        diff = coords.unsqueeze(1) - coords.unsqueeze(0)  # [n_atoms, n_atoms, 3]
-        distances = torch.sqrt((diff ** 2).sum(dim=2))  # [n_atoms, n_atoms]
+        # Fill even indices with sine
+        embeddings[:, 0::2] = torch.sin(position * div_term)
 
-        # Find M nearest neighbors for each atom
-        # Set self-distances to -1 to exclude them
-        distances.fill_diagonal_(float(-1))
+        # Fill odd indices with cosine if they exist
+        if self.node_embedding_dim > 1:
+            # If odd indices exist
+            if div_term.size(0) < self.node_embedding_dim // 2 + self.node_embedding_dim % 2:
+                # Need to adjust div_term size
+                remaining = self.node_embedding_dim // 2 + self.node_embedding_dim % 2 - div_term.size(0)
+                extension = torch.exp(torch.arange(div_term.size(0), div_term.size(0) + remaining) *
+                                      -(math.log(10000.0) / self.node_embedding_dim))
+                div_term = torch.cat([div_term, extension])
 
-        # Get top-k smallest distances for each atom
-        _, nn_indices = torch.topk(distances, self.n_neighbors, dim=1, largest=False)
+            embeddings[:, 1::2] = torch.cos(position * div_term[:self.node_embedding_dim // 2])
 
-        # Create edge indices
-        source_indices = torch.arange(self.n_atoms).repeat_interleave(self.n_neighbors)
-        target_indices = nn_indices.reshape(-1)
-        edge_index = torch.stack([source_indices, target_indices], dim=0)
-
-        # Get edge distances
-        edge_distances = distances[source_indices, target_indices]
-
-        # Compute Gaussian expanded edge features
-        edge_attr = self._compute_gaussian_expanded_distances(edge_distances)
-
-        # Generate random node features
-        node_attr = torch.randn(self.n_atoms, self.node_embedding_dim)
-
-        # Create PyG Data object
-        graph = Data(
-            x=node_attr,
-            edge_index=edge_index,
-            edge_attr=edge_attr,
-            num_nodes=self.n_atoms
-        )
-
-        return graph
+        # Store as plain tensor (not a parameter)
+        self.node_embeddings = embeddings
 
     def _create_graph_from_frame(self, frame_idx):
         """
@@ -350,13 +341,23 @@ class VAMPNetDataset(Dataset):
         # Compute Gaussian expanded edge features
         edge_attr = self._compute_gaussian_expanded_distances(edge_distances)
 
-        # Generate random node features
+        # Check if node_embeddings exists, and create it if not
+        #if not hasattr(self, 'node_embeddings'):
+        #    # Create node embeddings using position encoding
+        #    self._initialize_node_embeddings()
+        #    print("Created node embeddings parameter for the first time")
+
+        # Generate node features base on positional encoding
+        #node_attr = self.node_embeddings.clone()
+        node_attr = torch.zeros(self.n_atoms, self.n_atoms)  # One-hot encoding (n_atoms × n_atoms)
+        for i in range(self.n_atoms):
+            node_attr[i, i] = 1.0
         #node_attr = torch.randn(self.n_atoms, self.node_embedding_dim)
-        node_attr = torch.nn.Embedding(num_embeddings=self.n_atoms, embedding_dim=self.node_embedding_dim)
+        #node_attr = torch.nn.Embedding(num_embeddings=self.n_atoms, embedding_dim=self.node_embedding_dim)
 
         # Create PyG Data object
         graph = Data(
-            x=node_attr.weight.data,
+            x=node_attr,#.weight.data,
             edge_index=edge_index,
             edge_attr=edge_attr,
             num_nodes=self.n_atoms
@@ -626,3 +627,50 @@ class VAMPNetDataset(Dataset):
                 return self._create_graph_from_frame(t0_idx), self._create_graph_from_frame(t1_idx)
 
         self.__getitem__ = new_getitem.__get__(self)  # Bind method to instance
+
+    def get_frames_dataset(self, return_pairs=False):
+        """
+        Create a dataset that returns individual frames instead of time-lagged pairs.
+
+        This is particularly useful for analysis purposes where you want to process
+        each frame independently.
+
+        Parameters
+        ----------
+        return_pairs : bool, default=False
+            If True, return time-lagged pairs as in the original dataset
+            If False, return individual frames
+
+        Returns
+        -------
+        VAMPNetFramesDataset
+            A new dataset instance that returns individual frames
+        """
+
+        # Create a new dataset class for frames
+        class VAMPNetFramesDataset(torch.utils.data.Dataset):
+            def __init__(self, parent_dataset, return_pairs=False):
+                self.parent = parent_dataset
+                self.return_pairs = return_pairs
+
+                # If not returning pairs, we can access all frames
+                if not return_pairs:
+                    self.n_samples = parent_dataset.n_frames
+                else:
+                    # Otherwise use the time-lagged pairs like the parent
+                    self.n_samples = len(parent_dataset.t0_indices)
+
+            def __len__(self):
+                return self.n_samples
+
+            def __getitem__(self, idx):
+                if self.return_pairs:
+                    # Return time-lagged pairs as in the original dataset
+                    return self.parent.__getitem__(idx)
+                else:
+                    # Return a single frame as a graph
+                    return self.parent._create_graph_from_frame(idx)
+
+        # Create and return the frames dataset
+        return VAMPNetFramesDataset(self, return_pairs=return_pairs)
+

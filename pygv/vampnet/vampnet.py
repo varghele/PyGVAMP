@@ -6,6 +6,7 @@ from torch_geometric.nn.models import MLP
 import os
 import datetime
 from pygv.utils.plotting import plot_vamp_scores
+from pygv.utils.nn_utils import monitor_gradients
 from tqdm import tqdm
 
 
@@ -133,6 +134,116 @@ class VAMPNet(nn.Module):
         self.add_module('classifier_module', classifier_module)
 
     def forward(
+            self,
+            data,
+            return_features: bool = False,
+            apply_classifier: bool = True
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Transform input data through the model, with improved gradient flow.
+
+        Args:
+            data: Input PyG graph data object
+            return_features: Whether to return encoder features
+            apply_classifier: Whether to apply classifier to get class probabilities
+
+        Returns:
+            If apply_classifier is True:
+                If return_features is True: (class_probs, features)
+                Else: class_probs
+            Else:
+                features
+        """
+        # Extract graph components
+        x = data.x
+        edge_index = data.edge_index
+        edge_attr = data.edge_attr if hasattr(data, 'edge_attr') else None
+        batch = data.batch if hasattr(data, 'batch') else None
+
+        # Apply embedding module to node and edge features if provided
+        if self.embedding_module is not None:
+            # Add a skip connection for better gradient flow
+            if hasattr(self.embedding_module, 'node_embedding') and hasattr(self.embedding_module, 'edge_embedding'):
+                # Module has separate functions for node and edge embeddings
+                embedded_x = self.embedding_module.node_embedding(x)
+                x = embedded_x  # Direct assignment with no skip connection for node features
+
+                if edge_attr is not None and self.embedding_module.edge_embedding is not None:
+                    # Add skip connection for edge features if dimensions match
+                    edge_embedded = self.embedding_module.edge_embedding(edge_attr)
+                    if edge_embedded.size(-1) == edge_attr.size(-1):
+                        edge_attr = edge_embedded + edge_attr  # Skip connection
+                    else:
+                        edge_attr = edge_embedded  # Direct assignment if dimensions don't match
+            else:
+                # Assume single embedding function for nodes
+                x = self.embedding_module(x)
+
+        # Track if we have a batch dimension
+        has_batch = batch is not None
+
+        # Ensure proper batch dimension if missing
+        if not has_batch and len(x) > 1:
+            # Create a batch vector with all zeros (single graph)
+            batch = torch.zeros(x.size(0), device=x.device, dtype=torch.long)
+
+        # Add a small jitter to prevent identical representations (helps with gradient flow)
+        if self.training and x.requires_grad:
+            # Add small noise (1e-6) during training
+            x = x + torch.randn_like(x) * 1e-6
+
+        try:
+            # Pass through encoder
+            features = self.encoder(
+                x=x,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+                batch=batch
+            )
+
+            # Handle case where encoder returns a tuple
+            if isinstance(features, tuple):
+                features = features[0]
+
+        except RuntimeError as e:
+            # Provide helpful error messages for common issues
+            if "Expected tensor for argument" in str(e):
+                raise RuntimeError(f"Encoder error - check input dimensions: {str(e)}\n"
+                                   f"x shape: {x.shape}, edge_index shape: {edge_index.shape}, "
+                                   f"batch: {'is None' if batch is None else batch.shape}")
+            elif "CUDA out of memory" in str(e):
+                raise RuntimeError(f"CUDA out of memory in encoder. Try reducing batch size.")
+            else:
+                # Re-raise the original error
+                raise
+
+        # Apply classifier if requested
+        if apply_classifier and self.classifier_module is not None:
+            # Use try-except for better error messages
+            try:
+                probs = self.classifier_module(features)
+
+                # Check for NaN values
+                if torch.isnan(probs).any():
+                    print("Warning: NaN values detected in classifier output")
+                    # Replace NaN with small values to avoid breaking the loss
+                    probs = torch.nan_to_num(probs, nan=1e-6)
+
+                if return_features:
+                    return probs, features
+                else:
+                    return probs, torch.empty(1)
+            except RuntimeError as e:
+                if "size mismatch" in str(e):
+                    raise RuntimeError(f"Size mismatch in classifier: expected input of shape "
+                                       f"{getattr(self.classifier_module, 'in_channels', 'unknown')}, "
+                                       f"but got {features.shape}")
+                else:
+                    raise
+        else:
+            return torch.empty(1), features
+
+    def forward_old(
         self,
         data,
         return_features: bool = False,
@@ -203,6 +314,81 @@ class VAMPNet(nn.Module):
                 return probs, torch.empty(1)
         else:
             return torch.empty(1), features
+
+    def get_attention(self, data, device=None):
+        """
+        Extract attention maps from the encoder for the given data.
+
+        This function runs the forward pass up to the encoder step and returns
+        the attention matrices if available.
+
+        Parameters
+        ----------
+        data : torch_geometric.data.Data or Batch
+            PyTorch Geometric data object containing graph information
+        device : str or torch.device, optional
+            Device to run computation on. If None, uses the model's current device
+
+        Returns
+        -------
+        tuple
+            (features, attentions) where:
+            - features: The encoded features/embedding
+            - attentions: List of attention matrices or None if attention isn't used
+        """
+        # Set device
+        if device is None:
+            device = next(self.parameters()).device
+
+        # Move data to device if needed
+        if data.x.device != device:
+            data = data.to(device)
+
+        # Set model to eval mode for attention extraction
+        was_training = self.training
+        self.eval()
+
+        with torch.no_grad():
+            # Extract graph components
+            x = data.x
+            edge_index = data.edge_index
+            edge_attr = data.edge_attr if hasattr(data, 'edge_attr') else None
+            batch = data.batch if hasattr(data, 'batch') else None
+
+            # Apply embedding module if available
+            if self.embedding_module is not None:
+                if hasattr(self.embedding_module, 'node_embedding') and hasattr(self.embedding_module,
+                                                                                'edge_embedding'):
+                    # Module has separate functions for node and edge embeddings
+                    x = self.embedding_module.node_embedding(x)
+                    if edge_attr is not None and self.embedding_module.edge_embedding is not None:
+                        edge_attr = self.embedding_module.edge_embedding(edge_attr)
+                else:
+                    # Assume single embedding function for nodes
+                    x = self.embedding_module(x)
+
+            # Pass through encoder to get features and attention
+            encoder_output = self.encoder(x, edge_index, edge_attr, batch)
+
+            # Handle different return types from the encoder
+            if isinstance(encoder_output, tuple) and len(encoder_output) > 1:
+                features, attention_info = encoder_output
+
+                # Check if attention_info is a tuple containing attention
+                if isinstance(attention_info, tuple) and len(attention_info) > 1:
+                    _, attention_maps = attention_info
+                    attentions = attention_maps
+                else:
+                    attentions = attention_info
+            else:
+                features = encoder_output
+                attentions = None
+
+        # Restore training mode
+        if was_training:
+            self.train()
+
+        return features, attentions
 
     def transform(self, data, return_features=False):
         """
@@ -560,7 +746,8 @@ class VAMPNet(nn.Module):
 
     def fit(
             self,
-            data_loader,
+            train_loader,
+            test_loader=None,
             optimizer=None,
             n_epochs=100,
             device=None,
@@ -570,9 +757,13 @@ class VAMPNet(nn.Module):
             save_every=None,
             clip_grad_norm=None,
             verbose=True,
+            show_batch_vamp=False,
+            check_grad_stats=False,
             plot_scores=True,
             plot_path=None,
             smoothing=5,
+            sample_validate_every=100,  # Validate on a sample batch every N batches
+            early_stopping=None,  # Number of epochs with no improvement to trigger early stopping
             callbacks=None
     ):
         """
@@ -580,8 +771,10 @@ class VAMPNet(nn.Module):
 
         Parameters
         ----------
-        data_loader : DataLoader
-            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs
+        train_loader : DataLoader
+            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs for training
+        test_loader : DataLoader, optional
+            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs for validation
         optimizer : torch.optim.Optimizer, optional
             PyTorch optimizer. If None, Adam optimizer will be created
         n_epochs : int, default=100
@@ -600,19 +793,27 @@ class VAMPNet(nn.Module):
             Maximum norm for gradient clipping. If None, no clipping is performed
         verbose : bool, default=True
             Whether to print training progress
+        show_batch_vamp : bool, default=False
+            Print VAMP score during each batch iteration
+        check_grad_stats : bool, default=False
+            Print gradient information
         plot_scores : bool, default=True
-            Whether to plot VAMP scores after training
+            Whether to plot training and validation scores after training
         plot_path : str, optional
-            Path to save the VAMP score plot. If None, uses save_dir/vampnet_training_scores.png
+            Path to save the score plots. If None, uses save_dir/vampnet_training_scores.png
         smoothing : int, default=5
-            Window size for smoothing the VAMP score plot
+            Window size for smoothing the score plots
+        sample_validate_every : int, default=100
+            Check validation performance on a single batch every N training batches
+        early_stopping : int, optional
+            Number of epochs without improvement after which to stop training
         callbacks : list, optional
             List of callback functions to call after each epoch
 
         Returns
         -------
-        list
-            List of VAMP scores during training
+        dict
+            Dictionary containing training history
         """
         # Set device
         if device is None:
@@ -636,40 +837,48 @@ class VAMPNet(nn.Module):
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
 
-        # Set default plot path
-        if plot_path is None and plot_scores and save_dir:
-            plot_path = os.path.join(save_dir, "vampnet_training_scores.png")
-
         # Helper function to move batch to device
-        def to_device(batch, device):
+        def to_device(batch, device_):
             x_t0, x_t1 = batch
-            return (x_t0.to(device), x_t1.to(device))
+            return (x_t0.to(device_), x_t1.to(device_))
 
-        # Training loop
-        vamp_scores = []
+        # Training history
+        history = {
+            'train_scores': [],  # Training scores for each epoch
+            'batch_train_scores': [],  # Training scores for selected batches
+            'batch_val_scores': [],  # Validation scores on samples
+            'batch_indices': [],  # Corresponding batch indices
+            'epoch_val_scores': [],  # Full validation scores per epoch
+            'epochs': []  # Epoch numbers
+        }
+
+        # Initialize variables
         best_score = float('-inf')
-        best_epoch = 0
+        best_model_state = None
+        no_improvement_count = 0
+        global_batch = 1
 
         if verbose:
             print(f"Starting training for {n_epochs} epochs on {device}")
+            if test_loader is not None:
+                print(f"Using quick validation every {sample_validate_every} batches")
+                print(f"Performing full validation after each epoch")
+            if early_stopping:
+                print(f"Early stopping after {early_stopping} epochs without improvement")
 
-        self.train()
-        if self.embedding_module is not None:
-            self.embedding_module.train()
-        if self.encoder is not None:
-            self.encoder.train()
-        if self.classifier_module is not None:
-            self.classifier_module.train()
-
+        # Training loop over epochs
         for epoch in range(n_epochs):
+            # Set model to train mode
+            self.train()
+
             epoch_score_sum = 0.0
             n_batches = 0
 
             # Use tqdm for progress bar if verbose
-            # Reset dataset iterator at each epoch to maintain sequential processing
-            iterator = tqdm(data_loader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=True) if verbose else data_loader
-            for batch in iterator:
-                # TODO: Will throw an error if processed batch has size 1, needs to be fixed
+            iterator = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{n_epochs}", leave=True) if verbose else train_loader
+
+            # Process batches
+            for batch_idx, batch in enumerate(iterator):
                 # Move batch to device
                 data_t0, data_t1 = to_device(batch, device)
 
@@ -689,44 +898,101 @@ class VAMPNet(nn.Module):
                 # Check for NaN loss
                 if torch.isnan(loss).any():
                     if verbose:
-                        print(f"Warning: NaN loss detected in epoch {epoch + 1}")
+                        print(f"Warning: NaN loss detected in epoch {epoch + 1}, batch {batch_idx}")
                     continue
 
-                params_before = {name: param.clone().detach() for name, param in self.named_parameters()}
-
-                # Backward pass and optimization
+                # Backward pass
                 loss.backward()
+
+                if check_grad_stats and batch_idx % 500 == 0:
+                    from pygv.utils.analysis import monitor_gradients
+                    grad_stats = monitor_gradients(self, epoch, batch_idx=batch_idx)
+                    if grad_stats:
+                        if grad_stats['max'] > 10.0:
+                            print("⚠️ WARNING: Potential exploding gradients detected!")
+                        if grad_stats['small_percent'] > 50.0:
+                            print("⚠️ WARNING: Potential vanishing gradients detected!")
 
                 # Gradient clipping if requested
                 if clip_grad_norm is not None:
                     torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=clip_grad_norm)
 
-                self.optimizer.step()
-
-
-                # Run training step (forward, backward, optimizer.step())
-                updated = {name: not torch.allclose(param, params_before[name]) for name, param in
-                           self.named_parameters()}
-                #print(f"Parameters updated: {sum(updated.values())}/{len(updated)}")
+                # Optimizer step
+                optimizer.step()
 
                 # Update metrics
                 epoch_score_sum += vamp_score_val
                 n_batches += 1
 
-                # Calculate average VAMP score for the epoch
-                avg_epoch_score = epoch_score_sum / max(1, n_batches)
-                vamp_scores.append(avg_epoch_score)
+                # Show batch VAMP score if requested
+                if show_batch_vamp and batch_idx % 10 == 0:
+                    current_avg = epoch_score_sum / n_batches
+                    print(f"Batch {batch_idx}/{len(train_loader)}, VAMP: {vamp_score_val:.4f}, Avg: {current_avg:.4f}")
 
-            # Print progress for this epoch
-            if verbose:
-                print(f"Epoch {epoch + 1}/{n_epochs}, VAMP Score: {avg_epoch_score:.4f}")
+                # Perform quick validation check at regular intervals
+                if test_loader is not None and global_batch % sample_validate_every == 0:
+                    sample_val_score = self.quick_evaluate(test_loader, device)
 
-            # Save best model
-            if avg_epoch_score > best_score:
-                best_score = avg_epoch_score
-                best_epoch = epoch
+                    if sample_val_score is not None:
+                        # Store scores for this batch
+                        history['batch_train_scores'].append(vamp_score_val)
+                        history['batch_val_scores'].append(sample_val_score)
+                        history['batch_indices'].append(global_batch)
+
+                        # Update in progress bar
+                        if verbose:
+                            iterator.set_postfix({
+                                'train_vamp': f"{vamp_score_val:.4f}",
+                                'sample_val': f"{sample_val_score:.4f}"
+                            })
+
+                global_batch += 1
+
+            # End of epoch
+
+            # Calculate average train score for this epoch
+            avg_train_score = epoch_score_sum / max(1, n_batches)
+            history['train_scores'].append(avg_train_score)
+            history['epochs'].append(epoch)
+
+            # Perform full validation after each epoch if test loader exists
+            current_val_score = None
+            if test_loader is not None:
+                current_val_score = self.evaluate(test_loader, device)
+                history['epoch_val_scores'].append(current_val_score)
+
+                if verbose:
+                    print(
+                        f"Epoch {epoch + 1}/{n_epochs}, Train VAMP: {avg_train_score:.4f}, Val VAMP: {current_val_score:.4f}")
+            else:
+                # Use training score if no validation data
+                current_val_score = avg_train_score
+                if verbose:
+                    print(f"Epoch {epoch + 1}/{n_epochs}, Train VAMP: {avg_train_score:.4f}")
+
+            # Check if this is the best model
+            if current_val_score > best_score:
+                best_score = current_val_score
+                no_improvement_count = 0
+
+                # Save best model state
+                best_model_state = {k: v.cpu().clone() for k, v in self.state_dict().items()}
+
+                # Also save to disk if directory specified
                 if save_dir:
                     self.save_complete_model(os.path.join(save_dir, "best_model.pt"))
+
+                if verbose:
+                    print(f"New best model with score: {best_score:.4f}")
+            else:
+                no_improvement_count += 1
+                if verbose:
+                    print(f"No improvement for {no_improvement_count} epochs. Best score: {best_score:.4f}")
+
+            # Early stopping check
+            if early_stopping and no_improvement_count >= early_stopping:
+                print(f"Early stopping triggered after {no_improvement_count} epochs without improvement")
+                break
 
             # Save checkpoint if requested
             if save_every and (epoch + 1) % save_every == 0 and save_dir:
@@ -735,22 +1001,184 @@ class VAMPNet(nn.Module):
             # Execute callbacks if provided
             if callbacks:
                 for callback in callbacks:
-                    callback(self, epoch, avg_epoch_score)
+                    callback(self, epoch, current_val_score)
 
         # Save final model
         if save_dir:
             self.save_complete_model(os.path.join(save_dir, "final_model.pt"))
 
-        # Plot the VAMP score curve
+        # Load best model if we have one and early stopping was used
+        if best_model_state is not None and no_improvement_count > 0:
+            self.load_state_dict(best_model_state)
+            print(f"Loaded best model with score: {best_score:.4f}")
+
+        # Add best score to history
+        history['best_score'] = best_score
+        history['best_epoch'] = len(
+            history['train_scores']) - no_improvement_count - 1 if no_improvement_count > 0 else len(
+            history['train_scores']) - 1
+
+        # Plot training performance if requested
         if plot_scores and plot_path:
-            plot_vamp_scores(
-                scores=vamp_scores,
-                save_path=plot_path,
-                smoothing=smoothing,
-                title="VAMPNet Training VAMP Scores"
-            )
+            # Import here to avoid circular imports
+            try:
+                plot_vamp_scores(
+                    history=history,
+                    save_path=plot_path,
+                    smoothing=smoothing,
+                    title=f"VAMPNet Training Performance (lag={self.lag_time})"
+                )
+            except Exception as e:
+                print(f"Warning: Could not create training plot: {e}")
 
-        if verbose:
-            print(f"Training completed. Best VAMP Score: {best_score:.4f} (Epoch {best_epoch + 1})")
+        return history
 
-        return vamp_scores
+
+    def quick_evaluate(self, data_loader, device=None, num_batches=10, verbose=True):
+        """
+        Quickly evaluate model performance by sampling batches from a data loader.
+
+        Parameters
+        ----------
+        data_loader : DataLoader
+            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs
+        device : torch.device, optional
+            Device to use for evaluation
+        num_batches : int, default=10
+            Number of batches to evaluate and average
+        verbose : bool, default=True
+            Whether to print the validation score to console
+
+        Returns
+        -------
+        float
+            Average VAMP score across sampled batches, or None if evaluation fails
+        """
+        try:
+            if data_loader is None or len(data_loader) == 0:
+                return None
+
+            # Set device if not provided
+            if device is None:
+                device = next(self.parameters()).device
+
+            # Helper function to move batch to device
+            def to_device(batch, device_):
+                x_t0, x_t1 = batch
+                return (x_t0.to(device_), x_t1.to(device_))
+
+            # Limit number of batches to data loader size
+            num_batches = min(num_batches, len(data_loader))
+
+            # Evaluate in eval mode with no grad
+            self.eval()
+            batch_scores = []
+            batch_sizes = []
+
+            # Get iterator for the data loader
+            iterator = iter(data_loader)
+
+            with torch.no_grad():
+                # Process the specified number of batches
+                for i in range(num_batches):
+                    try:
+                        # Get the next batch
+                        test_batch = next(iterator)
+                    except StopIteration:
+                        # Restart iterator if we run out of batches
+                        iterator = iter(data_loader)
+                        test_batch = next(iterator)
+
+                    # Move batch to device
+                    test_t0, test_t1 = to_device(test_batch, device)
+                    batch_size = test_t0.size(0) if hasattr(test_t0, 'size') else 0
+
+                    # Forward pass
+                    test_chi_t0, _ = self.forward(test_t0, apply_classifier=True)
+                    test_chi_t1, _ = self.forward(test_t1, apply_classifier=True)
+
+                    # Get VAMP score
+                    test_loss = self.vamp_score.loss(test_chi_t0, test_chi_t1)
+                    test_score = -test_loss.item()
+
+                    batch_scores.append(test_score)
+                    batch_sizes.append(batch_size)
+
+            # Back to training mode
+            self.train()
+
+            # Compute average score
+            if not batch_scores:
+                if verbose:
+                    print("\nNo batches were successfully evaluated")
+                return None
+
+            avg_score = sum(batch_scores) / len(batch_scores)
+
+            # Print validation score to console if requested
+            if verbose:
+                batch_score_str = ", ".join([f"{score:.4f}" for score in batch_scores])
+                print(f"\nQuick validation ({len(batch_scores)} batches): Average VAMP score = {avg_score:.4f}")
+                print(f"Individual batch scores: [{batch_score_str}]")
+
+            return avg_score
+
+        except Exception as e:
+            if verbose:
+                print(f"\nError in quick validation: {str(e)}")
+            return None
+
+    def evaluate(self, data_loader, device=None):
+        """
+        Fully evaluate the model on the given data loader.
+
+        Parameters
+        ----------
+        data_loader : DataLoader
+            DataLoader providing batches of (x_t0, x_t1) time-lagged pairs
+        device : torch.device, optional
+            Device to use for evaluation
+
+        Returns
+        -------
+        float
+            Average VAMP score
+        """
+        if data_loader is None or len(data_loader) == 0:
+            return None
+
+        # Set device if not provided
+        if device is None:
+            device = next(self.parameters()).device
+
+        # Helper function to move batch to device
+        def to_device(batch, device_):
+            x_t0, x_t1 = batch
+            return (x_t0.to(device_), x_t1.to(device_))
+
+        self.eval()
+        test_score_sum = 0.0
+        n_test_batches = 0
+
+        with torch.no_grad():
+            for test_batch in data_loader:
+                # Move batch to device
+                test_t0, test_t1 = to_device(test_batch, device)
+
+                # Forward pass
+                test_chi_t0, _ = self.forward(test_t0, apply_classifier=True)
+                test_chi_t1, _ = self.forward(test_t1, apply_classifier=True)
+
+                # Calculate VAMP score
+                test_loss = self.vamp_score.loss(test_chi_t0, test_chi_t1)
+                test_score = -test_loss.item()
+
+                test_score_sum += test_score
+                n_test_batches += 1
+
+        # Return to training mode
+        self.train()
+
+        # Return average test score
+        return test_score_sum / max(1, n_test_batches)
+

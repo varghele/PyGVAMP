@@ -37,8 +37,12 @@ def get_train_parser():
 
     # Data arguments
     data_group = parser.add_argument_group('Data')
+    data_group.add_argument('--protein_name', required=True,
+                            help='Name of the protein that was simulated')
     data_group.add_argument('--traj_dir', required=True,#, nargs='+',
                             help='Path to trajectory directory')
+    data_group.add_argument('--file_pattern',
+                            help='File extension of trajectory files')
     data_group.add_argument('--top', required=True,
                             help='Path to topology file')
     data_group.add_argument('--selection', default='name CA',
@@ -154,6 +158,15 @@ def get_train_parser():
                              help='Gradient clipping norm')
     train_group.add_argument('--cpu', action='store_true',
                              help='Force CPU usage even if CUDA is available')
+    train_group.add_argument('--val_split', type=float, default=0.1,
+                             help='Amount of data that training will get validated on')
+    train_group.add_argument('--sample_validate_every', type=int, default=100,
+                             help='How often (mini)validation should be performed; every n batches')
+
+    # Testing arguments
+    test_group = parser.add_argument_group('Testing')
+    test_group.add_argument('--max_tau', type=int, default=250,
+                            help='Maximum lag time to plot the implied timescales for')
 
     # Output arguments
     out_group = parser.add_argument_group('Output')

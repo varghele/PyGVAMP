@@ -60,6 +60,16 @@ class VAMPScore(nn.Module):
         torch.Tensor
             Computed VAMP score. Includes +1 contribution from constant singular function.
         """
+        #TODO: This is an experimental code snippet modifying epsilon, remove if this is behaving weirdly
+        # Adjust regularization based on batch size
+        #batch_size = data.size(0)
+        #n_states = data.size(1)
+        #effective_epsilon = self.epsilon * (n_states / batch_size)
+
+        # Temporarily override epsilon for this forward pass
+        #original_epsilon = self.epsilon
+        #self.epsilon = effective_epsilon
+
         # Validate inputs
         if not torch.is_tensor(data) or not torch.is_tensor(data_lagged):
             raise TypeError("Data inputs must be torch.Tensor objects")
@@ -212,6 +222,11 @@ class VAMPScore(nn.Module):
         c00 = 1 / (batch_size - 1) * torch.matmul(data_t, data)  # Instantaneous auto-covariance
         c0t = 1 / (batch_size - 1) * torch.matmul(data_t, data_lagged)  # Cross-covariance
         ctt = 1 / (batch_size - 1) * torch.matmul(data_lagged_t, data_lagged)  # Time-lagged auto-covariance
+
+        # Add regularization to diagonal
+        epsilon_eye = self.epsilon * torch.eye(c00.size(0), device=c00.device)
+        c00 = c00 + epsilon_eye
+        ctt = ctt + epsilon_eye
 
         return c00, c0t, ctt
 
