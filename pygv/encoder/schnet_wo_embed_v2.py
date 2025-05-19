@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from sympy.physics.quantum.gate import normalized
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import MLP
 from torch_geometric.utils import softmax
@@ -86,7 +84,9 @@ class CFConv(MessagePassing):
         Forward pass of CFConv layer.
         """
         # Normalize edge attributes for numerical stability
+        # Todo: check if this normalization is responsible for differences
         edge_attr_norm = edge_attr / (edge_attr.norm(dim=-1, keepdim=True) + 1e-8)
+        #edge_attr_norm = edge_attr
 
         # Generate weights from edge attributes
         edge_weights = self.filter_network(edge_attr_norm)

@@ -540,7 +540,7 @@ def analyze_architecture_differences():
     return differences
 
 
-def run_full_comparison():
+def run_full_comparison_old():
     """
     Run a comprehensive comparison of all three implementations
     """
@@ -614,9 +614,172 @@ def run_full_comparison():
     }
 
 
+def run_full_comparison():
+    """Run a fixed comparison that correctly aligns outputs"""
+    # Generate test data
+    test_data = generate_test_data(batch_size=2, n_atoms=20, n_neighbors=10)
+
+    # Initialize models
+    models = initialize_models(test_data)
+
+    # Copy weights
+    models = copy_weights_between_models(models)
+
+    # Run models with proper output extraction
+    with torch.no_grad():
+        # Run classic model
+        classic_output, classic_attn = models['classic'](*test_data['classic'])
+
+        # Run PyG interaction model
+        pyg_interaction_output, pyg_interaction_attn = models['pyg_interaction'](*test_data['pyg_interaction'])
+
+        # For PyG SchNet, capture intermediate outputs
+        pyg_x, pyg_edge_index, pyg_edge_attr, pyg_batch = test_data['pyg_full']
+
+        # Manually execute the SchNet encoder to capture delta before adding residual
+        initial_h = pyg_x  # Save initial node features
+
+        # Run just the first interaction (without applying residual)
+        delta, attention = models['pyg_schnet'].interactions[0](pyg_x, pyg_edge_index, pyg_edge_attr)
+
+        # Now delta is directly comparable to classic_output
+        pyg_schnet_delta = delta
+
+    # Reshape PyG interaction output
+    batch_size = test_data['batch_size']
+    n_atoms = test_data['n_atoms']
+
+    pyg_interaction_reshaped = torch.zeros_like(classic_output)
+    for b in range(batch_size):
+        for i in range(n_atoms):
+            idx = i + b * n_atoms
+            if idx < len(pyg_interaction_output):
+                pyg_interaction_reshaped[b, i] = pyg_interaction_output[idx]
+
+    # Reshape PyG SchNet delta output
+    pyg_schnet_delta_reshaped = torch.zeros_like(classic_output)
+    for b in range(batch_size):
+        for i in range(n_atoms):
+            idx = i + b * n_atoms
+            if idx < len(pyg_schnet_delta):
+                pyg_schnet_delta_reshaped[b, i] = pyg_schnet_delta[idx]
+
+    # Compare outputs
+    interaction_diff = torch.abs(classic_output - pyg_interaction_reshaped)
+    interaction_mean_diff = interaction_diff.mean().item()
+    interaction_max_diff = interaction_diff.max().item()
+
+    # Compare with delta instead of node_features
+    schnet_diff = torch.abs(classic_output - pyg_schnet_delta_reshaped)
+    schnet_mean_diff = schnet_diff.mean().item()
+    schnet_max_diff = schnet_diff.max().item()
+
+    print("\n=== Classic vs PyG Interaction ===")
+    print(f"Mean absolute difference: {interaction_mean_diff:.8f}")
+    print(f"Maximum absolute difference: {interaction_max_diff:.8f}")
+
+    print("\n=== Classic vs PyG SchNet Delta (before residual) ===")
+    print(f"Mean absolute difference: {schnet_mean_diff:.8f}")
+    print(f"Maximum absolute difference: {schnet_max_diff:.8f}")
+
+    return {
+        'interaction_mean_diff': interaction_mean_diff,
+        'interaction_max_diff': interaction_max_diff,
+        'schnet_mean_diff': schnet_mean_diff,
+        'schnet_max_diff': schnet_max_diff
+    }
+
+
+def run_detailed_debug():
+    """Run detailed debugging to find the exact mismatch point"""
+    print("\n===== Detailed SchNet Debugging =====")
+
+    # Generate test data
+    test_data = generate_test_data(batch_size=2, n_atoms=20, n_neighbors=10)
+
+    # Initialize models
+    models = initialize_models(test_data)
+    models = copy_weights_between_models(models)
+
+    # Extract inputs
+    classic_features, classic_rbf, classic_neighbors = test_data['classic']
+    pyg_x, pyg_edge_index, pyg_edge_attr, pyg_batch = test_data['pyg_full']
+
+    # First get classic output for reference
+    with torch.no_grad():
+        classic_output, classic_attn = models['classic'](*test_data['classic'])
+
+    # Now let's trace through PyG schnet step by step
+    with torch.no_grad():
+        schnet = models['pyg_schnet']
+
+        # STEP 1: Initial state
+        print("\nSTEP 1: Initial node features")
+        h0 = pyg_x.clone()  # Initial node features
+        print(f"  Initial PyG features shape: {h0.shape}")
+
+        # STEP 2: First interaction block (before residual)
+        print("\nSTEP 2: First interaction output (before residual)")
+        interaction0 = schnet.interactions[0]
+        delta0, attn0 = interaction0(h0, pyg_edge_index, pyg_edge_attr)
+        print(f"  PyG interaction delta shape: {delta0.shape}")
+
+        # Compare with classic output
+        batch_size = test_data['batch_size']
+        n_atoms = test_data['n_atoms']
+
+        # Convert delta to classic shape
+        delta_classic = torch.zeros_like(classic_output)
+        for b in range(batch_size):
+            for i in range(n_atoms):
+                idx = i + b * n_atoms
+                if idx < len(delta0):
+                    delta_classic[b, i] = delta0[idx]
+
+        # Compare
+        diff1 = (delta_classic - classic_output).abs().mean()
+        print(f"  Mean diff between classic output and delta: {diff1:.8f}")
+
+        # STEP 3: After residual connection
+        print("\nSTEP 3: After residual connection")
+        h1 = h0 + delta0  # Apply residual connection
+
+        # Convert h1 to classic shape
+        h1_classic = torch.zeros_like(classic_output)
+        for b in range(batch_size):
+            for i in range(n_atoms):
+                idx = i + b * n_atoms
+                if idx < len(h1):
+                    h1_classic[b, i] = h1[idx]
+
+        # Compare with: classic_features + classic_output
+        classic_after_residual = classic_features + classic_output
+        diff2 = (h1_classic - classic_after_residual).abs().mean()
+        print(f"  Mean diff after residual: {diff2:.8f}")
+
+        # Extract values for inspection
+        print("\nSample values for first node:")
+        print(f"  Classic original features: {classic_features[0, 0, :5]}...")
+        print(f"  PyG original features: {h0[0, :5]}...")
+        print(f"  Classic delta: {classic_output[0, 0, :5]}...")
+        print(f"  PyG delta: {delta0[0, :5]}...")
+        print(f"  Classic after residual: {classic_after_residual[0, 0, :5]}...")
+        print(f"  PyG after residual: {h1[0, :5]}...")
+
+    return {
+        'h0': h0,
+        'delta0': delta0,
+        'h1': h1,
+        'classic_output': classic_output,
+        'diff1': diff1,
+        'diff2': diff2
+    }
+
+
 if __name__ == "__main__":
     try:
         results = run_full_comparison()
+        run_detailed_debug()
     except Exception as e:
         print(f"Error during comparison: {str(e)}")
         import traceback
