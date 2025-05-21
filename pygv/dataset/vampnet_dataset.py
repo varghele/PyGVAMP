@@ -283,7 +283,7 @@ class VAMPNetDataset(Dataset):
         # Create a mask to identify self-connections (diagonal elements)
         diag_mask = torch.eye(self.n_atoms, dtype=torch.bool, device=distances.device)
 
-        # Set self-distances to -1 (keep your original approach)
+        # Set self-distances to -1
         distances[diag_mask] = -1.0
 
         # Create a mask for valid distances (excluding self-connections)
@@ -316,24 +316,40 @@ class VAMPNetDataset(Dataset):
             for j in nn_indices[i]:
                 edge_set.add((i, j.item()))
 
-        # Create a list of all bidirectional edges
-        bidirectional_edges = []
+        # Create a list of directional edges (no bidirectionality). k-nearest neighbors relationship is not symmetric.
+        directional_edges = []
         for source, target in edge_set:
-            bidirectional_edges.append((source, target))
-            # Add the reverse edge if it doesn't already exist
-            if (target, source) not in edge_set:
-                bidirectional_edges.append((target, source))
+            #directional_edges.append((source, target))
+            # Flip edges, because edge attributes flow towards node
+            directional_edges.append((target,source))
+            # Don't add reverse edges
 
         # Convert to tensors for source and target indices
-        source_indices = torch.tensor([edge[0] for edge in bidirectional_edges], device=distances.device)
-        target_indices = torch.tensor([edge[1] for edge in bidirectional_edges], device=distances.device)
+        source_indices = torch.tensor([edge[0] for edge in directional_edges], device=distances.device)
+        target_indices = torch.tensor([edge[1] for edge in directional_edges], device=distances.device)
+
+        # TODO: Very likely remove that part. k-nearest neighbors relationship is not symmetric. If node A considers node B as one of its 10 nearest neighbors, it doesn't guarantee that node B considers node A as one of its 10 nearest neighbors.
+        # TODO: Maybe this is important for other network types (write selector for this)
+        # Create a list of all bidirectional edges
+        #bidirectional_edges = []
+        #for source, target in edge_set:
+        #    bidirectional_edges.append((source, target))
+        #    # Add the reverse edge if it doesn't already exist
+        #    if (target, source) not in edge_set:
+        #        bidirectional_edges.append((target, source))
+        #
+        # Convert to tensors for source and target indices
+        #source_indices = torch.tensor([edge[0] for edge in bidirectional_edges], device=distances.device)
+        #target_indices = torch.tensor([edge[1] for edge in bidirectional_edges], device=distances.device)
 
         # Create the edge_index tensor
         edge_index = torch.stack([source_indices, target_indices], dim=0)
 
         # Quick bidirectionality check
         edge_pairs = set(zip(edge_index[0].tolist(), edge_index[1].tolist()))
-        assert all((target, source) in edge_pairs for source, target in edge_pairs), "Graph is not bidirectional"
+        #assert all((target, source) in edge_pairs for source, target in edge_pairs), "Graph is not bidirectional"
+        #TODO: Probably remove because bidirectionality is not given
+        #TODO: or make selector for other networks
 
         # Get edge distances (non-negative real distances)
         edge_distances = distances[source_indices, target_indices]
