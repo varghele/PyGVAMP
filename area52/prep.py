@@ -22,16 +22,22 @@ def create_test_prep_args():
     args = argparse.Namespace()
 
     # Input data settings
-    args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/')
-    args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb')
-    args.file_pattern = '*.xtc'
+    #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/')
+    #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb')
+    args.traj_dir = os.path.expanduser(
+        '~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/')
+    args.top = os.path.expanduser(
+        '~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb')
+
+    #args.file_pattern = '*.xtc'
+    args.file_pattern = '*.dcd'
     args.recursive = True
 
     # Data processing settings
     args.selection = 'name CA'
     args.stride = 1
     args.lag_time = 20.0
-    args.n_neighbors = 10
+    args.n_neighbors = 4
     args.node_embedding_dim = 16
     args.gaussian_expansion_dim = 16
 

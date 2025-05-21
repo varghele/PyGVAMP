@@ -21,22 +21,22 @@ def create_test_args():
     #args.encoder_type = 'meta'
 
     # Data settings
-    args.protein_name = 'TRP'
+    #args.protein_name = 'TRP'
     #args.protein_name = 'NTL'
-    #args.protein_name= 'AB42'
+    args.protein_name= 'AB42'
     #args.protein_name = 'ATR'
     #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/')
-    args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/')
+    #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/')
     #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/r0/')
-    #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/')
+    args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/')
     #args.traj_dir = os.path.expanduser('~/PycharmProjects/PyGVAMP/datasets/NTL9/DESRES-Trajectory_NTL9-0-c-alpha')
-    #args.file_pattern = '*.xtc'
-    args.file_pattern = '*.dcd'
+    args.file_pattern = '*.xtc'
+    #args.file_pattern = '*.dcd'
     #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb')
-    args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb')
+    #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb')
     #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb')
     #args.top = os.path.expanduser('~/PycharmProjects/PyGVAMP/datasets/NTL9/DESRES-Trajectory_NTL9-0-c-alpha/NTL9-0-c-alpha/NTL9.pdb')
-    #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/topol.pdb')
+    args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/topol.pdb')
     args.selection = 'name CA'
     #args.selection = '(residue 126 to 146 or residue 221 to 259 or residue 286 to 317) and name CA'
 
@@ -44,16 +44,16 @@ def create_test_args():
     args.sample_validate_every = 100
 
     args.stride = 10
-    args.lag_time = 2.0
+    args.lag_time = 20.0
     args.n_neighbors = 10
-    args.node_embedding_dim = 16
+    args.node_embedding_dim = 32
     args.gaussian_expansion_dim = 16 # TODO: This is edge dim!!!
 
     # SchNet encoder settings
-    args.node_dim = 20
+    args.node_dim = 32
     args.edge_dim = 16
     args.hidden_dim = 32
-    args.output_dim = 16
+    args.output_dim = 32
     args.n_interactions = 4
     args.activation = 'tanh'
     args.use_attention = True
@@ -76,16 +76,16 @@ def create_test_args():
     # Classifier settings
     args.n_states = 5
     args.clf_hidden_dim = 32
-    args.clf_num_layers = 3
+    args.clf_num_layers = 2
     args.clf_dropout = 0.01
     args.clf_activation = 'leaky_relu'
     args.clf_norm = 'LayerNorm' # 'BatchNorm' #
 
     # Embedding settings
     args.use_embedding = True
-    args.embedding_in_dim = 20 # TODO:This is num of atoms/molecules
-    args.embedding_hidden_dim = 20
-    args.embedding_out_dim = 20
+    args.embedding_in_dim = 42 # TODO:This is num of atoms/molecules
+    args.embedding_hidden_dim = 64
+    args.embedding_out_dim = 32
     args.embedding_num_layers = 2
     args.embedding_dropout = 0.01
     args.embedding_act = 'leaky_relu'
@@ -94,7 +94,7 @@ def create_test_args():
     # Training settings
     args.epochs = 25
     args.batch_size = 256
-    args.lr = 0.0005
+    args.lr = 0.001
     args.weight_decay = 1e-5
     args.clip_grad = None
     args.cpu = False  # Use CPU for testing
