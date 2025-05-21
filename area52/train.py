@@ -74,7 +74,7 @@ def create_test_args():
     args.meta_dropout = 0.0"""
 
     # Classifier settings
-    args.n_states = 5
+    args.n_states = 4
     args.clf_hidden_dim = 32
     args.clf_num_layers = 2
     args.clf_dropout = 0.01
@@ -100,14 +100,14 @@ def create_test_args():
     args.cpu = False  # Use CPU for testing
 
     # Testing settngs
-    args.max_tau = 500
+    args.max_tau = 200
 
     # Output settings
     args.output_dir = 'area57'
     args.cache_dir = 'area57/cache'
     args.use_cache = True
     args.save_every = 0  # Don't save intermediates
-    args.run_name = 'ntl'
+    args.run_name = 'ab42'
 
     return args
 
