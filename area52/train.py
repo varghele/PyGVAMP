@@ -44,7 +44,7 @@ def create_test_args():
     args.sample_validate_every = 100
 
     args.stride = 10
-    args.lag_time = 20.0
+    args.lag_time = 10.0
     args.n_neighbors = 10
     args.node_embedding_dim = 32
     args.gaussian_expansion_dim = 16 # TODO: This is edge dim!!!
@@ -74,7 +74,7 @@ def create_test_args():
     args.meta_dropout = 0.0"""
 
     # Classifier settings
-    args.n_states = 4
+    args.n_states = 5
     args.clf_hidden_dim = 32
     args.clf_num_layers = 2
     args.clf_dropout = 0.01

@@ -3,8 +3,8 @@ Please always follow the exact installation steps:
 Conda environment creation:
 ```bash
 conda create --name PyGVAMP5 python=3.12
-conda install -c conda-forge -c schrodinger pymol-bundle
 conda activate PyGVAMP5
+conda install -c conda-forge -c schrodinger pymol-bundle
 pip install matplotlib
 pip install joblib
 pip install pandas

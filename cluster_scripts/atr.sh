@@ -37,8 +37,8 @@ nvidia-smi
 # Run the training script with the array task ID as num_classes
 python run_training.py \
     --protein_name "ATR" \
-    --top "XXXXXXXXXXXXXXXX" \
-    --traj_dir "XXXXXXXXXXXXXXXX" \
+    --top "/work/xk29iqec-atrtest/ATR/prot.pdb" \
+    --traj_dir "/work/xk29iqec-atrtest/ATR/r0/" \
     --file_pattern "*.xtc" \
     --selection "name CA" \
     --val_split 0.05 \
@@ -80,7 +80,7 @@ python run_training.py \
     --cache_dir 'area57/cache' \
     --use_cache True \
     --save_every 0 \
-    --run_name 'ab42' \
+    --run_name 'atr' \
 
 # Print completion message
 echo "Job array task ${SLURM_ARRAY_TASK_ID} completed at: $(date)"
