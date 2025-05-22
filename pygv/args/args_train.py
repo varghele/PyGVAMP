@@ -16,7 +16,7 @@ def get_train_parser():
 
     # Embedding MLP arguments
     embedding_group = parser.add_argument_group('Embedding MLP arguments')
-    embedding_group.add_argument('--use_embedding', type=float, default=None,
+    embedding_group.add_argument('--use_embedding', type=bool, default=True,
                              help='Gradient clipping norm')
     embedding_group.add_argument('--embedding_in_dim', type=int, default=1,
                                  help='Input dimension for embedding MLP (usually 1 for atom types)')
@@ -29,7 +29,7 @@ def get_train_parser():
     embedding_group.add_argument('--embedding_dropout', type=float, default=0.1,
                                  help='Dropout rate for embedding MLP')
     embedding_group.add_argument('--embedding_act', type=str, default='relu',
-                                 choices=['relu', 'gelu', 'silu', 'tanh'],
+                                 choices=['relu', 'leaky_relu', 'gelu', 'silu', 'tanh'],
                                  help='Activation function for embedding MLP')
     embedding_group.add_argument('--embedding_norm', type=str, default='batch',
                                  choices=['batch', 'layer', 'none'],
@@ -49,112 +49,112 @@ def get_train_parser():
                             help='Atom selection (MDTraj syntax)')
     data_group.add_argument('--stride', type=int, default=1,
                             help='Stride for reading trajectories')
-    data_group.add_argument('--lag-time', type=float, default=1.0,
+    data_group.add_argument('--lag_time', type=float, default=1.0,
                             help='Lag time in nanoseconds')
     data_group.add_argument('--cache-dir', default=None,
                             help='Directory to cache processed data')
-    data_group.add_argument('--n-neighbors', type=int, default=10,
+    data_group.add_argument('--n_neighbors', type=int, default=10,
                             help='Number of neighbors for graph construction')
-    data_group.add_argument('--node-embedding-dim', type=int, default=16,
+    data_group.add_argument('--node_embedding_dim', type=int, default=16,
                             help='Dimension for node embeddings')
-    data_group.add_argument('--gaussian-expansion-dim', type=int, default=8,
+    data_group.add_argument('--gaussian_expansion_dim', type=int, default=8,
                             help='Dimension for Gaussian expansion of distances')
 
     # Encoder arguments
     encoder_group = parser.add_argument_group('Encoder')
-    encoder_group.add_argument('--encoder-type', type=str, default='schnet',
+    encoder_group.add_argument('--encoder_type', type=str, default='schnet',
                                choices=['schnet', 'meta', 'ml3'],
                                help='Type of encoder to use')
 
     # SchNet specific arguments
     schnet_group = parser.add_argument_group('SchNet Encoder')
-    schnet_group.add_argument('--node-dim', type=int, default=32,
+    schnet_group.add_argument('--node_dim', type=int, default=32,
                               help='Node dimension (SchNet)')
-    schnet_group.add_argument('--edge-dim', type=int, default=16,
+    schnet_group.add_argument('--edge_dim', type=int, default=16,
                               help='Edge dimension (SchNet)')
-    schnet_group.add_argument('--hidden-dim', type=int, default=64,
+    schnet_group.add_argument('--hidden_dim', type=int, default=64,
                               help='Hidden dimension (SchNet)')
-    schnet_group.add_argument('--output-dim', type=int, default=32,
+    schnet_group.add_argument('--output_dim', type=int, default=32,
                               help='Output dimension (SchNet)')
-    schnet_group.add_argument('--n-interactions', type=int, default=3,
+    schnet_group.add_argument('--n_interactions', type=int, default=3,
                               help='Number of interaction layers (SchNet)')
     schnet_group.add_argument('--activation', default='tanh',
                               help='Activation function (SchNet)')
-    schnet_group.add_argument('--use-attention', action='store_true',
+    schnet_group.add_argument('--use_attention', action='store_true',
                               help='Use attention mechanism (SchNet)')
 
     # Meta specific arguments
     meta_group = parser.add_argument_group('Meta Encoder')
-    meta_group.add_argument('--meta-node-dim', type=int, default=32,
+    meta_group.add_argument('--meta_node_dim', type=int, default=32,
                             help='Node dimension (Meta)')
-    meta_group.add_argument('--meta-edge-dim', type=int, default=16,
+    meta_group.add_argument('--meta_edge_dim', type=int, default=16,
                             help='Edge dimension (Meta)')
-    meta_group.add_argument('--meta-global-dim', type=int, default=32,
+    meta_group.add_argument('--meta_global_dim', type=int, default=32,
                             help='Global dimension (Meta)')
-    meta_group.add_argument('--meta-num-node-mlp-layers', type=int, default=2,
+    meta_group.add_argument('--meta_num_node_mlp_layers', type=int, default=2,
                             help='Number of node MLP layers (Meta)')
-    meta_group.add_argument('--meta-num-edge-mlp-layers', type=int, default=2,
+    meta_group.add_argument('--meta_num_edge_mlp_layers', type=int, default=2,
                             help='Number of edge MLP layers (Meta)')
-    meta_group.add_argument('--meta-num-global-mlp-layers', type=int, default=2,
+    meta_group.add_argument('--meta_num_global_mlp_layers', type=int, default=2,
                             help='Number of global MLP layers (Meta)')
-    meta_group.add_argument('--meta-hidden-dim', type=int, default=64,
+    meta_group.add_argument('--meta_hidden_dim', type=int, default=64,
                             help='Hidden dimension (Meta)')
-    meta_group.add_argument('--meta-output-dim', type=int, default=32,
+    meta_group.add_argument('--meta_output_dim', type=int, default=32,
                             help='Output dimension (Meta)')
-    meta_group.add_argument('--meta-num-meta-layers', type=int, default=3,
+    meta_group.add_argument('--meta_num-meta_layers', type=int, default=3,
                             help='Number of meta layers (Meta)')
-    meta_group.add_argument('--meta-embedding-type', type=str, default='combined',
+    meta_group.add_argument('--meta_embedding_type', type=str, default='combined',
                             choices=['node', 'global', 'combined'],
                             help='Embedding type (Meta)')
-    meta_group.add_argument('--meta-activation', default='relu',
+    meta_group.add_argument('--meta_activation', default='relu',
                             help='Activation function (Meta)')
-    meta_group.add_argument('--meta-norm', default='batch_norm',
+    meta_group.add_argument('--meta_norm', default='batch_norm',
                             help='Normalization (Meta)')
-    meta_group.add_argument('--meta-dropout', type=float, default=0.0,
+    meta_group.add_argument('--meta_dropout', type=float, default=0.0,
                             help='Dropout rate (Meta)')
 
     # ML3 specific arguments
     ml3_group = parser.add_argument_group('ML3 Encoder')
-    ml3_group.add_argument('--ml3-node-dim', type=int, default=32,
+    ml3_group.add_argument('--ml3_node_dim', type=int, default=32,
                            help='Node dimension (ML3)')
-    ml3_group.add_argument('--ml3-edge-dim', type=int, default=16,
+    ml3_group.add_argument('--ml3_edge_dim', type=int, default=16,
                            help='Edge dimension (ML3)')
-    ml3_group.add_argument('--ml3-hidden-dim', type=int, default=64,
+    ml3_group.add_argument('--ml3_hidden_dim', type=int, default=64,
                            help='Hidden dimension (ML3)')
-    ml3_group.add_argument('--ml3-output-dim', type=int, default=32,
+    ml3_group.add_argument('--ml3_output_dim', type=int, default=32,
                            help='Output dimension (ML3)')
-    ml3_group.add_argument('--ml3-num-layers', type=int, default=3,
+    ml3_group.add_argument('--ml3_num_layers', type=int, default=3,
                            help='Number of layers (ML3)')
-    ml3_group.add_argument('--ml3-activation', default='relu',
+    ml3_group.add_argument('--ml3_activation', default='relu',
                            help='Activation function (ML3)')
 
     # Classifier arguments
     clf_group = parser.add_argument_group('Classifier')
-    clf_group.add_argument('--n-states', type=int, default=5,
+    clf_group.add_argument('--n_states', type=int, default=5,
                            help='Number of states (0 to disable classifier)')
-    clf_group.add_argument('--clf-hidden-dim', type=int, default=64,
+    clf_group.add_argument('--clf_hidden_dim', type=int, default=64,
                            help='Classifier hidden dimension')
-    clf_group.add_argument('--clf-num-layers', type=int, default=2,
+    clf_group.add_argument('--clf_num_layers', type=int, default=2,
                            help='Classifier number of layers')
-    clf_group.add_argument('--clf-dropout', type=float, default=0.0,
+    clf_group.add_argument('--clf_dropout', type=float, default=0.0,
                            help='Classifier dropout rate')
-    clf_group.add_argument('--clf-activation', type=str, default='relu',
+    clf_group.add_argument('--clf_activation', type=str, default='relu',
                            help='Classifier activation function')
-    clf_group.add_argument('--clf-norm', type=str, default=None,
-                           choices=[None, 'batch_norm', 'layer_norm', 'instance_norm'],
+    clf_group.add_argument('--clf_norm', type=str, default=None,
+                           choices=[None, 'BatchNorm', 'LayerNorm'],
                            help='Classifier normalization layer')
 
     # Training arguments
     train_group = parser.add_argument_group('Training')
     train_group.add_argument('--epochs', type=int, default=100,
                              help='Number of epochs')
-    train_group.add_argument('--batch-size', type=int, default=32,
+    train_group.add_argument('--batch_size', type=int, default=32,
                              help='Batch size')
     train_group.add_argument('--lr', type=float, default=0.001,
                              help='Learning rate')
-    train_group.add_argument('--weight-decay', type=float, default=1e-5,
+    train_group.add_argument('--weight_decay', type=float, default=1e-5,
                              help='Weight decay')
-    train_group.add_argument('--clip-grad', type=float, default=None,
+    train_group.add_argument('--clip_grad', type=float, default=None,
                              help='Gradient clipping norm')
     train_group.add_argument('--cpu', action='store_true',
                              help='Force CPU usage even if CUDA is available')
@@ -170,11 +170,11 @@ def get_train_parser():
 
     # Output arguments
     out_group = parser.add_argument_group('Output')
-    out_group.add_argument('--output-dir', default='./results',
+    out_group.add_argument('--output_dir', default='./results',
                            help='Directory to save outputs')
-    out_group.add_argument('--save-every', type=int, default=10,
+    out_group.add_argument('--save_every', type=int, default=10,
                            help='Save model every N epochs (0 to disable)')
-    out_group.add_argument('--run-name', default=None,
+    out_group.add_argument('--run_name', default=None,
                            help='Run name for outputs (default: timestamp)')
 
     return parser

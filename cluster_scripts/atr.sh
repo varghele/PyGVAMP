@@ -68,7 +68,7 @@ python run_training.py \
     --embedding_num_layers 2 \
     --embedding_dropout 0.01 \
     --embedding_act 'leaky_relu' \
-    --embedding_norm None \
+    --embedding_norm 'none' \
     --epochs 25 \
     --batch_size 256 \
     --lr 0.001 \

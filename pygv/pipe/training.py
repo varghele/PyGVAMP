@@ -77,54 +77,6 @@ def save_config(args, paths):
             f.write(f"{key} = {value}\n")
 
 
-# TODO: Remove
-def create_dataset_and_loader_old(args,
-                              is_frame_loader=False):
-    """Create dataset and data loader"""
-    # Getting all trajectories in traj directory
-    traj_files = find_trajectory_files(args.traj_dir, file_pattern=args.file_pattern)
-
-    print("Creating dataset...")
-    dataset = VAMPNetDataset(
-        trajectory_files=traj_files,
-        topology_file=args.top,
-        lag_time=args.lag_time,
-        n_neighbors=args.n_neighbors,
-        node_embedding_dim=args.node_embedding_dim,
-        gaussian_expansion_dim=args.gaussian_expansion_dim,
-        #distance_min=2, #TODO: This needs to be in args
-        #distance_max=8, #TODO: This needs to be in args
-        selection=args.selection,
-        stride=args.stride,
-        cache_dir=args.cache_dir,
-        use_cache=args.use_cache
-    )
-
-    print(f"Dataset created with {len(dataset)} samples")
-
-    # If individual frames are needed (for the tests), return a framewise dataset
-    # Get frames dataset instead of time-lagged pairs dataset
-    frames_dataset = dataset.get_frames_dataset(return_pairs=False)
-
-    # Create data loader
-    if is_frame_loader is False:
-        loader = DataLoader(
-            dataset,
-            shuffle=True,
-            batch_size=args.batch_size,
-            pin_memory=torch.cuda.is_available() and not args.cpu
-        )
-    else:
-        # Create data loader
-        loader = DataLoader(
-            frames_dataset,
-            shuffle=False,  # Always false for inference
-            batch_size=args.batch_size,
-            pin_memory=torch.cuda.is_available() and not args.cpu
-        )
-
-    return dataset, loader
-
 def create_dataset_and_loader(args,
                               is_frame_loader=False,
                               test_split: float = 0.2,
