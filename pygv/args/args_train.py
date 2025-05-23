@@ -16,7 +16,7 @@ def get_train_parser():
 
     # Embedding MLP arguments
     embedding_group = parser.add_argument_group('Embedding MLP arguments')
-    embedding_group.add_argument('--use_embedding', type=bool, default=True,
+    embedding_group.add_argument('--use_embedding', action='store_true',
                              help='Gradient clipping norm')
     embedding_group.add_argument('--embedding_in_dim', type=int, default=1,
                                  help='Input dimension for embedding MLP (usually 1 for atom types)')
@@ -51,7 +51,9 @@ def get_train_parser():
                             help='Stride for reading trajectories')
     data_group.add_argument('--lag_time', type=float, default=1.0,
                             help='Lag time in nanoseconds')
-    data_group.add_argument('--cache-dir', default=None,
+    data_group.add_argument('--use_cache', action='store_true',
+                            help='Whether to use cached prepared data or run preparation again')
+    data_group.add_argument('--cache_dir', default=None,
                             help='Directory to cache processed data')
     data_group.add_argument('--n_neighbors', type=int, default=10,
                             help='Number of neighbors for graph construction')
@@ -154,7 +156,7 @@ def get_train_parser():
                              help='Learning rate')
     train_group.add_argument('--weight_decay', type=float, default=1e-5,
                              help='Weight decay')
-    train_group.add_argument('--clip_grad', type=float, default=None,
+    train_group.add_argument('--clip_grad', action='store_true',
                              help='Gradient clipping norm')
     train_group.add_argument('--cpu', action='store_true',
                              help='Force CPU usage even if CUDA is available')

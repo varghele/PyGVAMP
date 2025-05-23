@@ -44,8 +44,8 @@ def create_test_args():
     args.sample_validate_every = 100
 
     args.stride = 10
-    args.lag_time = 100.0
-    args.n_neighbors = 20
+    args.lag_time = 500.0
+    args.n_neighbors = 10
     args.node_embedding_dim = 32
     args.gaussian_expansion_dim = 32 # TODO: This is edge dim!!!
 
@@ -107,7 +107,7 @@ def create_test_args():
     args.cache_dir = 'area57/cache'
     args.use_cache = True
     args.save_every = 0  # Don't save intermediates
-    args.run_name = 'atr'
+    args.run_name = 'atr_500'
 
     return args
 

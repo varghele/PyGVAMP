@@ -60,7 +60,7 @@ class VAMPScore(nn.Module):
         torch.Tensor
             Computed VAMP score. Includes +1 contribution from constant singular function.
         """
-        #TODO: This is an experimental code snippet modifying epsilon, remove if this is behaving weirdly
+        # TODO: This is an experimental code snippet modifying epsilon, remove if this is behaving weirdly
         # Adjust regularization based on batch size
         #batch_size = data.size(0)
         #n_states = data.size(1)

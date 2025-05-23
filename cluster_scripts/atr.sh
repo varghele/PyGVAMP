@@ -54,14 +54,14 @@ python run_training.py \
     --output_dim 32 \
     --n_interactions 4 \
     --activation 'tanh' \
-    --use_attention True \
+    --use_attention \
     --n_states ${SLURM_ARRAY_TASK_ID} \
     --clf_hidden_dim 32 \
     --clf_num_layers 2 \
     --clf_dropout 0.01 \
     --clf_activation 'leaky_relu' \
     --clf_norm 'LayerNorm' \
-    --use_embedding True \
+    --use_embedding \
     --embedding_in_dim 42 \
     --embedding_hidden_dim 64 \
     --embedding_out_dim 32 \
@@ -73,12 +73,11 @@ python run_training.py \
     --batch_size 256 \
     --lr 0.001 \
     --weight_decay 1e-5 \
-    --clip_grad None \
-    --cpu False \
+    --clip_grad \
     --max_tau 200 \
     --output_dir 'area57' \
     --cache_dir 'area57/cache' \
-    --use_cache True \
+    --use_cache \
     --save_every 0 \
     --run_name 'atr' \
 
