@@ -4,6 +4,7 @@
 #SBATCH --ntasks=1
 #SBATCH --partition=paula
 #SBATCH --gres=gpu:1
+#SBATCH --mem=8G
 #SBATCH --time=10:00:00
 #SBATCH --output=logs/train_%A_%a.out
 #SBATCH --error=logs/train_%A_%a.err
@@ -70,7 +71,7 @@ python run_training.py \
     --embedding_act 'leaky_relu' \
     --embedding_norm 'none' \
     --epochs 25 \
-    --batch_size 256 \
+    --batch_size 128 \
     --lr 0.001 \
     --weight_decay 1e-5 \
     --clip_grad \

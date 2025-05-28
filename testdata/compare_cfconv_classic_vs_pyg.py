@@ -147,6 +147,7 @@ class MessagePassingCFConv(MessagePassing):
         """
         # Normalize edge attributes for numerical stability
         edge_attr_norm = edge_attr / (edge_attr.norm(dim=-1, keepdim=True) + 1e-8)
+        #edge_attr_norm = edge_attr # For testing
 
         # Generate weights from edge attributes
         edge_weights = self.filter_network(edge_attr_norm)
@@ -186,7 +187,7 @@ class MessagePassingCFConv(MessagePassing):
             messages = messages * normalized_attention.view(-1, 1)
 
             # Store raw attention weights for later access
-            self._attention_weights = attention
+            self._attention_weights = normalized_attention
 
         return messages
 

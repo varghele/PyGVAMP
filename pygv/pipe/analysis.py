@@ -253,13 +253,13 @@ def run_analysis(args=None):
     )
 
     # Create residue-level attention plot
-    plot_state_attention_weights(
-        state_attention_maps=state_attention_maps,
-        topology_file=args.top,
-        save_dir=paths['analysis_dir'],
-        protein_name=args.protein_name,
-        plot_sum_direction="target"  # Show attention TO residues
-    )
+    #plot_state_attention_weights(
+    #    state_attention_maps=state_attention_maps,
+    #    topology_file=args.top,
+    #    save_dir=paths['analysis_dir'],
+    #    protein_name=args.protein_name,
+    #    plot_sum_direction="target"  # Show attention TO residues
+    #)
 
     # Or to get all perspectives at once
     plot_all_residue_attention_directions(

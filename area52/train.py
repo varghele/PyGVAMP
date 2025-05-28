@@ -21,30 +21,30 @@ def create_test_args():
     #args.encoder_type = 'meta'
 
     # Data settings
-    #args.protein_name = 'TRP'
+    args.protein_name = 'TRP'
     #args.protein_name = 'NTL'
     #args.protein_name= 'AB42'
-    args.protein_name = 'ATR'
+    #args.protein_name = 'ATR'
     #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/')
-    #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/')
-    args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/r0/')
+    args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/')
+    #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/r0/')
     #args.traj_dir = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/')
     #args.traj_dir = os.path.expanduser('~/PycharmProjects/PyGVAMP/datasets/NTL9/DESRES-Trajectory_NTL9-0-c-alpha')
-    args.file_pattern = '*.xtc'
-    #args.file_pattern = '*.dcd'
+    #args.file_pattern = '*.xtc'
+    args.file_pattern = '*.dcd'
     #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb')
-    #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb')
-    args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb')
+    args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/TRP/DESRES-Trajectory_2JOF-0-protein/2JOF-0-protein/2JOF-0-protein.pdb')
+    #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb')
     #args.top = os.path.expanduser('~/PycharmProjects/PyGVAMP/datasets/NTL9/DESRES-Trajectory_NTL9-0-c-alpha/NTL9-0-c-alpha/NTL9.pdb')
     #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/topol.pdb')
-    #args.selection = 'name CA'
-    args.selection = '(residue 126 to 146 or residue 221 to 259 or residue 286 to 317) and name CA'
+    args.selection = 'name CA'
+    #args.selection = '(residue 126 to 146 or residue 221 to 259 or residue 286 to 317) and name CA'
 
     args.val_split = 0.05
     args.sample_validate_every = 100
 
     args.stride = 10
-    args.lag_time = 500.0
+    args.lag_time = 2.0
     args.n_neighbors = 10
     args.node_embedding_dim = 32
     args.gaussian_expansion_dim = 32 # TODO: This is edge dim!!!
@@ -83,7 +83,7 @@ def create_test_args():
 
     # Embedding settings
     args.use_embedding = True
-    args.embedding_in_dim = 92 # TODO:This is num of atoms/molecules
+    args.embedding_in_dim = 20 # TODO:This is num of atoms/molecules
     args.embedding_hidden_dim = 64
     args.embedding_out_dim = 64
     args.embedding_num_layers = 2
@@ -92,9 +92,9 @@ def create_test_args():
     args.embedding_norm = None # 'BatchNorm' #
 
     # Training settings
-    args.epochs = 25
-    args.batch_size = 128
-    args.lr = 0.001
+    args.epochs = 50
+    args.batch_size = 256
+    args.lr = 0.0005
     args.weight_decay = 1e-5
     args.clip_grad = None
     args.cpu = False  # Use CPU for testing
@@ -107,7 +107,7 @@ def create_test_args():
     args.cache_dir = 'area57/cache'
     args.use_cache = True
     args.save_every = 0  # Don't save intermediates
-    args.run_name = 'atr_500'
+    args.run_name = 'trp_20'
 
     return args
 

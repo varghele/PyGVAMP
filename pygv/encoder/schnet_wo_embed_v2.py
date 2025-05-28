@@ -1,10 +1,12 @@
 import torch
 import torch.nn as nn
+from sympy.physics.quantum.gate import normalized
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import MLP
 from torch_geometric.utils import softmax
 from torch.jit import script
 from torch_geometric.nn import global_mean_pool
+from triton.ops import attention
 
 
 def init_weights(m):
@@ -84,9 +86,7 @@ class CFConv(MessagePassing):
         Forward pass of CFConv layer.
         """
         # Normalize edge attributes for numerical stability
-        # Todo: check if this normalization is responsible for differences
         edge_attr_norm = edge_attr / (edge_attr.norm(dim=-1, keepdim=True) + 1e-8)
-        #edge_attr_norm = edge_attr
 
         # Generate weights from edge attributes
         edge_weights = self.filter_network(edge_attr_norm)
@@ -133,11 +133,20 @@ class CFConv(MessagePassing):
             # Use PyG's optimized softmax instead of manual per-node implementation
             normalized_attention = softmax(attention, edge_index_i)
 
-            # Apply attention weights to messages
-            #messages = messages * normalized_attention.view(-1, 1)
+            # VERIFICATION CODE: Check if attention sums to 1 for each target node
+            #with torch.no_grad():
+            #    # Get unique target nodes
+            #    unique_targets = torch.unique(edge_index_i)
+            #
+            #    # For each target node, verify sum is ~1.0
+            #    for target in unique_targets[:min(50, len(unique_targets))]:  # Check first few nodes
+            #        target_mask = edge_index_i == target
+            #        target_sum = normalized_attention[target_mask].sum().item()
+            #        if abs(target_sum - 1.0) > 1e-5:
+            #            print(f"WARNING: Attention sum for target node {target} = {target_sum:.6f}")
 
-            # Store raw attention weights for later access
-            self._attention_weights = attention
+            # Store attention weights for later access
+            self._attention_weights = normalized_attention
 
             # Use JIT-compiled function for applying attention
             messages = self.apply_attention(messages, normalized_attention)

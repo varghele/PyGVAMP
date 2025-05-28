@@ -422,6 +422,7 @@ def calculate_state_edge_attention_maps(
                 edge_counts[state, source, target] += 1
 
     # Average the attention values by dividing by the counts (avoiding division by zero)
+    # TODO: THIS IS NOT ENTIRELY CORRECT I THINK: IS THIS THE CORRECT NORMALIZATION?
     mask = edge_counts > 0
     state_attention_maps[mask] /= edge_counts[mask]
 
