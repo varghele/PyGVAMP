@@ -670,6 +670,311 @@ def plot_state_attention_weights(
         plot_sum_direction: str = "target",
         cmap_name: str = "viridis",
         figsize: tuple = (12, 6),
+        atom_selection: str = None,
+        selected_atom_indices: list = None,
+        residue_names: list = None,
+):
+    """
+    Plot average attention weights for residues across different states.
+
+    This function correctly handles the case where attention maps are computed on a subset
+    of atoms (e.g., only CA atoms from specific residues) and maps them back to residues.
+
+    Parameters
+    ----------
+    state_attention_maps : np.ndarray
+        Attention maps for each state [n_states, n_selected_atoms, n_selected_atoms]
+        These correspond to the SELECTED atoms, not all atoms in the topology
+    topology_file : str, optional
+        Path to topology file (PDB or similar) to get residue information
+    save_dir : str, optional
+        Directory to save the figures
+    protein_name : str, optional
+        Name of the protein for plot titles and filenames
+    plot_sum_direction : str, optional
+        Direction to sum attention weights: "source", "target", or "both"
+    cmap_name : str, optional
+        Matplotlib colormap name for heatmap
+    figsize : tuple, optional
+        Figure size in inches
+    atom_selection : str, optional
+        MDTraj selection string used to select atoms (e.g., 'name CA and residue 126 to 146')
+    selected_atom_indices : list, optional
+        List of atom indices that were selected (in topology numbering)
+    residue_names : list, optional
+        Pre-computed residue names for the selected atoms
+    """
+    # Get dimensions from the attention maps
+    n_states, n_selected_atoms, _ = state_attention_maps.shape
+    print(f"Processing attention maps: {n_states} states, {n_selected_atoms} selected atoms")
+
+    # Initialize variables
+    attention_maps = state_attention_maps
+    labels = None
+    n_entities = n_selected_atoms
+    entity_name = "Atom"
+
+    # Process topology and atom selection if provided
+    if topology_file and (atom_selection or selected_atom_indices is not None):
+        try:
+            # Load topology
+            traj = md.load(topology_file)
+            top = traj.topology
+
+            # Get selected atom indices
+            if selected_atom_indices is not None:
+                # Use provided indices
+                selected_indices = selected_atom_indices
+                print(f"Using provided atom indices: {len(selected_indices)} atoms")
+            elif atom_selection:
+                # Use MDTraj selection
+                selected_indices = top.select(atom_selection)
+                print(f"Selected {len(selected_indices)} atoms using selection: '{atom_selection}'")
+            else:
+                raise ValueError("Either atom_selection or selected_atom_indices must be provided")
+
+            # Verify that the number of selected atoms matches attention map size
+            if len(selected_indices) != n_selected_atoms:
+                raise ValueError(f"Number of selected atoms ({len(selected_indices)}) doesn't match "
+                                 f"attention map size ({n_selected_atoms})")
+
+            # Create mapping from attention matrix indices to residue information
+            if residue_names is not None:
+                # Use provided residue names
+                if len(residue_names) != n_selected_atoms:
+                    raise ValueError(f"Number of residue names ({len(residue_names)}) doesn't match "
+                                     f"number of selected atoms ({n_selected_atoms})")
+                labels = residue_names
+                entity_name = "Residue"
+                n_entities = n_selected_atoms
+                print(f"Using provided residue names for {n_entities} atoms")
+
+            else:
+                # Extract residue information for selected atoms
+                atom_to_residue_map = {}
+                residue_info = {}
+
+                for matrix_idx, atom_idx in enumerate(selected_indices):
+                    atom = top.atom(atom_idx)
+                    res = atom.residue
+                    res_key = (res.index, res.name, res.resSeq)
+
+                    # Map matrix index to residue
+                    atom_to_residue_map[matrix_idx] = res_key
+
+                    # Store residue info
+                    if res_key not in residue_info:
+                        residue_info[res_key] = {
+                            'name': f"{res.name}{res.resSeq}",
+                            'matrix_indices': []
+                        }
+                    residue_info[res_key]['matrix_indices'].append(matrix_idx)
+
+                # Check if we should aggregate to residue level
+                unique_residues = list(residue_info.keys())
+                n_residues = len(unique_residues)
+
+                if n_residues < n_selected_atoms:
+                    # Multiple atoms per residue - aggregate to residue level
+                    print(f"Aggregating {n_selected_atoms} atoms to {n_residues} residues")
+
+                    # Create residue-level attention maps
+                    residue_attention_maps = np.zeros((n_states, n_residues, n_residues))
+                    residue_labels = []
+
+                    # Create mapping from residue index to matrix indices
+                    for res_idx, (res_key, res_info) in enumerate(residue_info.items()):
+                        residue_labels.append(res_info['name'])
+
+                        # Sum attention values for all atom pairs within/between residues
+                        for other_res_idx, (other_res_key, other_res_info) in enumerate(residue_info.items()):
+                            for atom_i in res_info['matrix_indices']:
+                                for atom_j in other_res_info['matrix_indices']:
+                                    residue_attention_maps[:, res_idx, other_res_idx] += \
+                                        state_attention_maps[:, atom_i, atom_j]
+
+                    # Use residue-level data
+                    attention_maps = residue_attention_maps
+                    labels = residue_labels
+                    n_entities = n_residues
+                    entity_name = "Residue"
+
+                else:
+                    # One atom per residue - use atom-level with residue labels
+                    labels = [residue_info[atom_to_residue_map[i]]['name']
+                              for i in range(n_selected_atoms)]
+                    entity_name = "Residue"
+                    n_entities = n_selected_atoms
+                    print(f"Using atom-level attention with residue labels for {n_entities} atoms")
+
+        except Exception as e:
+            print(f"Error processing topology and selection: {str(e)}")
+            print("Falling back to atom-level visualization with indices")
+            labels = [str(i) for i in range(1, n_selected_atoms + 1)]
+            entity_name = "Atom"
+            n_entities = n_selected_atoms
+
+    else:
+        # No topology processing - use simple atom indices
+        if residue_names is not None:
+            labels = residue_names
+            entity_name = "Residue"
+        else:
+            labels = [str(i) for i in range(1, n_selected_atoms + 1)]
+            entity_name = "Atom"
+        n_entities = n_selected_atoms
+
+    # Calculate attention scores by summing in specified direction
+    if plot_sum_direction == "source":
+        scores = np.sum(attention_maps, axis=2)  # Sum over targets (columns)
+    elif plot_sum_direction == "target":
+        scores = np.sum(attention_maps, axis=1)  # Sum over sources (rows)
+    elif plot_sum_direction == "both":
+        scores = np.sum(attention_maps, axis=2) + np.sum(attention_maps, axis=1)
+    else:
+        raise ValueError(f"Invalid plot_sum_direction: {plot_sum_direction}. "
+                         "Must be 'source', 'target', or 'both'")
+
+    # Scale scores to [0, 1] for each state
+    scaled_scores = np.zeros_like(scores)
+    for i in range(n_states):
+        if np.all(scores[i] == scores[i][0]):  # All values are the same
+            scaled_scores[i] = np.zeros_like(scores[i])
+        else:
+            # Min-max scaling
+            min_val = np.min(scores[i])
+            max_val = np.max(scores[i])
+            scaled_scores[i] = (scores[i] - min_val) / (max_val - min_val + 1e-10)
+
+    # Calculate robust figure size
+    aspect_ratio = n_states / n_entities
+    max_size = max(figsize)
+    min_size = min(figsize)
+
+    if aspect_ratio < 1:
+        fig_width = max_size
+        fig_height = max(min_size, max_size * aspect_ratio)
+    else:
+        fig_height = max_size
+        fig_width = max(min_size, max_size / aspect_ratio)
+
+    # Ensure reasonable bounds
+    fig_width = np.clip(fig_width, 4, 20)
+    fig_height = np.clip(fig_height, 4, 20)
+
+    # Create the plot
+    plt.style.use('default')
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=200)
+
+    # Plot heatmap with square cells
+    im = ax.imshow(scaled_scores, cmap=plt.cm.get_cmap(cmap_name), aspect='equal')
+
+    # Set ticks and labels
+    ax.set_yticks(np.arange(n_states))
+    ax.set_yticklabels([f"State {i + 1}" for i in range(n_states)], fontweight='bold')
+
+    # Set x-ticks (showing a subset if too many)
+    if n_entities > 30:
+        tick_interval = max(1, n_entities // 30)
+        tick_positions = np.arange(0, n_entities, tick_interval)
+        tick_labels = [labels[i] for i in tick_positions]
+    else:
+        tick_positions = np.arange(n_entities)
+        tick_labels = labels
+
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, fontweight='bold', rotation=90)
+
+    # Add axis labels
+    ax.set_xlabel(entity_name, fontweight='bold')
+    ax.set_ylabel('State', fontweight='bold')
+
+    # Add colorbar
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label('Normalized Attention', fontweight='bold')
+
+    # Add grid lines for better readability
+    ax.set_xticks(np.arange(-0.5, n_entities, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, n_states, 1), minor=True)
+    ax.grid(which='minor', color='black', linestyle='-', linewidth=0.5, alpha=0.2)
+
+    # Add title
+    direction_text = {"source": "from", "target": "to", "both": "total for"}[plot_sum_direction]
+    plt.title(f"{protein_name}: Attention {direction_text} Each {entity_name} by State",
+              fontweight='bold')
+
+    plt.tight_layout()
+
+    # Save figure if directory is specified
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir,
+                                 f"{protein_name}_{entity_name.lower()}_attention_{plot_sum_direction}.png")
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved {entity_name.lower()} attention plot to: {save_path}")
+
+    return fig, ax
+
+
+# Helper function to get selected atom information
+def get_selected_atom_info(topology_file: str, atom_selection: str):
+    """
+    Helper function to get information about selected atoms.
+
+    Parameters
+    ----------
+    topology_file : str
+        Path to topology file
+    atom_selection : str
+        MDTraj selection string
+
+    Returns
+    -------
+    dict
+        Dictionary containing selected atom indices, residue names, etc.
+    """
+    # Load topology
+    traj = md.load(topology_file)
+    top = traj.topology
+
+    # Get selected atoms
+    selected_indices = top.select(atom_selection)
+
+    # Extract residue information
+    residue_names = []
+    atom_info = []
+
+    for atom_idx in selected_indices:
+        atom = top.atom(atom_idx)
+        res = atom.residue
+        res_name = f"{res.name}{res.resSeq}"
+
+        residue_names.append(res_name)
+        atom_info.append({
+            'atom_index': atom_idx,
+            'atom_name': atom.name,
+            'residue_name': res.name,
+            'residue_number': res.resSeq,
+            'residue_index': res.index,
+            'full_name': res_name
+        })
+
+    return {
+        'selected_indices': selected_indices,
+        'residue_names': residue_names,
+        'atom_info': atom_info,
+        'n_selected': len(selected_indices)
+    }
+
+
+def plot_state_attention_weights_old(
+        state_attention_maps: np.ndarray,
+        topology_file: str = None,
+        save_dir: str = None,
+        protein_name: str = "protein",
+        plot_sum_direction: str = "target",
+        cmap_name: str = "viridis",
+        figsize: tuple = (12, 6),
         residue_indices: list = None,
         residue_names: list = None,
 ):
@@ -864,8 +1169,6 @@ def plot_state_attention_weights(
     # Add title
     direction_text = "from" if plot_sum_direction == "source" else "to" if plot_sum_direction == "target" else "total for"
     plt.title(f"{protein_name}: Attention {direction_text} Each {entity_name} by State", fontweight='bold')
-
-    #plt.tight_layout()
 
     # Save figure if directory is specified
     if save_dir:

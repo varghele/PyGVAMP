@@ -13,7 +13,7 @@ from pygv.args.args_anly import parse_config
 def create_test_args():
     """Create test arguments for analysis by loading from config"""
     # Base directory of the trained model
-    base_output_dir = os.path.expanduser('area57/ab42')
+    base_output_dir = os.path.expanduser('area58/ATR_8_5000_10_v1')
     config_path = os.path.join(base_output_dir, 'config.txt')
 
     # Check if config file exists
