@@ -6,7 +6,6 @@ from torch_geometric.nn import MLP
 from torch_geometric.utils import softmax
 from torch.jit import script
 from torch_geometric.nn import global_mean_pool
-from triton.ops import attention
 
 
 def init_weights(m):

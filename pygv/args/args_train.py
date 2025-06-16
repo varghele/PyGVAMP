@@ -186,3 +186,7 @@ def parse_train_args():
     """Parse training arguments"""
     parser = get_train_parser()
     return parser.parse_args()
+
+if __name__ == "__main__":
+    parser = get_train_parser()
+    parser.print_help()
