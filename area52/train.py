@@ -38,13 +38,14 @@ def create_test_args():
     #args.top = os.path.expanduser('~/PycharmProjects/PyGVAMP/datasets/NTL9/DESRES-Trajectory_NTL9-0-c-alpha/NTL9-0-c-alpha/NTL9.pdb')
     #args.top = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/topol.pdb')
     #args.selection = 'name CA'
-    args.selection = '(residue 126 to 146 or residue 221 to 259 or residue 286 to 317) and name CA'
+    #args.selection = '(residue 126 to 146 or residue 221 to 259 or residue 286 to 317) and name CA'
+    args.selection = '(residue 221 to 259) and name CA'
 
     args.val_split = 0.05
     args.sample_validate_every = 100
 
     args.stride = 10
-    args.lag_time = 500.0
+    args.lag_time = 1000.0
     args.n_neighbors = 10
     args.node_embedding_dim = 32
     args.gaussian_expansion_dim = 32 # TODO: This is edge dim!!!
@@ -74,7 +75,7 @@ def create_test_args():
     args.meta_dropout = 0.0"""
 
     # Classifier settings
-    args.n_states = 8
+    args.n_states = 5
     args.clf_hidden_dim = 64
     args.clf_num_layers = 2
     args.clf_dropout = 0.01
@@ -83,7 +84,7 @@ def create_test_args():
 
     # Embedding settings
     args.use_embedding = True
-    args.embedding_in_dim = 92 # TODO:This is num of atoms/molecules
+    #args.embedding_in_dim = 92 # TODO:This is num of atoms/molecules
     args.embedding_hidden_dim = 64
     args.embedding_out_dim = 64
     args.embedding_num_layers = 2
@@ -92,22 +93,22 @@ def create_test_args():
     args.embedding_norm = None # 'BatchNorm' #
 
     # Training settings
-    args.epochs = 50
-    args.batch_size = 136
+    args.epochs = 100
+    args.batch_size = 256
     args.lr = 0.0005
     args.weight_decay = 1e-5
     args.clip_grad = None
     args.cpu = False  # Use CPU for testing
 
     # Testing settngs
-    args.max_tau = 1000
+    args.max_tau = 10000
 
     # Output settings
     args.output_dir = 'area58'
     args.cache_dir = 'area58/cache'
     args.use_cache = True
     args.save_every = 0  # Don't save intermediates
-    args.run_name = 'ATR_8_500_10_v1'
+    args.run_name = 'tst'
 
     return args
 

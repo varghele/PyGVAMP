@@ -343,6 +343,9 @@ def run_training(args):
     # Create dataset and loader
     dataset, train_dataset, train_loader, test_dataset, test_loader = create_dataset_and_loader(args,test_split=args.val_split)
 
+    # Infer num atoms for later embedding
+    args.embedding_in_dim = dataset.n_atoms
+
     # Create model
     model = create_model(args)
     print(f"Created VAMPNet model with {sum(p.numel() for p in model.parameters())} parameters")
@@ -379,15 +382,37 @@ def run_training(args):
                                                                           )
 
     # Get actual timestep of the trajectory
-    # TODO: Check if this is correct!
     inferred_timestep = dataset._infer_timestep() / 1000  # Timestep in nanoseconds
 
     # Get lag times up to maximum lag time
     if args.max_tau is not None:
-        lag_times_ns = [i for i in range(1, args.max_tau, 2)]
+        # Calculate step size to get between 50 and 200 lag times
+        step = max(1, args.max_tau // 200)  # Ensure at least 200 values
+        lag_times_ns = list(range(1, args.max_tau, step))
+
+        # If we have fewer than 50 values, reduce step size
+        if len(lag_times_ns) < 50:
+            step = max(1, args.max_tau // 50)
+            lag_times_ns = list(range(1, args.max_tau, step))
+
+        # Ensure we don't exceed 200 values
+        if len(lag_times_ns) > 200:
+            lag_times_ns = lag_times_ns[:200]
+
     else:
         max_tau = 250
-        lag_times_ns = [i for i in range(1, max_tau, 2)]
+        # Calculate step size to get between 50 and 200 lag times
+        step = max(1, max_tau // 200)  # Ensure at least 200 values
+        lag_times_ns = list(range(1, max_tau, step))
+
+        # If we have fewer than 50 values, reduce step size
+        if len(lag_times_ns) < 50:
+            step = max(1, max_tau // 50)
+            lag_times_ns = list(range(1, max_tau, step))
+
+        # Ensure we don't exceed 200 values
+        if len(lag_times_ns) > 200:
+            lag_times_ns = lag_times_ns[:200]
 
     # Run Chapman Kolmogorow Test
     run_ck_analysis(
