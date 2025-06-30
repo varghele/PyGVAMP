@@ -17,15 +17,17 @@ def main():
     print(f"Using device: {device}")
 
     # Perform NSPDK clustering
-    cluster_labels, kernel_matrix = cluster_md_trajectory_pyg_nspdk(
+    cluster_labels, kernel_matrix, nspdk = cluster_md_trajectory_pyg_nspdk(
         trajectory_file=trajectory_file,
         topology_file=topology_file,
-        n_clusters=5,
-        selection='name CA',  # Or your specific selection
-        max_radius=3,
-        max_distance=4,
-        device='cuda'
+        n_clusters=8,
+        selection='name CA',
+        r=2,  # Smaller radius for efficiency
+        d=3,  # Smaller max distance
+        device='cuda',
+        batch_size=8  # Small batch size for memory efficiency
     )
+
 
     # Save results
     np.save("pyg_nspdk_cluster_labels.npy", cluster_labels)
