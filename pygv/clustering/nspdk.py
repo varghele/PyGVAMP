@@ -11,7 +11,9 @@ from scipy.sparse import csr_matrix
 
 
 import torch_geometric
-from torch_geometric.data import Data, DataLoader
+
+from torch_geometric.data import Data
+from torch_geometric.loader import DataLoader
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, k_hop_subgraph
 from torch_geometric.nn import MessagePassing
 from torch_sparse import SparseTensor
