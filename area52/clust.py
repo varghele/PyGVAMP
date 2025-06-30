@@ -17,16 +17,14 @@ def main():
     print(f"Using device: {device}")
 
     # Perform NSPDK clustering
-    cluster_labels, kernel_matrix, feature_vectors, feature_keys = cluster_md_trajectory_pyg_nspdk(
+    cluster_labels, kernel_matrix = cluster_md_trajectory_pyg_nspdk(
         trajectory_file=trajectory_file,
         topology_file=topology_file,
         n_clusters=5,
-        selection='name CA',  # Use CA atoms
-        max_radius=2,  # Neighborhood radius
-        max_distance=8,  # Maximum distance between subgraph pairs
-        device=device,
-        use_batched=True,  # Use batched processing for large trajectories
-        batch_size=2
+        selection='name CA',  # Or your specific selection
+        max_radius=3,
+        max_distance=4,
+        device='cuda'
     )
 
     # Save results
