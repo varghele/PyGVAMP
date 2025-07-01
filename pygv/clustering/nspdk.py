@@ -224,7 +224,7 @@ class PyGNSPDK:
 
         return all_features
 
-    def _hash_neighborhoods_torch(self, num_nodes, node_labels, neighborhoods, dist_matrix):
+    def _hash_neighborhoods_torch_old(self, num_nodes, node_labels, neighborhoods, dist_matrix):
         """
         Hash neighborhoods using the same algorithm as grakel
         """
@@ -266,6 +266,138 @@ class PyGNSPDK:
                 # Use hashlib for consistent hashing
                 hash_value = int(hashlib.md5(encoding.encode()).hexdigest()[:8], 16)
                 H[(radius, center)] = hash_value
+
+        return H
+
+    def _hash_neighborhoods_torch_optim(self, num_nodes, node_labels, neighborhoods, dist_matrix):
+        """
+        Optimized hash neighborhoods using vectorized operations and efficient string handling
+        """
+        H = {}
+        device = dist_matrix.device
+
+        # Pre-convert tensors to numpy for faster CPU operations
+        dist_matrix_np = dist_matrix.cpu().numpy()
+        node_labels_np = node_labels.cpu().numpy()
+
+        # Pre-allocate string builders for better memory efficiency
+        for center in range(num_nodes):
+            for radius in range(self.r + 1):
+                sub_vertices = neighborhoods[radius][center]
+
+                if len(sub_vertices) == 0:
+                    H[(radius, center)] = hash("EMPTY") % (2 ** 32)
+                    continue
+
+                # Convert to numpy arrays for vectorized operations
+                sub_vertices_arr = np.array(sub_vertices)
+
+                # Vectorized distance and label extraction
+                sub_dist_matrix = dist_matrix_np[np.ix_(sub_vertices_arr, sub_vertices_arr)]
+                sub_node_labels = node_labels_np[sub_vertices_arr]
+
+                # Create vertex labels using vectorized operations
+                vertex_labels = []
+                for i, vertex_idx in enumerate(sub_vertices_arr):
+                    # Vectorized distance-label pair creation
+                    valid_mask = sub_dist_matrix[i] != float('inf')
+                    valid_distances = sub_dist_matrix[i][valid_mask].astype(int)
+                    valid_labels = sub_node_labels[valid_mask]
+
+                    # Create label parts using list comprehension (faster than loop)
+                    label_parts = [f"{dist},{label}" for dist, label in zip(valid_distances, valid_labels)]
+                    label_parts.sort()  # Sort once instead of during join
+
+                    vertex_label = "|".join(label_parts)
+                    vertex_labels.append(vertex_label)
+
+                # Build encoding using list for efficient concatenation
+                encoding_parts = []
+                encoding_parts.extend(vertex_labels)
+                encoding_parts.append(":")
+
+                # Add edge information efficiently
+                edge_parts = []
+                for i in range(len(sub_vertices)):
+                    for j in range(i + 1, len(sub_vertices)):  # Only upper triangle
+                        vi, vj = sub_vertices[i], sub_vertices[j]
+                        if vi < len(dist_matrix_np) and vj < len(dist_matrix_np):
+                            if dist_matrix_np[vi, vj] == 1.0:  # Direct edge
+                                edge_parts.append(f"{vertex_labels[i]},{vertex_labels[j]},1")
+
+                # Join everything at once (much faster than incremental concatenation)
+                if edge_parts:
+                    encoding_parts.extend(edge_parts)
+
+                encoding = ".".join(encoding_parts[:-1]) + ":" + "_".join(
+                    encoding_parts[-len(edge_parts):]) if edge_parts else ".".join(encoding_parts)
+
+                # Use hashlib for consistent hashing
+                hash_value = int(hashlib.md5(encoding.encode()).hexdigest()[:8], 16)
+                H[(radius, center)] = hash_value
+
+        return H
+
+    def _hash_neighborhoods_torch(self, num_nodes, node_labels, neighborhoods, dist_matrix):
+        """
+        Ultra-optimized version using batch processing and minimal string operations
+        """
+        H = {}
+
+        # Convert to numpy once
+        dist_matrix_np = dist_matrix.cpu().numpy()
+        node_labels_np = node_labels.cpu().numpy()
+
+        # Group neighborhoods by size for batch processing
+        neighborhoods_by_size = defaultdict(list)
+        for center in range(num_nodes):
+            for radius in range(self.r + 1):
+                sub_vertices = neighborhoods[radius][center]
+                size = len(sub_vertices)
+                neighborhoods_by_size[size].append((radius, center, sub_vertices))
+
+        # Process each size group in batch
+        for size, neighborhood_list in neighborhoods_by_size.items():
+            if size == 0:
+                for radius, center, _ in neighborhood_list:
+                    H[(radius, center)] = hash("EMPTY") % (2 ** 32)
+                continue
+
+            # Batch process neighborhoods of the same size
+            for radius, center, sub_vertices in neighborhood_list:
+                sub_vertices_arr = np.array(sub_vertices)
+
+                # Use numpy's advanced indexing for speed
+                sub_distances = dist_matrix_np[sub_vertices_arr][:, sub_vertices_arr]
+                sub_labels = node_labels_np[sub_vertices_arr]
+
+                # Create a more efficient encoding using numerical hashing
+                # Instead of string operations, use numerical combinations
+                vertex_hashes = []
+                for i in range(size):
+                    # Create a numerical hash for each vertex's neighborhood
+                    valid_mask = sub_distances[i] != float('inf')
+                    if np.any(valid_mask):
+                        # Combine distances and labels numerically
+                        dist_label_pairs = sub_distances[i][valid_mask].astype(int) * 1000 + sub_labels[valid_mask]
+                        dist_label_pairs.sort()
+                        vertex_hash = hash(tuple(dist_label_pairs)) % (2 ** 16)
+                    else:
+                        vertex_hash = 0
+                    vertex_hashes.append(vertex_hash)
+
+                # Create edge hash
+                edge_hash = 0
+                for i in range(size):
+                    for j in range(i + 1, size):
+                        if sub_distances[i, j] == 1.0:
+                            edge_hash ^= hash((min(vertex_hashes[i], vertex_hashes[j]),
+                                               max(vertex_hashes[i], vertex_hashes[j]))) % (2 ** 16)
+
+                # Combine vertex and edge hashes
+                vertex_hashes.sort()  # Canonical ordering
+                final_hash = hash((tuple(vertex_hashes), edge_hash)) % (2 ** 32)
+                H[(radius, center)] = final_hash
 
         return H
 

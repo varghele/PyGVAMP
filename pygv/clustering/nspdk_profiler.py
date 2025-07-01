@@ -11,21 +11,50 @@ import time
 import cProfile
 import pstats
 import io
-from memory_profiler import profile, memory_usage
 import psutil
 import matplotlib.pyplot as plt
 import pandas as pd
 from functools import wraps
+from scipy.sparse import csr_matrix
 
 import torch_geometric
-from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader
+from torch_geometric.data import Data, DataLoader
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, k_hop_subgraph
+
+
+def time_function(func_name):
+    """Decorator factory to time function execution"""
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            start_time = time.time()
+
+            # Memory before (simplified)
+            mem_before = psutil.Process().memory_info().rss if hasattr(psutil.Process(), 'memory_info') else 0
+
+            result = func(self, *args, **kwargs)
+
+            # Memory after (simplified)
+            mem_after = psutil.Process().memory_info().rss if hasattr(psutil.Process(), 'memory_info') else 0
+
+            end_time = time.time()
+
+            # Store timing data
+            execution_time = end_time - start_time
+            self.timing_data[func_name].append(execution_time)
+            self.operation_counts[func_name] += 1
+
+            return result
+
+        return wrapper
+
+    return decorator
 
 
 class ProfiledPyGNSPDK:
     """
-    PyTorch Geometric NSPDK with comprehensive profiling capabilities
+    PyTorch Geometric NSPDK with simplified profiling capabilities
     """
 
     def __init__(self, r=3, d=4, device='cuda', batch_size=32):
@@ -36,52 +65,17 @@ class ProfiledPyGNSPDK:
 
         # Profiling data
         self.timing_data = defaultdict(list)
-        self.memory_data = defaultdict(list)
         self.operation_counts = defaultdict(int)
 
-    def time_function(self, func_name):
-        """Decorator to time function execution"""
-
-        def decorator(func):
-            @wraps(func)
-            def wrapper(*args, **kwargs):
-                start_time = time.time()
-
-                # Memory before
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-                    mem_before = torch.cuda.memory_allocated()
-                else:
-                    mem_before = psutil.Process().memory_info().rss
-
-                result = func(*args, **kwargs)
-
-                # Memory after
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-                    mem_after = torch.cuda.memory_allocated()
-                else:
-                    mem_after = psutil.Process().memory_info().rss
-
-                end_time = time.time()
-
-                # Store timing and memory data
-                execution_time = end_time - start_time
-                memory_used = mem_after - mem_before
-
-                self.timing_data[func_name].append(execution_time)
-                self.memory_data[func_name].append(memory_used)
-                self.operation_counts[func_name] += 1
-
-                return result
-
-            return wrapper
-
-        return decorator
+        # Storage for fitted data (matching grakel's approach)
+        self._fit_keys = {}
+        self._ngx = 0
+        self.X = {}
+        self._X_level_norm_factor = {}
 
     @time_function('trajectory_to_pyg_dataset')
     def trajectory_to_pyg_dataset(self, trajectory, selection='name CA'):
-        """Convert MD trajectory to PyTorch Geometric dataset with profiling"""
+        """Convert MD trajectory to PyTorch Geometric dataset with DataLoader"""
         print(f"Converting {trajectory.n_frames} frames to PyG dataset...")
 
         atom_indices = trajectory.topology.select(selection)
@@ -154,7 +148,7 @@ class ProfiledPyGNSPDK:
 
     @time_function('compute_shortest_paths_batch')
     def compute_shortest_paths_batch(self, batch):
-        """Compute shortest paths for a batch of graphs with profiling"""
+        """Compute shortest paths for a batch of graphs"""
         shortest_paths = []
 
         for i in range(batch.num_graphs):
@@ -175,14 +169,14 @@ class ProfiledPyGNSPDK:
             node_mapping[mask] = torch.arange(num_nodes, device=self.device)
             graph_edges = node_mapping[graph_edges]
 
-            # Floyd-Warshall algorithm
+            # Floyd-Warshall algorithm - THIS IS THE MAIN BOTTLENECK
             dist_matrix = torch.full((num_nodes, num_nodes), float('inf'), device=self.device)
             torch.diagonal(dist_matrix).fill_(0.0)
 
             if graph_edges.size(1) > 0:
                 dist_matrix[graph_edges[0], graph_edges[1]] = 1.0
 
-            # This is the bottleneck for large graphs
+            # O(n^3) operation - major bottleneck for large graphs
             for k in range(num_nodes):
                 dist_ik = dist_matrix[:, k].unsqueeze(1)
                 dist_kj = dist_matrix[k, :].unsqueeze(0)
@@ -302,65 +296,102 @@ class ProfiledPyGNSPDK:
 
         return H
 
-    def profile_memory_usage(self, func, *args, **kwargs):
-        """Profile memory usage of a function"""
+    @time_function('fit')
+    def fit(self, dataloader):
+        """Fit the NSPDK kernel on trajectory data"""
+        print("Fitting NSPDK kernel...")
 
-        def wrapper():
-            return func(*args, **kwargs)
+        all_features = defaultdict(dict)
+        all_keys = defaultdict(dict)
+        graph_count = 0
 
-        mem_usage = memory_usage(wrapper, interval=0.1)
-        return max(mem_usage) - min(mem_usage), mem_usage
+        for batch in tqdm(dataloader, desc="Processing batches"):
+            batch = batch.to(self.device)
 
-    def benchmark_scalability(self, trajectory_file, topology_file,
-                              frame_counts=[100, 500, 1000, 2000],
-                              selection='name CA'):
-        """Benchmark scalability with different numbers of frames"""
-        print("Benchmarking scalability...")
+            # Compute shortest paths for this batch
+            shortest_paths = self.compute_shortest_paths_batch(batch)
 
-        scalability_results = {
-            'frame_counts': [],
-            'total_times': [],
-            'memory_usage': [],
-            'frames_per_second': []
+            # Extract features for this batch
+            batch_features = self.extract_neighborhoods_batch(batch, shortest_paths)
+
+            # Merge features with global feature dictionary
+            for level_key, features in batch_features.items():
+                for (local_graph_idx, feature_key), count in features.items():
+                    global_graph_idx = graph_count + local_graph_idx
+
+                    # Index feature keys
+                    keys = all_keys[level_key]
+                    if feature_key not in keys:
+                        keys[feature_key] = len(keys)
+
+                    feature_idx = keys[feature_key]
+                    all_features[level_key][(global_graph_idx, feature_idx)] = count
+
+            graph_count += batch.num_graphs
+
+            # Clear GPU cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        # Convert to sparse matrices (matching grakel's format)
+        self.X = {}
+        for level_key, features in all_features.items():
+            if len(features) > 0:
+                indices, data = zip(*features.items())
+                rows, cols = zip(*indices)
+
+                self.X[level_key] = csr_matrix(
+                    (data, (rows, cols)),
+                    shape=(graph_count, len(all_keys[level_key])),
+                    dtype=np.int64
+                )
+
+        self._fit_keys = all_keys
+        self._ngx = graph_count
+
+        print(f"Fitted NSPDK on {graph_count} graphs with {len(self.X)} feature levels")
+        return self
+
+    @time_function('compute_kernel_matrix')
+    def compute_kernel_matrix(self):
+        """Compute the kernel matrix from fitted features"""
+        print("Computing kernel matrix...")
+
+        # Compute normalization factors
+        self._X_level_norm_factor = {
+            key: np.array(M.power(2).sum(-1)).flatten()
+            for key, M in self.X.items()
         }
 
-        for frame_count in frame_counts:
-            print(f"\nTesting with {frame_count} frames...")
+        # Compute kernel matrix
+        S = np.zeros((self._ngx, self._ngx))
 
-            # Load limited trajectory
-            traj = md.load(trajectory_file, top=topology_file)
-            if frame_count < traj.n_frames:
-                traj = traj[:frame_count]
+        for level_key, M in self.X.items():
+            # Compute dot product kernel for this level
+            K = M.dot(M.T).toarray()
+            K_diag = K.diagonal()
 
-            # Reset profiling data
-            self.timing_data.clear()
-            self.memory_data.clear()
+            # Normalize
+            with np.errstate(divide='ignore', invalid='ignore'):
+                Q = K / np.sqrt(np.outer(K_diag, K_diag))
+                Q = np.nan_to_num(Q, nan=1.0)
 
-            start_time = time.time()
+            S += Q
 
-            # Run the pipeline
-            dataloader = self.trajectory_to_pyg_dataset(traj, selection=selection)
-            kernel_matrix = self.fit_transform(dataloader)
+        # Average over all levels
+        if len(self.X) > 0:
+            S /= len(self.X)
 
-            total_time = time.time() - start_time
+        return S
 
-            # Calculate metrics
-            frames_per_second = frame_count / total_time
-            peak_memory = max([max(values) if values else 0 for values in self.memory_data.values()])
-
-            scalability_results['frame_counts'].append(frame_count)
-            scalability_results['total_times'].append(total_time)
-            scalability_results['memory_usage'].append(peak_memory)
-            scalability_results['frames_per_second'].append(frames_per_second)
-
-            print(f"Total time: {total_time:.2f}s")
-            print(f"Frames per second: {frames_per_second:.2f}")
-            print(f"Peak memory: {peak_memory / 1e6:.2f} MB")
-
-        return scalability_results
+    @time_function('fit_transform')
+    def fit_transform(self, dataloader):
+        """Fit and transform in one step"""
+        self.fit(dataloader)
+        return self.compute_kernel_matrix()
 
     def create_profiling_report(self, output_dir="profiling_results"):
-        """Create comprehensive profiling report"""
+        """Create simplified profiling report"""
         os.makedirs(output_dir, exist_ok=True)
 
         # Timing analysis
@@ -380,23 +411,8 @@ class ProfiledPyGNSPDK:
         timing_df = timing_df.sort_values('Total_Time', ascending=False)
         timing_df.to_csv(f"{output_dir}/timing_analysis.csv", index=False)
 
-        # Memory analysis
-        memory_df = pd.DataFrame([
-            {
-                'Function': func_name,
-                'Total_Memory': sum(memories),
-                'Mean_Memory': np.mean(memories),
-                'Peak_Memory': max(memories) if memories else 0,
-                'Call_Count': len(memories)
-            }
-            for func_name, memories in self.memory_data.items()
-        ])
-
-        memory_df = memory_df.sort_values('Peak_Memory', ascending=False)
-        memory_df.to_csv(f"{output_dir}/memory_analysis.csv", index=False)
-
         # Create visualizations
-        self._create_profiling_plots(timing_df, memory_df, output_dir)
+        self._create_profiling_plots(timing_df, output_dir)
 
         # Print summary
         print("\n" + "=" * 60)
@@ -406,13 +422,9 @@ class ProfiledPyGNSPDK:
         for _, row in timing_df.head().iterrows():
             print(f"  {row['Function']}: {row['Total_Time']:.3f}s ({row['Call_Count']} calls)")
 
-        print("\nTop 5 Memory Consumers:")
-        for _, row in memory_df.head().iterrows():
-            print(f"  {row['Function']}: {row['Peak_Memory'] / 1e6:.1f} MB peak")
+        return timing_df
 
-        return timing_df, memory_df
-
-    def _create_profiling_plots(self, timing_df, memory_df, output_dir):
+    def _create_profiling_plots(self, timing_df, output_dir):
         """Create profiling visualization plots"""
 
         # Timing breakdown pie chart
@@ -423,87 +435,79 @@ class ProfiledPyGNSPDK:
         plt.pie(top_functions['Total_Time'], labels=top_functions['Function'], autopct='%1.1f%%')
         plt.title('Time Distribution by Function')
 
-        # Memory usage bar chart
-        plt.subplot(2, 2, 2)
-        top_memory = memory_df.head(8)
-        plt.bar(range(len(top_memory)), top_memory['Peak_Memory'] / 1e6)
-        plt.xticks(range(len(top_memory)), top_memory['Function'], rotation=45, ha='right')
-        plt.ylabel('Peak Memory (MB)')
-        plt.title('Peak Memory Usage by Function')
-
         # Function call frequency
-        plt.subplot(2, 2, 3)
+        plt.subplot(2, 2, 2)
         plt.bar(range(len(timing_df)), timing_df['Call_Count'])
         plt.xticks(range(len(timing_df)), timing_df['Function'], rotation=45, ha='right')
         plt.ylabel('Number of Calls')
         plt.title('Function Call Frequency')
 
         # Time per call
-        plt.subplot(2, 2, 4)
+        plt.subplot(2, 2, 3)
         plt.bar(range(len(timing_df)), timing_df['Mean_Time'])
         plt.xticks(range(len(timing_df)), timing_df['Function'], rotation=45, ha='right')
         plt.ylabel('Mean Time per Call (s)')
         plt.title('Average Time per Function Call')
 
+        # Total time comparison
+        plt.subplot(2, 2, 4)
+        plt.bar(range(len(timing_df)), timing_df['Total_Time'])
+        plt.xticks(range(len(timing_df)), timing_df['Function'], rotation=45, ha='right')
+        plt.ylabel('Total Time (s)')
+        plt.title('Total Time by Function')
+
         plt.tight_layout()
         plt.savefig(f"{output_dir}/profiling_overview.png", dpi=300, bbox_inches='tight')
         plt.close()
 
-        # Detailed timing plot
-        plt.figure(figsize=(15, 6))
+    def benchmark_scalability(self, trajectory_file, topology_file,
+                              frame_counts=[100, 500, 1000],
+                              selection='name CA'):
+        """Benchmark scalability with different numbers of frames"""
+        print("Benchmarking scalability...")
 
-        # Box plot of timing distributions
-        timing_data_for_plot = [times for times in self.timing_data.values() if times]
-        function_names = [name for name, times in self.timing_data.items() if times]
+        scalability_results = {
+            'frame_counts': [],
+            'total_times': [],
+            'frames_per_second': []
+        }
 
-        plt.boxplot(timing_data_for_plot, labels=function_names)
-        plt.xticks(rotation=45, ha='right')
-        plt.ylabel('Execution Time (s)')
-        plt.title('Distribution of Execution Times by Function')
-        plt.yscale('log')
-        plt.grid(True, alpha=0.3)
+        for frame_count in frame_counts:
+            print(f"\nTesting with {frame_count} frames...")
 
-        plt.tight_layout()
-        plt.savefig(f"{output_dir}/timing_distributions.png", dpi=300, bbox_inches='tight')
-        plt.close()
+            # Load limited trajectory
+            traj = md.load(trajectory_file, top=topology_file)
+            if frame_count < traj.n_frames:
+                traj = traj[:frame_count]
 
-    def run_detailed_profiler(self, func, *args, **kwargs):
-        """Run cProfile on a specific function"""
-        profiler = cProfile.Profile()
-        profiler.enable()
+            # Reset profiling data
+            self.timing_data.clear()
 
-        result = func(*args, **kwargs)
+            start_time = time.time()
 
-        profiler.disable()
+            # Run the pipeline
+            dataloader = self.trajectory_to_pyg_dataset(traj, selection=selection)
+            kernel_matrix = self.fit_transform(dataloader)
 
-        # Create string buffer to capture profiler output
-        s = io.StringIO()
-        ps = pstats.Stats(profiler, stream=s)
-        ps.sort_stats('cumulative')
-        ps.print_stats()
+            total_time = time.time() - start_time
 
-        return result, s.getvalue()
+            # Calculate metrics
+            frames_per_second = frame_count / total_time
 
-    # Include the rest of your NSPDK implementation here
-    # (fit, transform, fit_transform methods with @time_function decorators)
+            scalability_results['frame_counts'].append(frame_count)
+            scalability_results['total_times'].append(total_time)
+            scalability_results['frames_per_second'].append(frames_per_second)
 
-    @time_function('fit')
-    def fit(self, dataloader):
-        """Fit method with profiling"""
-        # Your existing fit implementation with profiling decorators
-        pass
+            print(f"Total time: {total_time:.2f}s")
+            print(f"Frames per second: {frames_per_second:.2f}")
 
-    @time_function('fit_transform')
-    def fit_transform(self, dataloader):
-        """Fit transform method with profiling"""
-        # Your existing fit_transform implementation
-        pass
+        return scalability_results
 
 
-def run_comprehensive_benchmark(trajectory_file, topology_file):
-    """Run comprehensive benchmarking suite"""
+def run_simplified_benchmark(trajectory_file, topology_file):
+    """Run simplified benchmarking suite"""
 
-    print("Starting comprehensive NSPDK benchmarking...")
+    print("Starting simplified NSPDK benchmarking...")
 
     # Initialize profiled NSPDK
     nspdk = ProfiledPyGNSPDK(r=2, d=3, device='cuda', batch_size=16)
@@ -512,7 +516,7 @@ def run_comprehensive_benchmark(trajectory_file, topology_file):
     print("\n1. Running scalability benchmark...")
     scalability_results = nspdk.benchmark_scalability(
         trajectory_file, topology_file,
-        frame_counts=[50, 100, 200, 500],
+        frame_counts=[50, 100, 200],
         selection='name CA'
     )
 
@@ -523,19 +527,15 @@ def run_comprehensive_benchmark(trajectory_file, topology_file):
     dataloader = nspdk.trajectory_to_pyg_dataset(traj, selection='name CA')
 
     # Profile the main computation
-    result, profile_output = nspdk.run_detailed_profiler(
-        nspdk.fit_transform, dataloader
-    )
+    start_time = time.time()
+    result = nspdk.fit_transform(dataloader)
+    total_time = time.time() - start_time
 
     # 3. Create profiling report
     print("\n3. Creating profiling report...")
-    timing_df, memory_df = nspdk.create_profiling_report()
+    timing_df = nspdk.create_profiling_report()
 
-    # 4. Save detailed cProfile output
-    with open("profiling_results/detailed_profile.txt", "w") as f:
-        f.write(profile_output)
-
-    # 5. Identify bottlenecks and recommendations
+    # 4. Identify bottlenecks and recommendations
     print("\n" + "=" * 60)
     print("BOTTLENECK ANALYSIS & RECOMMENDATIONS")
     print("=" * 60)
@@ -547,10 +547,6 @@ def run_comprehensive_benchmark(trajectory_file, topology_file):
     print(f"  - Called {biggest_time_consumer['Call_Count']} times")
     print(f"  - Average {biggest_time_consumer['Mean_Time']:.4f}s per call")
 
-    biggest_memory_consumer = memory_df.iloc[0]
-    print(f"\nBiggest memory bottleneck: {biggest_memory_consumer['Function']}")
-    print(f"  - Peak usage: {biggest_memory_consumer['Peak_Memory'] / 1e6:.1f} MB")
-
     # Provide optimization recommendations
     print("\nOPTIMIZATION RECOMMENDATIONS:")
 
@@ -558,35 +554,50 @@ def run_comprehensive_benchmark(trajectory_file, topology_file):
         print("  1. Floyd-Warshall is O(n³) - consider using sparse shortest paths")
         print("  2. Implement early termination for max distance")
         print("  3. Use batched sparse operations")
+        print("  4. Consider approximate distance methods for large graphs")
 
     if 'neighborhood_hashing' in timing_df['Function'].values:
-        print("  4. Consider caching hash computations")
-        print("  5. Use more efficient string operations")
+        print("  5. Consider caching hash computations")
+        print("  6. Use more efficient string operations")
+        print("  7. Implement incremental hashing")
 
-    if biggest_memory_consumer['Peak_Memory'] > 1e9:  # > 1GB
-        print("  6. Reduce batch size to manage memory")
-        print("  7. Implement gradient checkpointing")
-        print("  8. Use memory mapping for large datasets")
+    if 'dataset_getitem' in timing_df['Function'].values:
+        print("  8. Pre-compute distances for all frames")
+        print("  9. Use memory mapping for large trajectories")
+        print("  10. Implement parallel data loading")
 
     print("\nDetailed profiling results saved to 'profiling_results/' directory")
 
     return {
         'scalability': scalability_results,
         'timing_analysis': timing_df,
-        'memory_analysis': memory_df,
-        'detailed_profile': profile_output
+        'total_time': total_time
     }
 
 
 # Example usage
 if __name__ == "__main__":
-    # Run the comprehensive benchmark
-    trajectory_file = "your_trajectory.xtc"
-    topology_file = "your_topology.pdb"
+    # Run the simplified benchmark
+    #trajectory_file = "your_trajectory.xtc"
+    #topology_file = "your_topology.pdb"
+
+    # Parameters
+    trajectory_file = os.path.expanduser(
+        '~/PycharmProjects/DDVAMP/datasets/ATR/r0/traj0001.xtc')  # Your trajectory file
+    topology_file = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb')  # Your topology file
 
     try:
-        results = run_comprehensive_benchmark(trajectory_file, topology_file)
+        results = run_simplified_benchmark(trajectory_file, topology_file)
         print("\nBenchmarking completed successfully!")
+
+        # Print key findings
+        timing_df = results['timing_analysis']
+        print(f"\nKey Findings:")
+        print(f"- Total processing time: {results['total_time']:.2f} seconds")
+        print(f"- Main bottleneck: {timing_df.iloc[0]['Function']}")
+        print(
+            f"- Bottleneck accounts for {timing_df.iloc[0]['Total_Time'] / results['total_time'] * 100:.1f}% of total time")
+
     except Exception as e:
         print(f"Error during benchmarking: {str(e)}")
         import traceback
