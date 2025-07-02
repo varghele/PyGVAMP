@@ -25,7 +25,7 @@ def main():
         r=2,  # Smaller radius for efficiency
         d=3,  # Smaller max distance
         device='cuda',
-        batch_size=8  # Small batch size for memory efficiency
+        batch_size=128  # Small batch size for memory efficiency
     )
 
 

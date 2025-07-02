@@ -338,7 +338,7 @@ class PyGNSPDK:
 
         return H
 
-    def _hash_neighborhoods_torch(self, num_nodes, node_labels, neighborhoods, dist_matrix):
+    def _hash_neighborhoods_torch_ultra_optim(self, num_nodes, node_labels, neighborhoods, dist_matrix):
         """
         Ultra-optimized version using batch processing and minimal string operations
         """
@@ -398,6 +398,145 @@ class PyGNSPDK:
                 vertex_hashes.sort()  # Canonical ordering
                 final_hash = hash((tuple(vertex_hashes), edge_hash)) % (2 ** 32)
                 H[(radius, center)] = final_hash
+
+        return H
+
+    def _hash_neighborhoods_torch(self, num_nodes, node_labels, neighborhoods, dist_matrix):
+        """
+        Ultra-optimized version using batch processing and minimal string operations
+        WITH DETAILED TIMING MARKERS
+        """
+        import time
+
+        # Overall timing
+        start_total = time.time()
+
+        H = {}
+
+        # TIMING MARKER 1: Data conversion
+        start_conversion = time.time()
+        dist_matrix_np = dist_matrix.cpu().numpy()
+        node_labels_np = node_labels.cpu().numpy()
+        end_conversion = time.time()
+        print(f"Data conversion time: {end_conversion - start_conversion:.6f}s")
+
+        # TIMING MARKER 2: Neighborhood grouping
+        start_grouping = time.time()
+        neighborhoods_by_size = defaultdict(list)
+        for center in range(num_nodes):
+            for radius in range(self.r + 1):
+                sub_vertices = neighborhoods[radius][center]
+                size = len(sub_vertices)
+                neighborhoods_by_size[size].append((radius, center, sub_vertices))
+        end_grouping = time.time()
+        print(f"Neighborhood grouping time: {end_grouping - start_grouping:.6f}s")
+
+        # TIMING MARKER 3: Processing by size groups
+        start_processing = time.time()
+
+        # Track individual operations within processing
+        time_empty_handling = 0
+        time_array_conversion = 0
+        time_indexing = 0
+        time_vertex_hashing = 0
+        time_edge_hashing = 0
+        time_final_hashing = 0
+
+        for size, neighborhood_list in neighborhoods_by_size.items():
+            # TIMING MARKER 3a: Empty neighborhoods
+            start_empty = time.time()
+            if size == 0:
+                for radius, center, _ in neighborhood_list:
+                    H[(radius, center)] = hash("EMPTY") % (2 ** 32)
+                time_empty_handling += time.time() - start_empty
+                continue
+            time_empty_handling += time.time() - start_empty
+
+            # Process each neighborhood in this size group
+            for radius, center, sub_vertices in neighborhood_list:
+                # TIMING MARKER 3b: Array conversion
+                start_array = time.time()
+                sub_vertices_arr = np.array(sub_vertices)
+                time_array_conversion += time.time() - start_array
+
+                # TIMING MARKER 3c: Numpy indexing operations
+                start_indexing = time.time()
+                sub_distances = dist_matrix_np[sub_vertices_arr][:, sub_vertices_arr]
+                sub_labels = node_labels_np[sub_vertices_arr]
+                time_indexing += time.time() - start_indexing
+
+                # TIMING MARKER 3d: Vertex hash computation
+                start_vertex_hash = time.time()
+                vertex_hashes = []
+                for i in range(size):
+                    # Create a numerical hash for each vertex's neighborhood
+                    valid_mask = sub_distances[i] != float('inf')
+                    if np.any(valid_mask):
+                        # Combine distances and labels numerically
+                        dist_label_pairs = sub_distances[i][valid_mask].astype(int) * 1000 + sub_labels[valid_mask]
+                        dist_label_pairs.sort()
+                        vertex_hash = hash(tuple(dist_label_pairs)) % (2 ** 16)
+                    else:
+                        vertex_hash = 0
+                    vertex_hashes.append(vertex_hash)
+                time_vertex_hashing += time.time() - start_vertex_hash
+
+                # TIMING MARKER 3e: Edge hash computation
+                #start_edge_hash = time.time()
+                #edge_hash = 0
+                #for i in range(size):
+                #    for j in range(i + 1, size):
+                #        if sub_distances[i, j] == 1.0:
+                #            edge_hash ^= hash((min(vertex_hashes[i], vertex_hashes[j]),
+                #                               max(vertex_hashes[i], vertex_hashes[j]))) % (2 ** 16)
+                #time_edge_hashing += time.time() - start_edge_hash
+
+                # HIGHLY OPTIMIZED EDGE HASHING
+                start_edge_hash = time.time()
+
+                # Create edge hash using vectorized operations
+                edge_hash = 0
+                if size > 1:
+                    # Find edges (distance == 1) using vectorized operations
+                    edge_mask = (sub_distances == 1.0)
+                    edge_indices = np.where(np.triu(edge_mask, k=1))
+
+                    if len(edge_indices[0]) > 0:
+                        # Vectorized edge hash computation
+                        vertex_hashes_arr = np.array(vertex_hashes)
+                        i_vals = edge_indices[0]
+                        j_vals = edge_indices[1]
+
+                        min_hashes = np.minimum(vertex_hashes_arr[i_vals], vertex_hashes_arr[j_vals])
+                        max_hashes = np.maximum(vertex_hashes_arr[i_vals], vertex_hashes_arr[j_vals])
+
+                        # Combine hashes efficiently
+                        for min_h, max_h in zip(min_hashes, max_hashes):
+                            edge_hash ^= hash((int(min_h), int(max_h))) % (2 ** 16)
+
+                time_edge_hashing += time.time() - start_edge_hash
+
+                # TIMING MARKER 3f: Final hash combination
+                start_final_hash = time.time()
+                vertex_hashes.sort()  # Canonical ordering
+                final_hash = hash((tuple(vertex_hashes), edge_hash)) % (2 ** 32)
+                H[(radius, center)] = final_hash
+                time_final_hashing += time.time() - start_final_hash
+
+        end_processing = time.time()
+        print(f"Total processing time: {end_processing - start_processing:.6f}s")
+
+        # Print detailed breakdown of processing time
+        print(f"  - Empty handling: {time_empty_handling:.6f}s")
+        print(f"  - Array conversion: {time_array_conversion:.6f}s")
+        print(f"  - Numpy indexing: {time_indexing:.6f}s")
+        print(f"  - Vertex hashing: {time_vertex_hashing:.6f}s")
+        print(f"  - Edge hashing: {time_edge_hashing:.6f}s")
+        print(f"  - Final hashing: {time_final_hashing:.6f}s")
+
+        end_total = time.time()
+        print(f"TOTAL FUNCTION TIME: {end_total - start_total:.6f}s")
+        print("-" * 50)
 
         return H
 
@@ -598,7 +737,7 @@ def main():
         r=3,  # Maximum radius
         d=4,  # Maximum distance
         device=device,
-        batch_size=16  # Adjust based on available memory
+        batch_size=128  # Adjust based on available memory
     )
 
     # Analyze results

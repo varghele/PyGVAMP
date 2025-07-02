@@ -1,209 +1,76 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Standalone test script for NSPDK hash function optimization
+Compares original nested-loop implementation with optimized vectorized version
+"""
+
 import torch
+import numpy as np
+import time
 import hashlib
-import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
 from collections import defaultdict
-import time
+from tqdm import tqdm
+import os
+
+# Create output directory
+os.makedirs("nspdk_hash_test_results", exist_ok=True)
 
 
-def _hash_neighborhoods_torch_optimized(self, num_nodes, node_labels, neighborhoods, dist_matrix):
+class NSPDKHashTester:
     """
-    Optimized hash neighborhoods using matrix operations instead of for loops
-    """
-    H = {}
-    device = dist_matrix.device
-
-    # Pre-compute all distance-label pairs for all nodes
-    # This creates a matrix where each row represents a node's view of all other nodes
-    node_labels_expanded = node_labels.unsqueeze(0).expand(num_nodes, -1)  # [num_nodes, num_nodes]
-
-    # Create distance-label encoding matrix
-    # Each element [i,j] contains the encoding "distance_ij,label_j"
-    dist_label_matrix = torch.zeros(num_nodes, num_nodes, dtype=torch.long, device=device)
-
-    # Vectorized creation of distance-label pairs
-    for i in range(num_nodes):
-        for j in range(num_nodes):
-            if dist_matrix[i, j] != float('inf'):
-                # Create a hash of the distance-label pair
-                dist_int = int(dist_matrix[i, j].item())
-                label_int = int(node_labels[j].item())
-                # Simple hash combination (you can use a better hash function)
-                dist_label_matrix[i, j] = dist_int * 1000 + label_int
-
-    # Process each center and radius combination
-    for center in range(num_nodes):
-        for radius in range(self.r + 1):
-            sub_vertices = neighborhoods[radius][center]
-
-            if len(sub_vertices) == 0:
-                H[(radius, center)] = hash("EMPTY") % (2 ** 32)
-                continue
-
-            # Convert sub_vertices to tensor indices
-            sub_indices = torch.tensor(sub_vertices, dtype=torch.long, device=device)
-
-            # Extract submatrix for this neighborhood
-            sub_dist_labels = dist_label_matrix[sub_indices][:, sub_indices]  # [sub_size, sub_size]
-
-            # Create vertex encodings by sorting distance-label pairs for each vertex
-            vertex_encodings = []
-            for i, vertex_idx in enumerate(sub_indices):
-                # Get all distance-label pairs for this vertex within the subgraph
-                vertex_pairs = sub_dist_labels[i]  # [sub_size]
-
-                # Sort the pairs to create canonical representation
-                sorted_pairs, _ = torch.sort(vertex_pairs)
-
-                # Create a hash for this vertex's encoding
-                vertex_hash = hash(tuple(sorted_pairs.cpu().numpy())) % (2 ** 16)
-                vertex_encodings.append(vertex_hash)
-
-            # Sort vertex encodings for canonical graph representation
-            vertex_encodings.sort()
-
-            # Create edge encodings using vectorized operations
-            edge_encodings = []
-            if len(sub_vertices) > 1:
-                # Check which pairs are connected (distance == 1 in original graph)
-                for i in range(len(sub_vertices)):
-                    for j in range(i + 1, len(sub_vertices)):
-                        vi, vj = sub_vertices[i], sub_vertices[j]
-                        if vi < len(dist_matrix) and vj < len(dist_matrix):
-                            if dist_matrix[vi, vj].item() == 1.0:  # Direct edge
-                                edge_pair = (min(vertex_encodings[i], vertex_encodings[j]),
-                                             max(vertex_encodings[i], vertex_encodings[j]))
-                                edge_encodings.append(edge_pair)
-
-            edge_encodings.sort()
-
-            # Create final hash
-            canonical_str = f"NODES:{vertex_encodings}|EDGES:{edge_encodings}"
-            hash_value = int(hashlib.md5(canonical_str.encode()).hexdigest()[:8], 16)
-            H[(radius, center)] = hash_value
-
-    return H
-
-def _hash_neighborhoods_torch_vectorized(self, num_nodes, node_labels, neighborhoods, dist_matrix):
-    """ Fully vectorized version using advanced PyTorch operations """
-    H = {}
-    device = dist_matrix.device
-
-    # Pre-process all neighborhoods at once
-    max_neighborhood_size = max(len(neighborhoods[r][center])
-                                for r in range(self.r + 1)
-                                for center in range(num_nodes))
-
-    # Create batched neighborhood processing
-    for radius in range(self.r + 1):
-        # Collect all neighborhoods for this radius
-        radius_neighborhoods = []
-        radius_centers = []
-
-        for center in range(num_nodes):
-            sub_vertices = neighborhoods[radius][center]
-            if len(sub_vertices) > 0:
-                radius_neighborhoods.append(sub_vertices)
-                radius_centers.append(center)
-
-        if not radius_neighborhoods:
-            continue
-
-        # Process neighborhoods in batches
-        batch_size = min(32, len(radius_neighborhoods))  # Adjust based on memory
-
-        for batch_start in range(0, len(radius_neighborhoods), batch_size):
-            batch_end = min(batch_start + batch_size, len(radius_neighborhoods))
-            batch_neighborhoods = radius_neighborhoods[batch_start:batch_end]
-            batch_centers = radius_centers[batch_start:batch_end]
-
-            # Process this batch
-            for i, (neighborhood, center) in enumerate(zip(batch_neighborhoods, batch_centers)):
-                # Use optimized single neighborhood processing
-                hash_value = _hash_single_neighborhood_optimized(
-                    neighborhood, center, dist_matrix, node_labels, device
-                )
-                H[(radius, center)] = hash_value
-
-    return H
-
-
-def _hash_single_neighborhood_optimized(neighborhood, center, dist_matrix, node_labels, device):
-    """ Optimized hashing for a single neighborhood using matrix operations """
-    if len(neighborhood) == 0:
-        return hash("EMPTY") % (2**32)
-
-    # Convert to tensor
-    sub_indices = torch.tensor(neighborhood, dtype=torch.long, device=device)
-
-    # Extract subgraph distance matrix
-    sub_dist_matrix = dist_matrix[sub_indices][:, sub_indices]
-    sub_node_labels = node_labels[sub_indices]
-
-    # Vectorized vertex encoding creation
-    vertex_encodings = []
-
-    for i in range(len(sub_indices)):
-        # Get distances and labels for this vertex
-        distances = sub_dist_matrix[i]
-        labels = sub_node_labels
-
-        # Create distance-label pairs
-        valid_mask = distances != float('inf')
-        valid_distances = distances[valid_mask]
-        valid_labels = labels[valid_mask]
-
-        # Combine distance and label into single values
-        dist_label_pairs = valid_distances.long() * 1000 + valid_labels.long()
-
-        # Sort for canonical representation
-        sorted_pairs, _ = torch.sort(dist_label_pairs)
-
-        # Create hash for this vertex
-        vertex_hash = hash(tuple(sorted_pairs.cpu().numpy())) % (2 ** 16)
-        vertex_encodings.append(vertex_hash)
-
-    # Sort vertex encodings
-    vertex_encodings.sort()
-
-    # Vectorized edge detection
-    edge_encodings = []
-    if len(neighborhood) > 1:
-        # Find edges (distance == 1) using vectorized operations
-        edge_mask = (sub_dist_matrix == 1.0)
-        edge_indices = torch.nonzero(edge_mask, as_tuple=False)
-
-        for edge in edge_indices:
-            i, j = edge[0].item(), edge[1].item()
-            if i < j:  # Avoid duplicates
-                edge_pair = (min(vertex_encodings[i], vertex_encodings[j]),
-                             max(vertex_encodings[i], vertex_encodings[j]))
-                edge_encodings.append(edge_pair)
-
-    edge_encodings.sort()
-
-    # Create final hash
-    canonical_str = f"NODES:{vertex_encodings}|EDGES:{edge_encodings}"
-    return int(hashlib.md5(canonical_str.encode()).hexdigest()[:8], 16)
-
-
-import torch
-import time
-import numpy as np
-from collections import defaultdict
-
-
-class NSPDKHashComparison:
-    """
-    Class to compare the original and optimized hash functions
+    Standalone tester for NSPDK hash function optimization
     """
 
     def __init__(self, r=3, d=4):
-        self.r = r
-        self.d = d
+        self.r = r  # Maximum radius
+        self.d = d  # Maximum distance
 
-    def _hash_neighborhoods_torch_original(self, num_nodes, node_labels, neighborhoods, dist_matrix):
+    def generate_test_data(self, num_nodes=50, device='cpu'):
         """
-        Original implementation with nested for loops
+        Generate synthetic test data for hash function comparison
+        """
+        print(f"Generating test data with {num_nodes} nodes...")
+
+        # Create random distance matrix (simulating protein structure)
+        dist_matrix = torch.rand(num_nodes, num_nodes, device=device) * 15
+
+        # Make symmetric and set diagonal to 0
+        dist_matrix = (dist_matrix + dist_matrix.t()) / 2
+        torch.diagonal(dist_matrix).fill_(0.0)
+
+        # Set some distances to infinity (disconnected regions)
+        mask = torch.rand(num_nodes, num_nodes, device=device) > 0.8
+        dist_matrix[mask] = float('inf')
+        torch.diagonal(dist_matrix).fill_(0.0)
+
+        # Create node labels (simulating residue types)
+        node_labels = torch.randint(0, 20, (num_nodes,), device=device)  # 20 amino acids
+
+        # Create neighborhoods (simplified BFS-like)
+        neighborhoods = {}
+        for r in range(self.r + 1):
+            neighborhoods[r] = {}
+            for center in range(num_nodes):
+                if r == 0:
+                    neighborhoods[r][center] = [center]
+                else:
+                    # Find nodes within graph distance r
+                    neighbors = []
+                    for node in range(num_nodes):
+                        # Simple approximation: use Euclidean distance threshold
+                        if dist_matrix[center, node] <= r * 3 and dist_matrix[center, node] != float('inf'):
+                            neighbors.append(node)
+                    neighborhoods[r][center] = neighbors
+
+        return dist_matrix, node_labels, neighborhoods
+
+    def hash_neighborhoods_original(self, num_nodes, node_labels, neighborhoods, dist_matrix):
+        """
+        Original implementation with nested for loops (SLOW)
         """
         H = {}
 
@@ -211,9 +78,10 @@ class NSPDKHashComparison:
             for radius in range(self.r + 1):
                 sub_vertices = neighborhoods[radius][center]
 
+                # Create encoding string similar to grakel's hash_graph function
                 encoding = ""
 
-                # Create vertex labels
+                # Make labels for vertices (similar to grakel's Lv)
                 vertex_labels = {}
                 for i in sub_vertices:
                     label_parts = []
@@ -231,163 +99,274 @@ class NSPDKHashComparison:
                 if encoding.endswith("."):
                     encoding = encoding[:-1] + ":"
 
-                # Add edge information
+                # Add edge information (simplified for efficiency)
                 for i in sub_vertices:
                     for j in sub_vertices:
                         if i < j and i < len(dist_matrix) and j < len(dist_matrix):
                             dist = dist_matrix[i, j].item()
-                            if dist == 1.0:
+                            if dist == 1.0:  # Direct edge
                                 encoding += f"{vertex_labels.get(i, '')},{vertex_labels.get(j, '')},1_"
 
+                # Use hashlib for consistent hashing
                 hash_value = int(hashlib.md5(encoding.encode()).hexdigest()[:8], 16)
                 H[(radius, center)] = hash_value
 
         return H
 
-    def generate_test_data(self, num_nodes=50, device='cpu'):
+    def hash_neighborhoods_optimized(self, num_nodes, node_labels, neighborhoods, dist_matrix):
         """
-        Generate test data for comparison
+        Optimized implementation using vectorized operations and efficient data structures
         """
-        # Create random distance matrix
-        dist_matrix = torch.rand(num_nodes, num_nodes, device=device) * 10
+        H = {}
+        device = dist_matrix.device
 
-        # Make it symmetric and set diagonal to 0
-        dist_matrix = (dist_matrix + dist_matrix.t()) / 2
-        torch.diagonal(dist_matrix).fill_(0.0)
+        # Pre-convert to numpy for faster CPU operations
+        dist_matrix_np = dist_matrix.cpu().numpy()
+        node_labels_np = node_labels.cpu().numpy()
 
-        # Set some distances to infinity (disconnected)
-        mask = torch.rand(num_nodes, num_nodes, device=device) > 0.7
-        dist_matrix[mask] = float('inf')
+        # Group neighborhoods by size for batch processing
+        neighborhoods_by_size = defaultdict(list)
+        for center in range(num_nodes):
+            for radius in range(self.r + 1):
+                sub_vertices = neighborhoods[radius][center]
+                size = len(sub_vertices)
+                neighborhoods_by_size[size].append((radius, center, sub_vertices))
 
-        # Ensure diagonal is still 0
-        torch.diagonal(dist_matrix).fill_(0.0)
+        # Process each size group
+        for size, neighborhood_list in neighborhoods_by_size.items():
+            if size == 0:
+                for radius, center, _ in neighborhood_list:
+                    H[(radius, center)] = hash("EMPTY") % (2 ** 32)
+                continue
 
-        # Create node labels
-        node_labels = torch.randint(0, 10, (num_nodes,), device=device)
+            # Process neighborhoods of this size
+            for radius, center, sub_vertices in neighborhood_list:
+                sub_vertices_arr = np.array(sub_vertices)
 
-        # Create neighborhoods (simplified for testing)
-        neighborhoods = {}
-        for r in range(self.r + 1):
-            neighborhoods[r] = {}
-            for center in range(num_nodes):
-                # Find nodes within radius r
-                neighbors = []
-                for node in range(num_nodes):
-                    if dist_matrix[center, node] <= r and dist_matrix[center, node] != float('inf'):
-                        neighbors.append(node)
-                neighborhoods[r][center] = neighbors
+                # Use numpy's advanced indexing for speed
+                sub_distances = dist_matrix_np[sub_vertices_arr][:, sub_vertices_arr]
+                sub_labels = node_labels_np[sub_vertices_arr]
 
-        return dist_matrix, node_labels, neighborhoods
+                # Create a more efficient encoding using numerical hashing
+                # Instead of string operations, use numerical combinations
+                vertex_hashes = []
+                for i in range(size):
+                    # Create a numerical hash for each vertex's neighborhood
+                    valid_mask = sub_distances[i] != float('inf')
+                    if np.any(valid_mask):
+                        # Combine distances and labels numerically
+                        dist_label_pairs = sub_distances[i][valid_mask].astype(int) * 1000 + sub_labels[valid_mask]
+                        dist_label_pairs.sort()
+                        vertex_hash = hash(tuple(dist_label_pairs)) % (2 ** 16)
+                    else:
+                        vertex_hash = 0
+                    vertex_hashes.append(vertex_hash)
 
-    def compare_implementations(self, num_nodes_list=[20, 50, 100], num_runs=3):
+                # Create edge hash using vectorized operations
+                edge_hash = 0
+                if size > 1:
+                    # Find edges (distance == 1) using vectorized operations
+                    edge_mask = (sub_distances == 1.0)
+                    edge_indices = np.where(np.triu(edge_mask, k=1))
+
+                    if len(edge_indices[0]) > 0:
+                        # Vectorized edge hash computation
+                        vertex_hashes_arr = np.array(vertex_hashes)
+                        i_vals = edge_indices[0]
+                        j_vals = edge_indices[1]
+
+                        min_hashes = np.minimum(vertex_hashes_arr[i_vals], vertex_hashes_arr[j_vals])
+                        max_hashes = np.maximum(vertex_hashes_arr[i_vals], vertex_hashes_arr[j_vals])
+
+                        # Combine hashes efficiently
+                        for min_h, max_h in zip(min_hashes, max_hashes):
+                            edge_hash ^= hash((int(min_h), int(max_h))) % (2 ** 16)
+
+                # Combine vertex and edge hashes
+                vertex_hashes.sort()  # Canonical ordering
+                final_hash = hash((tuple(vertex_hashes), edge_hash)) % (2 ** 32)
+                H[(radius, center)] = final_hash
+
+        return H
+
+    def hash_neighborhoods_ultra_optimized(self, num_nodes, node_labels, neighborhoods, dist_matrix):
         """
-        Compare original and optimized implementations
+        Ultra-optimized version with advanced vectorization
+        """
+        H = {}
+
+        # Convert to numpy once
+        dist_matrix_np = dist_matrix.cpu().numpy()
+        node_labels_np = node_labels.cpu().numpy()
+
+        # Pre-compute all possible distance-label combinations
+        max_dist = 20  # Reasonable maximum distance
+        max_label = 20  # Number of amino acid types
+
+        # Create lookup table for distance-label pair hashes
+        dist_label_lookup = np.zeros((max_dist + 1, max_label), dtype=np.int32)
+        for d in range(max_dist + 1):
+            for l in range(max_label):
+                dist_label_lookup[d, l] = hash(f"{d},{l}") % (2 ** 16)
+
+        # Process all neighborhoods
+        for center in range(num_nodes):
+            for radius in range(self.r + 1):
+                sub_vertices = neighborhoods[radius][center]
+
+                if len(sub_vertices) == 0:
+                    H[(radius, center)] = hash("EMPTY") % (2 ** 32)
+                    continue
+
+                sub_vertices_arr = np.array(sub_vertices)
+
+                # Vectorized distance and label extraction
+                sub_distances = dist_matrix_np[sub_vertices_arr][:, sub_vertices_arr]
+                sub_labels = node_labels_np[sub_vertices_arr]
+
+                # Ultra-fast vertex hash computation using lookup table
+                vertex_hashes = []
+                for i in range(len(sub_vertices)):
+                    valid_mask = (sub_distances[i] != float('inf')) & (sub_distances[i] < max_dist)
+                    if np.any(valid_mask):
+                        valid_distances = sub_distances[i][valid_mask].astype(int)
+                        valid_labels = sub_labels[valid_mask]
+
+                        # Use lookup table for fast hash computation
+                        pair_hashes = dist_label_lookup[valid_distances, valid_labels]
+                        pair_hashes.sort()
+                        vertex_hash = hash(tuple(pair_hashes)) % (2 ** 16)
+                    else:
+                        vertex_hash = 0
+                    vertex_hashes.append(vertex_hash)
+
+                # Ultra-fast edge hash computation
+                edge_hash = 0
+                if len(sub_vertices) > 1:
+                    # Vectorized edge detection
+                    edge_matrix = (sub_distances == 1.0)
+                    edge_coords = np.where(np.triu(edge_matrix, k=1))
+
+                    if len(edge_coords[0]) > 0:
+                        vertex_hashes_arr = np.array(vertex_hashes)
+                        edge_hash_pairs = np.column_stack([
+                            np.minimum(vertex_hashes_arr[edge_coords[0]], vertex_hashes_arr[edge_coords[1]]),
+                            np.maximum(vertex_hashes_arr[edge_coords[0]], vertex_hashes_arr[edge_coords[1]])
+                        ])
+
+                        # Fast XOR combination
+                        for pair in edge_hash_pairs:
+                            edge_hash ^= hash(tuple(pair)) % (2 ** 16)
+
+                # Final hash combination
+                vertex_hashes.sort()
+                final_hash = hash((tuple(vertex_hashes), edge_hash)) % (2 ** 32)
+                H[(radius, center)] = final_hash
+
+        return H
+
+    def compare_implementations(self, test_sizes=[20, 50, 100], num_runs=3):
+        """
+        Compare all three implementations across different graph sizes
         """
         results = {
-            'num_nodes': [],
+            'graph_size': [],
             'original_time': [],
             'optimized_time': [],
-            'vectorized_time': [],
+            'ultra_optimized_time': [],
             'speedup_optimized': [],
-            'speedup_vectorized': [],
-            'outputs_match': []
+            'speedup_ultra': [],
+            'outputs_match_opt': [],
+            'outputs_match_ultra': []
         }
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"Running comparison on device: {device}")
 
-        for num_nodes in num_nodes_list:
-            print(f"\nTesting with {num_nodes} nodes...")
+        for size in test_sizes:
+            print(f"\nTesting with {size} nodes...")
 
             # Generate test data
-            dist_matrix, node_labels, neighborhoods = self.generate_test_data(num_nodes, device)
+            dist_matrix, node_labels, neighborhoods = self.generate_test_data(size, device)
 
             # Time original implementation
             original_times = []
             for run in range(num_runs):
                 start_time = time.time()
-                original_result = self._hash_neighborhoods_torch_original(
-                    num_nodes, node_labels, neighborhoods, dist_matrix
-                )
+                original_result = self.hash_neighborhoods_original(size, node_labels, neighborhoods, dist_matrix)
                 original_times.append(time.time() - start_time)
 
             # Time optimized implementation
             optimized_times = []
             for run in range(num_runs):
                 start_time = time.time()
-                optimized_result = _hash_neighborhoods_torch_optimized(
-                    self, num_nodes, node_labels, neighborhoods, dist_matrix
-                )
+                optimized_result = self.hash_neighborhoods_optimized(size, node_labels, neighborhoods, dist_matrix)
                 optimized_times.append(time.time() - start_time)
 
-            # Time vectorized implementation
-            vectorized_times = []
+            # Time ultra-optimized implementation
+            ultra_times = []
             for run in range(num_runs):
                 start_time = time.time()
-                vectorized_result = _hash_neighborhoods_torch_vectorized(
-                    self, num_nodes, node_labels, neighborhoods, dist_matrix
-                )
-                vectorized_times.append(time.time() - start_time)
+                ultra_result = self.hash_neighborhoods_ultra_optimized(size, node_labels, neighborhoods, dist_matrix)
+                ultra_times.append(time.time() - start_time)
 
             # Calculate averages
             avg_original = np.mean(original_times)
             avg_optimized = np.mean(optimized_times)
-            avg_vectorized = np.mean(vectorized_times)
+            avg_ultra = np.mean(ultra_times)
 
             # Check if outputs match
-            outputs_match = self.compare_outputs(original_result, optimized_result, vectorized_result)
+            outputs_match_opt = self.compare_outputs(original_result, optimized_result)
+            outputs_match_ultra = self.compare_outputs(original_result, ultra_result)
 
             # Store results
-            results['num_nodes'].append(num_nodes)
+            results['graph_size'].append(size)
             results['original_time'].append(avg_original)
             results['optimized_time'].append(avg_optimized)
-            results['vectorized_time'].append(avg_vectorized)
+            results['ultra_optimized_time'].append(avg_ultra)
             results['speedup_optimized'].append(avg_original / avg_optimized)
-            results['speedup_vectorized'].append(avg_original / avg_vectorized)
-            results['outputs_match'].append(outputs_match)
+            results['speedup_ultra'].append(avg_original / avg_ultra)
+            results['outputs_match_opt'].append(outputs_match_opt)
+            results['outputs_match_ultra'].append(outputs_match_ultra)
 
             print(f"Original time: {avg_original:.4f}s")
-            print(f"Optimized time: {avg_optimized:.4f}s")
-            print(f"Vectorized time: {avg_vectorized:.4f}s")
-            print(f"Optimized speedup: {avg_original / avg_optimized:.2f}x")
-            print(f"Vectorized speedup: {avg_original / avg_vectorized:.2f}x")
-            print(f"Outputs match: {outputs_match}")
+            print(f"Optimized time: {avg_optimized:.4f}s (speedup: {avg_original / avg_optimized:.2f}x)")
+            print(f"Ultra-optimized time: {avg_ultra:.4f}s (speedup: {avg_original / avg_ultra:.2f}x)")
+            print(f"Outputs match (optimized): {outputs_match_opt}")
+            print(f"Outputs match (ultra): {outputs_match_ultra}")
 
         return results
 
-    def compare_outputs(self, original, optimized, vectorized):
+    def compare_outputs(self, result1, result2):
         """
-        Compare outputs to ensure correctness
+        Compare two hash result dictionaries
         """
-        # Check if all keys match
-        if set(original.keys()) != set(optimized.keys()) or set(original.keys()) != set(vectorized.keys()):
+        if set(result1.keys()) != set(result2.keys()):
             return False
 
-        # Check if values are similar (allowing for small hash differences)
         mismatches = 0
-        total_keys = len(original.keys())
+        total_keys = len(result1.keys())
 
-        for key in original.keys():
-            if original[key] != optimized[key] or original[key] != vectorized[key]:
+        for key in result1.keys():
+            if result1[key] != result2[key]:
                 mismatches += 1
 
-        # Allow for some hash collisions/differences due to implementation details
+        # Allow for some hash differences due to implementation details
         match_rate = (total_keys - mismatches) / total_keys
         return match_rate > 0.95  # 95% match rate threshold
 
-    def visualize_results(self, results):
+    def create_visualizations(self, results):
         """
-        Create visualizations of the comparison results
+        Create performance comparison visualizations
         """
-        import matplotlib.pyplot as plt
-
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
 
         # Plot 1: Execution times
-        ax1.plot(results['num_nodes'], results['original_time'], 'o-', label='Original', linewidth=2)
-        ax1.plot(results['num_nodes'], results['optimized_time'], 's-', label='Optimized', linewidth=2)
-        ax1.plot(results['num_nodes'], results['vectorized_time'], '^-', label='Vectorized', linewidth=2)
-        ax1.set_xlabel('Number of Nodes')
+        ax1.plot(results['graph_size'], results['original_time'], 'o-', label='Original', linewidth=2, markersize=8)
+        ax1.plot(results['graph_size'], results['optimized_time'], 's-', label='Optimized', linewidth=2, markersize=8)
+        ax1.plot(results['graph_size'], results['ultra_optimized_time'], '^-', label='Ultra-Optimized', linewidth=2,
+                 markersize=8)
+        ax1.set_xlabel('Graph Size (nodes)')
         ax1.set_ylabel('Execution Time (seconds)')
         ax1.set_title('Execution Time Comparison')
         ax1.legend()
@@ -395,81 +374,136 @@ class NSPDKHashComparison:
         ax1.set_yscale('log')
 
         # Plot 2: Speedup
-        ax2.plot(results['num_nodes'], results['speedup_optimized'], 's-', label='Optimized Speedup', linewidth=2)
-        ax2.plot(results['num_nodes'], results['speedup_vectorized'], '^-', label='Vectorized Speedup', linewidth=2)
+        ax2.plot(results['graph_size'], results['speedup_optimized'], 's-', label='Optimized Speedup', linewidth=2,
+                 markersize=8)
+        ax2.plot(results['graph_size'], results['speedup_ultra'], '^-', label='Ultra-Optimized Speedup', linewidth=2,
+                 markersize=8)
         ax2.axhline(y=1, color='r', linestyle='--', alpha=0.5, label='No speedup')
-        ax2.set_xlabel('Number of Nodes')
+        ax2.set_xlabel('Graph Size (nodes)')
         ax2.set_ylabel('Speedup Factor')
         ax2.set_title('Speedup Comparison')
         ax2.legend()
         ax2.grid(True, alpha=0.3)
 
-        # Plot 3: Time complexity
-        ax3.loglog(results['num_nodes'], results['original_time'], 'o-', label='Original', linewidth=2)
-        ax3.loglog(results['num_nodes'], results['optimized_time'], 's-', label='Optimized', linewidth=2)
-        ax3.loglog(results['num_nodes'], results['vectorized_time'], '^-', label='Vectorized', linewidth=2)
-        ax3.set_xlabel('Number of Nodes (log scale)')
+        # Plot 3: Time complexity (log-log)
+        ax3.loglog(results['graph_size'], results['original_time'], 'o-', label='Original', linewidth=2, markersize=8)
+        ax3.loglog(results['graph_size'], results['optimized_time'], 's-', label='Optimized', linewidth=2, markersize=8)
+        ax3.loglog(results['graph_size'], results['ultra_optimized_time'], '^-', label='Ultra-Optimized', linewidth=2,
+                   markersize=8)
+        ax3.set_xlabel('Graph Size (log scale)')
         ax3.set_ylabel('Execution Time (log scale)')
         ax3.set_title('Time Complexity Analysis')
         ax3.legend()
         ax3.grid(True, alpha=0.3)
 
         # Plot 4: Output correctness
-        ax4.bar(range(len(results['num_nodes'])),
-                [1 if match else 0 for match in results['outputs_match']],
-                color=['green' if match else 'red' for match in results['outputs_match']])
+        correctness_data = []
+        labels = []
+        for i, size in enumerate(results['graph_size']):
+            correctness_data.extend([
+                1 if results['outputs_match_opt'][i] else 0,
+                1 if results['outputs_match_ultra'][i] else 0
+            ])
+            labels.extend([f'{size} nodes\n(Optimized)', f'{size} nodes\n(Ultra)'])
+
+        colors = ['green' if x == 1 else 'red' for x in correctness_data]
+        ax4.bar(range(len(correctness_data)), correctness_data, color=colors)
         ax4.set_xlabel('Test Case')
         ax4.set_ylabel('Outputs Match')
         ax4.set_title('Output Correctness')
-        ax4.set_xticks(range(len(results['num_nodes'])))
-        ax4.set_xticklabels([f'{n} nodes' for n in results['num_nodes']])
+        ax4.set_xticks(range(len(labels)))
+        ax4.set_xticklabels(labels, rotation=45, ha='right')
         ax4.set_ylim(0, 1.1)
 
         plt.tight_layout()
-        plt.savefig('nspdk_hash_comparison.png', dpi=300, bbox_inches='tight')
+        plt.savefig('nspdk_hash_test_results/performance_comparison.png', dpi=300, bbox_inches='tight')
         plt.show()
 
         return fig
 
+    def run_comprehensive_test(self):
+        """
+        Run comprehensive test suite
+        """
+        print("=" * 60)
+        print("NSPDK Hash Function Optimization Test")
+        print("=" * 60)
+
+        # Run comparison
+        results = self.compare_implementations(
+            test_sizes=[10, 20, 30, 50, 75, 150, 300, 500],
+            num_runs=3
+        )
+
+        # Create visualizations
+        self.create_visualizations(results)
+
+        # Save results to CSV
+        df = pd.DataFrame(results)
+        df.to_csv('nspdk_hash_test_results/performance_results.csv', index=False)
+
+        # Print summary
+        print("\n" + "=" * 60)
+        print("SUMMARY")
+        print("=" * 60)
+
+        avg_speedup_opt = np.mean(results['speedup_optimized'])
+        avg_speedup_ultra = np.mean(results['speedup_ultra'])
+
+        print(f"Average optimized speedup: {avg_speedup_opt:.2f}x")
+        print(f"Average ultra-optimized speedup: {avg_speedup_ultra:.2f}x")
+        print(f"All optimized outputs correct: {all(results['outputs_match_opt'])}")
+        print(f"All ultra-optimized outputs correct: {all(results['outputs_match_ultra'])}")
+
+        # Performance recommendations
+        print("\nPERFORMANCE RECOMMENDATIONS:")
+        if avg_speedup_ultra > avg_speedup_opt * 1.2:
+            print("✅ Use ultra-optimized version for best performance")
+        elif avg_speedup_opt > 2:
+            print("✅ Use optimized version for good balance of performance and simplicity")
+        else:
+            print("⚠️ Optimizations provide limited benefit - consider algorithm changes")
+
+        # Correctness check
+        if all(results['outputs_match_opt']) and all(results['outputs_match_ultra']):
+            print("✅ All optimized implementations produce correct results")
+        else:
+            print("❌ Some implementations produce incorrect results - investigate further")
+
+        print(f"\nResults saved to 'nspdk_hash_test_results/' directory")
+
+        return results
+
+
 def main():
-    """ Run the comparison """
-    print("NSPDK Hash Function Optimization Comparison")
-    print("=" * 50)
-    # Initialize comparison
-    comparison = NSPDKHashComparison(r=2, d=3)  # Smaller values for faster testing
+    """
+    Main function to run the standalone test
+    """
+    # Set random seed for reproducibility
+    torch.manual_seed(42)
+    np.random.seed(42)
 
-    # Run comparison
-    results = comparison.compare_implementations(
-        num_nodes_list=[10, 20, 30, 50],  # Start with smaller sizes
-        num_runs=3
-    )
+    # Initialize tester
+    tester = NSPDKHashTester(r=2, d=3)  # Use smaller values for faster testing
 
-    # Visualize results
-    comparison.visualize_results(results)
+    # Run comprehensive test
+    try:
+        results = tester.run_comprehensive_test()
+        print("\n🎉 Testing completed successfully!")
 
-    # Print summary
-    print("\n" + "=" * 50)
-    print("SUMMARY")
-    print("=" * 50)
+        # Print key findings
+        best_speedup = max(max(results['speedup_optimized']), max(results['speedup_ultra']))
+        print(f"\nKey Findings:")
+        print(f"- Best speedup achieved: {best_speedup:.2f}x")
+        print(f"- Largest graph tested: {max(results['graph_size'])} nodes")
+        print(
+            f"- All implementations correct: {all(results['outputs_match_opt']) and all(results['outputs_match_ultra'])}")
 
-    avg_speedup_opt = np.mean(results['speedup_optimized'])
-    avg_speedup_vec = np.mean(results['speedup_vectorized'])
+    except Exception as e:
+        print(f"Error during testing: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
-    print(f"Average optimized speedup: {avg_speedup_opt:.2f}x")
-    print(f"Average vectorized speedup: {avg_speedup_vec:.2f}x")
-    print(f"All outputs correct: {all(results['outputs_match'])}")
-
-    if avg_speedup_opt > 2:
-        print("✅ Significant speedup achieved with optimized version!")
-    elif avg_speedup_opt > 1.2:
-        print("✅ Moderate speedup achieved with optimized version")
-    else:
-        print("⚠️ Limited speedup - may need further optimization")
-
-    return results
 
 if __name__ == "__main__":
-    results = main()
-
-
-
+    main()
