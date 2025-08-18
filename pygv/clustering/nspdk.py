@@ -556,8 +556,17 @@ class PyGNSPDK:
             # Compute shortest paths for this batch
             shortest_paths = self.compute_shortest_paths_batch(batch)
 
+
+            import time
+            start = time.time()
+            print(start)
+
             # Extract features for this batch
             batch_features = self.extract_neighborhoods_batch(batch, shortest_paths)
+
+            end = start - time.time()
+            print(end)
+            print("halt")
 
             # Merge features with global feature dictionary
             for level_key, features in batch_features.items():

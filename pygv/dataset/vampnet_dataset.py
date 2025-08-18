@@ -157,8 +157,8 @@ class VAMPNetDataset(Dataset):
         max_distances = []
 
         # Use tqdm progress bar
-        # for idx in tqdm(indices, desc="Computing distance range", unit="frame"):
-        for idx in indices:
+        for idx in tqdm(indices, desc="Computing distance range", unit="frame"):
+        #for idx in indices:
             # Calculate pairwise distances for selected atoms in this frame
             coords = self.frames[idx]
 

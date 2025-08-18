@@ -17,10 +17,75 @@ import pandas as pd
 from functools import wraps
 from scipy.sparse import csr_matrix
 
+import torch_sparse
 import torch_geometric
 from torch_geometric.data import Data, DataLoader
 from torch_geometric.utils import to_dense_adj, dense_to_sparse, k_hop_subgraph
 
+
+def all_pairs_up_to_d(edge_index, num_nodes, d_max):
+    """
+    Optimized sparse shortest path computation up to distance d_max
+    """
+    # edge_index shape (2,E), undirected
+    # ---------------------------------------------------------------------
+    A = torch.sparse_coo_tensor(edge_index,
+                                torch.ones(edge_index.size(1)),
+                                (num_nodes, num_nodes),
+                                dtype=torch.bool).coalesce()
+
+    # visited[i,j] == shortest distance found so far (0-based, -1 == unseen)
+    visited = -torch.ones(num_nodes, num_nodes, dtype=torch.int16,
+                          device=A.device)
+
+    # distance 0 (diagonal)
+    idx = torch.arange(num_nodes, device=A.device)
+    visited[idx, idx] = 0
+
+    frontier = A
+    k = 1
+    row_all, col_all, dist_all = [], [], []
+
+    while k <= d_max and frontier._nnz() > 0:
+        r, c = frontier.indices()
+
+        # keep pairs never seen before
+        mask = visited[r, c] < 0
+        r, c = r[mask], c[mask]
+        if r.numel():
+            visited[r, c] = k
+            row_all.append(r)
+            col_all.append(c)
+            dist_all.append(torch.full_like(r, k, dtype=torch.int16))
+
+        # next frontier: A^{k+1} = A^k @ A
+        # Fix: convert result back to COO format before coalesce
+        indices, values = torch_sparse.spspmm(
+            frontier.indices(), frontier.values().float(),
+            A.indices(), A.values().float(),
+            num_nodes, num_nodes, num_nodes)
+
+        frontier = torch.sparse_coo_tensor(
+            indices, values, (num_nodes, num_nodes), dtype=torch.bool
+        ).coalesce()
+
+        k += 1
+
+    # build sparse distance matrix (only pairs within d_max)
+    if row_all:
+        rows = torch.cat(row_all)
+        cols = torch.cat(col_all)
+        dists = torch.cat(dist_all)
+        dist_sp = torch.sparse_coo_tensor(
+            torch.stack([rows, cols]), dists,
+            (num_nodes, num_nodes), dtype=torch.int16).coalesce()
+    else:
+        dist_sp = torch.sparse_coo_tensor(
+            torch.empty(2, 0, dtype=torch.long, device=A.device),
+            torch.empty(0, dtype=torch.int16, device=A.device),
+            (num_nodes, num_nodes), dtype=torch.int16)
+
+    return dist_sp
 
 def time_function(func_name):
     """Decorator factory to time function execution"""
@@ -145,6 +210,69 @@ class ProfiledPyGNSPDK:
         dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, num_workers=0)
 
         return dataloader
+
+    @time_function('compute_shortest_paths_batch_sparse')
+    def compute_shortest_paths_batch_sparse(self, batch):
+        """Compute shortest paths for a batch of graphs using sparse operations"""
+        shortest_paths = []
+
+        for i in range(batch.num_graphs):
+            start_time = time.time()
+
+            mask = batch.batch == i
+            num_nodes = mask.sum().item()
+
+            if num_nodes == 0:
+                continue
+
+            # Get edges for this graph
+            edge_mask = mask[batch.edge_index[0]] & mask[batch.edge_index[1]]
+            graph_edges = batch.edge_index[:, edge_mask]
+
+            # Remap node indices to 0-based for this graph
+            node_mapping = torch.zeros(batch.num_nodes, dtype=torch.long, device=self.device)
+            node_mapping[mask] = torch.arange(num_nodes, device=self.device)
+            graph_edges = node_mapping[graph_edges]
+
+            # Use sparse shortest path computation - THIS IS THE OPTIMIZATION
+            try:
+                dist_sparse = all_pairs_up_to_d(graph_edges, num_nodes, self.d)
+
+                # Convert sparse matrix to dense for compatibility with existing code
+                dist_matrix = torch.full((num_nodes, num_nodes), float('inf'),
+                                         device=self.device, dtype=torch.float32)
+
+                # Fill in the computed distances
+                if dist_sparse._nnz() > 0:
+                    indices = dist_sparse.indices()
+                    values = dist_sparse.values().float()
+                    dist_matrix[indices[0], indices[1]] = values
+
+                # Set diagonal to 0
+                torch.diagonal(dist_matrix).fill_(0.0)
+
+            except Exception as e:
+                print(f"Sparse shortest path failed for graph {i}, falling back to Floyd-Warshall: {e}")
+                # Fallback to Floyd-Warshall if sparse method fails
+                dist_matrix = torch.full((num_nodes, num_nodes), float('inf'), device=self.device)
+                torch.diagonal(dist_matrix).fill_(0.0)
+
+                if graph_edges.size(1) > 0:
+                    dist_matrix[graph_edges[0], graph_edges[1]] = 1.0
+
+                # Floyd-Warshall algorithm
+                for k in range(num_nodes):
+                    dist_ik = dist_matrix[:, k].unsqueeze(1)
+                    dist_kj = dist_matrix[k, :].unsqueeze(0)
+                    dist_matrix = torch.min(dist_matrix, dist_ik + dist_kj)
+
+            shortest_paths.append(dist_matrix)
+
+            # Track per-graph timing
+            graph_time = time.time() - start_time
+            self.timing_data['sparse_shortest_path_single_graph'].append(graph_time)
+
+        return shortest_paths
 
     @time_function('compute_shortest_paths_batch')
     def compute_shortest_paths_batch(self, batch):
@@ -310,6 +438,7 @@ class ProfiledPyGNSPDK:
 
             # Compute shortest paths for this batch
             shortest_paths = self.compute_shortest_paths_batch(batch)
+            #shortest_paths = self.compute_shortest_paths_batch_sparse(batch)
 
             # Extract features for this batch
             batch_features = self.extract_neighborhoods_batch(batch, shortest_paths)
@@ -582,9 +711,11 @@ if __name__ == "__main__":
     #topology_file = "your_topology.pdb"
 
     # Parameters
-    trajectory_file = os.path.expanduser(
-        '~/PycharmProjects/DDVAMP/datasets/ATR/r0/traj0001.xtc')  # Your trajectory file
-    topology_file = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb')  # Your topology file
+    #trajectory_file = os.path.expanduser(
+    #    '~/PycharmProjects/DDVAMP/datasets/ATR/r0/traj0001.xtc')  # Your trajectory file
+    #topology_file = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb')  # Your topology file
+    trajectory_file = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/r1/traj0000.xtc')
+    topology_file = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/topol.pdb')
 
     try:
         results = run_simplified_benchmark(trajectory_file, topology_file)
