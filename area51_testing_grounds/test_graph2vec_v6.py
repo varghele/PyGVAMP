@@ -12,7 +12,17 @@ import pickle
 import os
 import glob
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
-
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score
+from sklearn.cluster import KMeans
+from sklearn.metrics import adjusted_rand_score
+from torch_geometric.datasets import TUDataset
 
 def find_xtc_files(base_path):
     """
@@ -604,36 +614,34 @@ class Graph2Vec(nn.Module):
 # Example usage for large datasets
 def create_large_dataset_example():
     """Create example for large dataset usage."""
-    from torch_geometric.datasets import TUDataset
-
     # Example with a real dataset
     try:
-        """dataset = TUDataset(root='/tmp/PROTEINS', name='PROTEINS')
-        print(f"Dataset size: {len(dataset)}")"""
+        dataset = TUDataset(root='/tmp/ENZYMES', name='ENZYMES')
+        print(f"Dataset size: {len(dataset)}")
 
         # Initialize model with batch processing
         model = Graph2Vec(
             embedding_dim=128,
             max_degree=2,
-            negative_samples=5,
-            learning_rate=0.025,
+            negative_samples=10,
+            learning_rate=0.001,
             epochs=3,
             batch_size=1024,  # Adjust based on your GPU memory
             num_workers=8,  # Adjust based on your CPU cores
-            vocab_cache_path='./cache/proteins_vocab.pkl'
+            vocab_cache_path='./cache/proteins_vocab_ab42.pkl'
         )
 
 
-        #base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/"
-        base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/"
+        """base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/"
+        #base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/"
         # First, let's find all the .xtc files
         xtc_files = find_xtc_files(base_path)
         print(xtc_files)
 
         # Assuming you have a topology file in the same directory or nearby
         # You might need to adjust this path
-        # topology_file = os.path.join(base_path, "topol.pdb")  # Adjust as needed
-        topology_file = os.path.join(base_path, "prot.pdb")  # Adjust as needed
+        topology_file = os.path.join(base_path, "topol.pdb")  # Adjust as needed
+        #topology_file = os.path.join(base_path, "prot.pdb")  # Adjust as needed
 
         # Initialize the dataset
         dataset = VAMPNetDataset(
@@ -649,15 +657,47 @@ def create_large_dataset_example():
             use_cache=False
         )
 
-        ds_for_vocab = dataset.get_frames_dataset(return_pairs=False)
+        ds_for_vocab = dataset.get_frames_dataset(return_pairs=False)"""
 
         # Fit model
         print("Fitting model...")
-        model.fit(ds_for_vocab, len(ds_for_vocab))
+        model.fit(dataset, len(dataset))
 
         # Get embeddings
         embeddings = model.get_embeddings()
         print(f"Graph embeddings shape: {embeddings.shape}")
+
+        ## Determine optimal number of clusters
+        silhouette_scores = []
+        K_range = range(2, 20)
+
+        for k in K_range:
+            kmeans = KMeans(n_clusters=k, random_state=42)
+            cluster_labels = kmeans.fit_predict(embeddings)
+            silhouette_avg = silhouette_score(embeddings, cluster_labels)
+            silhouette_scores.append(silhouette_avg)
+
+        optimal_k = K_range[np.argmax(silhouette_scores)]
+        #optimal_k = 4
+        print(f"Optimal number of clusters: {optimal_k}")
+
+        # Perform clustering with optimal k
+        kmeans = KMeans(n_clusters=optimal_k, random_state=42)
+        cluster_labels = kmeans.fit_predict(embeddings)
+
+        # Reduce to 2D for visualization
+        tsne = TSNE(n_components=2, random_state=42)
+        embeddings_2d = tsne.fit_transform(embeddings)
+
+        # Plot with cluster colors
+        plt.figure(figsize=(12, 8))
+        scatter = plt.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1],
+                             c=cluster_labels, cmap='tab10', alpha=0.7)
+        plt.colorbar(scatter)
+        plt.title(f'MD Simulation States (k={optimal_k} clusters)')
+        plt.xlabel('t-SNE 1')
+        plt.ylabel('t-SNE 2')
+        plt.show()
 
         # Save model
         model.save_model('graph2vec_proteins.pt')
@@ -672,5 +712,315 @@ def create_large_dataset_example():
         print("Make sure to install torch_geometric datasets or provide your own dataset")
 
 
+
+
+
+def test_classification(dataset_name='MUTAG'):
+    # Load dataset
+    dataset = TUDataset(root=f'/tmp/{dataset_name}', name=dataset_name)
+
+    # Train Graph2Vec
+    model = Graph2Vec(embedding_dim=128, max_degree=2, epochs=10)
+    model.fit(dataset, len(dataset))
+
+    # Get embeddings and labels
+    embeddings = model.get_embeddings().numpy()
+    labels = [data.y.item() for data in dataset]
+
+    # Train/test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        embeddings, labels, test_size=0.1, random_state=42
+    )
+
+    # Train classifier
+    clf = SVC(kernel='rbf')
+    clf.fit(X_train, y_train)
+
+    # Evaluate
+    y_pred = clf.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+
+    print(f"{dataset_name} accuracy: {accuracy:.3f}")
+    return accuracy
+
+
+def create_test_graphs():
+    """Create simple test graphs with known structural patterns."""
+    graphs = []
+
+    # Create 3 groups of structurally similar graphs
+
+    # Group 1: Star graphs (1 central node connected to others)
+    for i in range(10):
+        num_outer = 5
+        edges = [[0, j] for j in range(1, num_outer + 1)]
+        edges += [[j, 0] for j in range(1, num_outer + 1)]  # undirected
+        edge_index = torch.tensor(edges).t().contiguous()
+        x = torch.ones(num_outer + 1, 1)  # simple features
+        graphs.append(Data(x=x, edge_index=edge_index, y=torch.tensor([0])))
+
+    # Group 2: Path graphs (linear chain)
+    for i in range(10):
+        num_nodes = 6
+        edges = [[j, j + 1] for j in range(num_nodes - 1)]
+        edges += [[j + 1, j] for j in range(num_nodes - 1)]  # undirected
+        edge_index = torch.tensor(edges).t().contiguous()
+        x = torch.ones(num_nodes, 1)
+        graphs.append(Data(x=x, edge_index=edge_index, y=torch.tensor([1])))
+
+    # Group 3: Cycle graphs (ring structure)
+    for i in range(10):
+        num_nodes = 6
+        edges = [[j, (j + 1) % num_nodes] for j in range(num_nodes)]
+        edges += [[(j + 1) % num_nodes, j] for j in range(num_nodes)]  # undirected
+        edge_index = torch.tensor(edges).t().contiguous()
+        x = torch.ones(num_nodes, 1)
+        graphs.append(Data(x=x, edge_index=edge_index, y=torch.tensor([2])))
+
+    return graphs
+
+
+def test_clustering():
+    # Use synthetic data with known clusters
+    test_graphs = create_test_graphs()
+    true_labels = [data.y.item() for data in test_graphs]
+
+    # Train Graph2Vec
+    model = Graph2Vec(embedding_dim=64, max_degree=2, epochs=5)
+    model.fit(test_graphs, len(test_graphs))
+
+    # Get embeddings
+    embeddings = model.get_embeddings().numpy()
+
+    # Cluster
+    kmeans = KMeans(n_clusters=3, random_state=42)
+    pred_labels = kmeans.fit_predict(embeddings)
+
+    # Evaluate
+    ari = adjusted_rand_score(true_labels, pred_labels)
+    print(f"Clustering ARI: {ari:.3f}")
+
+    # Should get high ARI (>0.8) for synthetic data
+    return ari
+
+
+def debug_subgraph_extraction():
+    """Debug the subgraph extraction process."""
+    # Create simple test graphs
+    test_graphs = create_test_graphs()
+
+    model = Graph2Vec(embedding_dim=64, max_degree=2, epochs=1)
+
+    # Test vocabulary building
+    dataloader = DataLoader(test_graphs, batch_size=5, shuffle=False)
+    vocab = model._build_vocabulary(dataloader)
+
+    print(f"Vocabulary size: {len(vocab)}")
+    print("Sample vocabulary entries:")
+    for i, (sg, idx) in enumerate(list(vocab.items())[:10]):
+        print(f"  {idx}: {sg}")
+
+    # Check if different graph types produce different subgraphs
+    batch = Batch.from_data_list(test_graphs[:3])  # One from each type
+    batch_subgraphs = model._extract_subgraphs_batch(batch)
+
+    print("\nSubgraphs per graph:")
+    for i, subgraphs in enumerate(batch_subgraphs):
+        print(f"Graph {i} ({test_graphs[i].y.item()}): {len(subgraphs)} subgraphs")
+        print(f"  Sample: {subgraphs}")
+
+
+def debug_training_step():
+    """Debug a single training step."""
+    test_graphs = create_test_graphs()[:6]  # Small subset
+
+    model = Graph2Vec(embedding_dim=32, max_degree=1, epochs=1, batch_size=3)
+
+    # Build vocabulary
+    dataloader = DataLoader(test_graphs, batch_size=3, shuffle=False)
+    model.subgraph_vocab = model._build_vocabulary(dataloader)
+    model.vocab_size = len(model.subgraph_vocab)
+
+    # Initialize embeddings
+    model.graph_embeddings = nn.Embedding(len(test_graphs), 32)
+    model.subgraph_embeddings = nn.Embedding(model.vocab_size, 32)
+
+    # Cache subgraphs
+    cached_subgraphs = model._cache_all_subgraphs(test_graphs, len(test_graphs))
+
+    print(f"Cached subgraphs for {len(cached_subgraphs)} graphs")
+    for graph_idx, subgraph_indices in cached_subgraphs.items():
+        print(f"Graph {graph_idx}: {len(subgraph_indices)} subgraphs")
+        if len(subgraph_indices) == 0:
+            print(f"  WARNING: Graph {graph_idx} has no valid subgraphs!")
+
+    # Test one training step
+    batch_graph_indices = [0, 1, 2]
+    batch_positive_pairs = []
+
+    for graph_idx in batch_graph_indices:
+        if graph_idx in cached_subgraphs:
+            subgraph_indices = cached_subgraphs[graph_idx]
+            for subgraph_idx in subgraph_indices:
+                batch_positive_pairs.append((graph_idx, subgraph_idx))
+
+    print(f"\nTraining pairs: {len(batch_positive_pairs)}")
+    if len(batch_positive_pairs) == 0:
+        print("ERROR: No training pairs found!")
+        return
+
+    # Check embedding access
+    batch_graph_ids = torch.tensor([pair[0] for pair in batch_positive_pairs])
+    batch_subgraph_ids = torch.tensor([pair[1] for pair in batch_positive_pairs])
+
+    print(f"Graph IDs range: {batch_graph_ids.min()}-{batch_graph_ids.max()}")
+    print(f"Subgraph IDs range: {batch_subgraph_ids.min()}-{batch_subgraph_ids.max()}")
+    print(f"Max graph embedding index: {model.graph_embeddings.num_embeddings - 1}")
+    print(f"Max subgraph embedding index: {model.subgraph_embeddings.num_embeddings - 1}")
+
+    # Check for index out of bounds
+    if batch_graph_ids.max() >= model.graph_embeddings.num_embeddings:
+        print("ERROR: Graph index out of bounds!")
+    if batch_subgraph_ids.max() >= model.subgraph_embeddings.num_embeddings:
+        print("ERROR: Subgraph index out of bounds!")
+
+
+def debug_loss_computation():
+    """Debug the loss computation."""
+    # Simple test case
+    embedding_dim = 32
+    vocab_size = 100
+    num_graphs = 10
+
+    graph_embeddings = nn.Embedding(num_graphs, embedding_dim)
+    subgraph_embeddings = nn.Embedding(vocab_size, embedding_dim)
+
+    # Test positive loss
+    graph_ids = torch.tensor([0, 1, 2])
+    subgraph_ids = torch.tensor([10, 20, 30])
+
+    graph_embs = graph_embeddings(graph_ids)
+    subgraph_embs = subgraph_embeddings(subgraph_ids)
+
+    # Compute positive scores
+    pos_scores = torch.sigmoid(torch.sum(graph_embs * subgraph_embs, dim=1))
+    pos_loss = -torch.mean(torch.log(pos_scores + 1e-8))
+
+    print(f"Positive scores: {pos_scores}")
+    print(f"Positive loss: {pos_loss.item()}")
+
+    # Test negative loss
+    neg_samples = torch.randint(0, vocab_size, (len(graph_ids), 5))
+    print(f"Negative samples shape: {neg_samples.shape}")
+
+    # Check if loss is reasonable
+    if pos_loss.item() > 10 or pos_loss.item() < 0:
+        print("WARNING: Positive loss seems unreasonable")
+
+    if torch.isnan(pos_loss) or torch.isinf(pos_loss):
+        print("ERROR: Loss is NaN or Inf")
+
+
+
+
+
+def debug_wl_differences():
+    """Check if WL produces different results for different structures."""
+
+    # Create clearly different graphs
+    # Triangle
+    triangle_edges = [[0, 1], [1, 2], [2, 0], [1, 0], [2, 1], [0, 2]]
+    triangle = Data(edge_index=torch.tensor(triangle_edges).t().contiguous(),
+                    x=torch.ones(3, 1))
+
+    # Path
+    path_edges = [[0, 1], [1, 2], [1, 0], [2, 1]]
+    path = Data(edge_index=torch.tensor(path_edges).t().contiguous(),
+                x=torch.ones(3, 1))
+
+    graphs = [triangle, path]
+
+    model = Graph2Vec(max_degree=2)
+
+    # Test subgraph extraction
+    batch = Batch.from_data_list(graphs)
+    batch_subgraphs = model._extract_subgraphs_batch(batch)
+
+    print("Triangle subgraphs:", set(batch_subgraphs[0]))
+    print("Path subgraphs:", set(batch_subgraphs[1]))
+    print("Overlap:", set(batch_subgraphs[0]) & set(batch_subgraphs[1]))
+
+    if set(batch_subgraphs[0]) == set(batch_subgraphs[1]):
+        print("ERROR: Identical subgraphs for different structures!")
+    else:
+        print("SUCCESS: Different subgraphs for different structures")
+
+
+def minimal_test():
+    """Minimal test to verify basic functionality."""
+    # Create very simple graphs
+    graphs = []
+
+    # Graph 1: Triangle (should cluster together)
+    edges1 = [[0, 1], [1, 2], [2, 0], [1, 0], [2, 1], [0, 2]]
+    edge_index1 = torch.tensor(edges1).t().contiguous()
+    graphs.append(Data(edge_index=edge_index1, x=torch.ones(3, 1)))
+    graphs.append(Data(edge_index=edge_index1, x=torch.ones(3, 1)))  # Duplicate
+
+    # Graph 2: Path (should cluster together)
+    edges2 = [[0, 1], [1, 2], [1, 0], [2, 1]]
+    edge_index2 = torch.tensor(edges2).t().contiguous()
+    graphs.append(Data(edge_index=edge_index2, x=torch.ones(3, 1)))
+    graphs.append(Data(edge_index=edge_index2, x=torch.ones(3, 1)))  # Duplicate
+
+    print(f"Created {len(graphs)} simple graphs")
+
+    # Train with minimal settings
+    model = Graph2Vec(
+        embedding_dim=16,
+        max_degree=1,  # Very small degree
+        epochs=20,
+        batch_size=2,
+        min_count=1,  # Accept all subgraphs
+        negative_samples=2
+    )
+
+    try:
+        model.fit(graphs, len(graphs))
+        embeddings = model.get_embeddings()
+        print(f"Embeddings shape: {embeddings.shape}")
+
+        # Check if similar graphs have similar embeddings
+        sim_01 = F.cosine_similarity(embeddings[0:1], embeddings[1:2]).item()
+        sim_23 = F.cosine_similarity(embeddings[2:3], embeddings[3:4]).item()
+        sim_02 = F.cosine_similarity(embeddings[0:1], embeddings[2:3]).item()
+
+        print(f"Similarity between identical triangles: {sim_01:.3f}")
+        print(f"Similarity between identical paths: {sim_23:.3f}")
+        print(f"Similarity between triangle and path: {sim_02:.3f}")
+
+        if sim_01 > 0.8 and sim_23 > 0.8 and sim_02 < 0.5:
+            print("SUCCESS: Basic functionality works!")
+        else:
+            print("ISSUE: Embeddings don't show expected similarity patterns")
+
+    except Exception as e:
+        print(f"ERROR during training: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+
+
 if __name__ == "__main__":
-    create_large_dataset_example()
+
+    #create_large_dataset_example()
+    # Test on benchmark datasets
+    #test_classification('MUTAG')  # Should get ~80-85%
+    #test_classification('PROTEINS')  # Should get ~70-75%
+    #test_clustering()
+    #debug_subgraph_extraction()
+    #debug_wl_differences()
+    #debug_training_step()
+    #debug_loss_computation()
+    minimal_test()
