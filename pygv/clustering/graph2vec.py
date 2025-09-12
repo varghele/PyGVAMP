@@ -12,6 +12,74 @@ import os
 import hashlib
 from gensim.models.doc2vec import Doc2Vec, TaggedDocument
 from gensim.models import KeyedVectors
+import time
+from gensim.models.callbacks import CallbackAny2Vec
+
+
+class TrainingCallback(CallbackAny2Vec):
+    """Callback to track Doc2Vec training progress with loss monitoring."""
+
+    def __init__(self, compute_loss=True):
+        self.epoch = 0
+        self.start_time = time.time()
+        self.epoch_start_time = time.time()
+        self.compute_loss = compute_loss
+        self.losses = []  # Store loss history
+
+    def on_epoch_begin(self, model):
+        self.epoch_start_time = time.time()
+        print(f"Epoch {self.epoch + 1} started...")
+
+    def on_epoch_end(self, model):
+        epoch_time = time.time() - self.epoch_start_time
+        total_time = time.time() - self.start_time
+
+        # Get current learning rate
+        current_lr = model.alpha
+
+        # Get current loss if available
+        loss_str = ""
+        if self.compute_loss and hasattr(model, 'get_latest_training_loss'):
+            try:
+                # Get the latest training loss
+                current_loss = model.get_latest_training_loss()
+                self.losses.append(current_loss)
+
+                # Calculate loss change if we have previous losses
+                if len(self.losses) > 1:
+                    loss_change = current_loss - self.losses[-2]
+                    loss_str = f", Loss: {current_loss:.6f} (Δ: {loss_change:+.6f})"
+                else:
+                    loss_str = f", Loss: {current_loss:.6f}"
+
+            except Exception as e:
+                # Fallback: try to access training loss directly
+                if hasattr(model, 'running_training_loss'):
+                    current_loss = model.running_training_loss
+                    self.losses.append(current_loss)
+                    loss_str = f", Loss: {current_loss:.6f}"
+                else:
+                    loss_str = ", Loss: N/A"
+
+        print(f"Epoch {self.epoch + 1} completed in {epoch_time:.2f}s "
+              f"(Total: {total_time:.2f}s, LR: {current_lr:.6f}{loss_str})")
+
+        self.epoch += 1
+
+    def on_train_begin(self, model):
+        print(f"Starting Doc2Vec training with {model.epochs} epochs...")
+        print(f"Vocabulary size: {len(model.wv)}")
+        print(f"Vector size: {model.vector_size}")
+        print(f"Loss computation: {'Enabled' if self.compute_loss else 'Disabled'}")
+
+    def on_train_end(self, model):
+        total_time = time.time() - self.start_time
+        print(f"Doc2Vec training completed in {total_time:.2f}s")
+
+        # Print loss summary if available
+        if self.losses:
+            print(f"Loss progression: {self.losses[0]:.6f} → {self.losses[-1]:.6f}")
+            print(f"Total loss reduction: {self.losses[0] - self.losses[-1]:.6f}")
 
 
 class Graph2Vec:
@@ -104,6 +172,9 @@ class Graph2Vec:
         print("Converting graphs to Doc2Vec documents...")
         self.graph_documents = self._create_doc2vec_documents(num_graphs)
 
+        # Create training callback
+        training_callback = TrainingCallback()
+
         # Train Doc2Vec model
         print("Training Doc2Vec model...")
         self.doc2vec_model = Doc2Vec(
@@ -118,12 +189,14 @@ class Graph2Vec:
             epochs=self.epochs,
             alpha=self.learning_rate,
             min_alpha=self.min_learning_rate,
+            callbacks=[training_callback],
+            compute_loss=True
         )
 
         print(f"Training completed. Vocabulary size: {len(self.doc2vec_model.wv)}")
         return self
 
-    def _create_doc2vec_documents(self, num_graphs: int) -> List[TaggedDocument]:
+    def _create_doc2vec_documents_o(self, num_graphs: int) -> List[TaggedDocument]:
         """
         Convert cached subgraphs to Doc2Vec TaggedDocument format.
 
@@ -135,7 +208,7 @@ class Graph2Vec:
         """
         documents = []
 
-        for graph_id in range(num_graphs):
+        for graph_id in tqdm(range(num_graphs), desc="Creating Doc2Vec documents"):
             if graph_id in self.cached_subgraphs:
                 # Get subgraph strings for this graph
                 subgraph_indices = self.cached_subgraphs[graph_id]
@@ -157,6 +230,35 @@ class Graph2Vec:
                     documents.append(doc)
 
         print(f"Created {len(documents)} documents for Doc2Vec training")
+        return documents
+
+    def _create_doc2vec_documents(self, num_graphs: int) -> List[TaggedDocument]:
+        """
+        Convert cached subgraphs to Doc2Vec TaggedDocument format.
+        """
+        documents = []
+
+        # Pre-compute the reverse mapping once
+        idx_to_subgraph = {idx: sg for sg, idx in self.subgraph_vocab.items()}
+
+        for graph_id in tqdm(range(num_graphs), desc="Creating Doc2Vec documents"):
+            if graph_id in self.cached_subgraphs:
+                # Get subgraph strings for this graph
+                subgraph_indices = self.cached_subgraphs[graph_id]
+
+                # Convert indices to subgraph strings (much faster now)
+                subgraph_strings = [idx_to_subgraph[idx] for idx in subgraph_indices
+                                    if idx in idx_to_subgraph]
+
+                # Create TaggedDocument (words=subgraphs, tags=graph_id)
+                if subgraph_strings:  # Only add if graph has subgraphs
+                    doc = TaggedDocument(
+                        words=subgraph_strings,
+                        tags=["graph_{}".format(graph_id)]
+                    )
+                    documents.append(doc)
+
+        print("Created {} documents for Doc2Vec training".format(len(documents)))
         return documents
 
     def get_embeddings(self) -> torch.Tensor:
@@ -266,6 +368,9 @@ class Graph2Vec:
             else:
                 current_features = {node: str(len(adj_list[node]))
                                     for node in range(num_nodes)}
+            # TODO: Maybe re-enable original implementation, but this is a test for graph2vec: adjacent nodes
+            #current_features = {node: 1#str(len(adj_list[node]))
+            #                    for node in range(num_nodes)}
 
             # Extract subgraphs using WL algorithm
             graph_subgraphs = self._get_wl_subgraphs(
