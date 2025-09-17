@@ -34,12 +34,12 @@ def test_trajectory_graph2vec(trajectory_path, topology_file, max_trajectories=1
     dataset = VAMPNetDataset(
         trajectory_files=trajectory_files,
         topology_file=topology_file,
-        lag_time=1,  # 1 ns lag time
+        lag_time=10,  # 1 ns lag time
         n_neighbors=10,
         node_embedding_dim=16,
         gaussian_expansion_dim=8,
         selection="name CA",
-        stride=1,  # Take every 10th frame for speed
+        stride=10,  # Take every 10th frame for speed
         chunk_size=100,
         cache_dir="./cache",
         use_cache=False
@@ -54,12 +54,12 @@ def test_trajectory_graph2vec(trajectory_path, topology_file, max_trajectories=1
     # Train Graph2Vec
     print("Training Graph2Vec...")
     model = Graph2Vec(
-        embedding_dim=4096,
+        embedding_dim=4098,
         max_degree=2,
-        epochs=50,
+        epochs=100,
         batch_size=1024,
         min_count=5,
-        negative_samples=10,
+        negative_samples=50,
         learning_rate=0.025,
     )
 
