@@ -7,6 +7,7 @@ import mdtraj as md
 from typing import List, Tuple, Optional, Union
 import pickle
 from tqdm import tqdm
+from pygv.utils.features import get_amino_acid_features
 
 
 class VAMPNetDataset(Dataset):
@@ -66,6 +67,9 @@ class VAMPNetDataset(Dataset):
         # Set random seed for reproducibility
         np.random.seed(seed)
         torch.manual_seed(seed)
+
+        # Load topology
+        self.topology = md.load_topology(self.topology_file)
 
         # Load from cache or process trajectories
         cache_loaded = False
@@ -263,7 +267,7 @@ class VAMPNetDataset(Dataset):
         # Store as plain tensor (not a parameter)
         self.node_embeddings = embeddings
 
-    def _create_graph_from_frame(self, frame_idx):
+    def _create_graph_from_frame(self, frame_idx, use_amino_acid_encoding=False):
         """
         Create a graph representation for a single frame.
 
@@ -362,14 +366,23 @@ class VAMPNetDataset(Dataset):
         #    # Create node embeddings using position encoding
         #    self._initialize_node_embeddings()
         #    print("Created node embeddings parameter for the first time")
-
-        # Generate node features base on positional encoding
         #node_attr = self.node_embeddings.clone()
-        node_attr = torch.zeros(self.n_atoms, self.n_atoms)  # One-hot encoding (n_atoms × n_atoms)
-        for i in range(self.n_atoms):
-            node_attr[i, i] = 1.0
-        #node_attr = torch.randn(self.n_atoms, self.node_embedding_dim)
-        #node_attr = torch.nn.Embedding(num_embeddings=self.n_atoms, embedding_dim=self.node_embedding_dim)
+
+        if use_amino_acid_encoding:
+            # Create property-based node features
+            node_attr = torch.zeros(self.n_atoms, 4)  # 4 properties
+            # Get residue names from topology
+            for i, atom_idx in enumerate(self.atom_indices):
+                residue = self.topology.atom(atom_idx).residue
+                residue_name = residue.name
+                properties = get_amino_acid_features(residue_name)
+                node_attr[i] = torch.tensor(properties, dtype=torch.float32)
+        else:
+            # Generate node features base on positional encoding
+            node_attr = torch.zeros(self.n_atoms, self.n_atoms)  # One-hot encoding (n_atoms × n_atoms)
+            for i in range(self.n_atoms):
+                node_attr[i, i] = 1.0
+
 
         # Create PyG Data object
         graph = Data(
@@ -689,4 +702,56 @@ class VAMPNetDataset(Dataset):
 
         # Create and return the frames dataset
         return VAMPNetFramesDataset(self, return_pairs=return_pairs)
+
+    def get_AA_frames(self, return_pairs=False):
+        """
+        Create a dataset that returns individual frames with amino acid encoding instead of time-lagged pairs.
+
+        This method behaves like get_frames_dataset but uses amino acid-based node features
+        by setting use_amino_acid_encoding=True in _create_graph_from_frame.
+
+        Parameters
+        ----------
+        return_pairs : bool, default=False
+            If True, return time-lagged pairs as in the original dataset
+            If False, return individual frames
+
+        Returns
+        -------
+        VAMPNetAAFramesDataset
+            A new dataset instance that returns individual frames with amino acid features
+        """
+
+        # Create a new dataset class for frames with amino acid encoding
+        class VAMPNetAAFramesDataset(torch.utils.data.Dataset):
+            def __init__(self, parent_dataset, return_pairs=False):
+                self.parent = parent_dataset
+                self.return_pairs = return_pairs
+
+                # If not returning pairs, we can access all frames
+                if not return_pairs:
+                    self.n_samples = parent_dataset.n_frames
+                else:
+                    # Otherwise use the time-lagged pairs like the parent
+                    self.n_samples = len(parent_dataset.t0_indices)
+
+            def __len__(self):
+                return self.n_samples
+
+            def __getitem__(self, idx):
+                if self.return_pairs:
+                    # Return time-lagged pairs with amino acid encoding
+                    t0_idx = self.parent.t0_indices[idx]
+                    t1_idx = self.parent.t1_indices[idx]
+                    graph_t0 = self.parent._create_graph_from_frame(t0_idx, use_amino_acid_encoding=True)
+                    graph_t1 = self.parent._create_graph_from_frame(t1_idx, use_amino_acid_encoding=True)
+                    return graph_t0, graph_t1
+                else:
+                    # Return a single frame as a graph with amino acid encoding
+                    return self.parent._create_graph_from_frame(idx, use_amino_acid_encoding=True)
+
+        # Create and return the AA frames dataset
+        return VAMPNetAAFramesDataset(self, return_pairs=return_pairs)
+
+
 

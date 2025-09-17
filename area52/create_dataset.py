@@ -37,7 +37,7 @@ def find_xtc_files(base_path):
 
 
 # Specify the base directory path
-base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/trajectories/red/"
+base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/"
 #base_path = "/home/iwe81/PycharmProjects/DDVAMP/datasets/ATR/"
 # First, let's find all the .xtc files
 xtc_files = find_xtc_files(base_path)

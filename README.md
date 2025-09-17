@@ -23,6 +23,7 @@ pip install pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv -
 pip install mdtraj
 #On windows, or on pip failure
 conda install -c conda-forge mdtraj
+pip install gensim
 ```
 Path needs to be exported!
 ```bash
