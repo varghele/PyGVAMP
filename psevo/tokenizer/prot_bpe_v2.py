@@ -9,6 +9,7 @@ import pickle
 import os
 from pygv.dataset.vampnet_dataset_with_AA import VAMPNetDataset
 
+
 class ProteinFrameInPiece:
     """Manages protein frame piece representation for BPE-like tokenization."""
 
@@ -185,13 +186,16 @@ def protein_bpe(frames_dataset, vocab_len, vocab_path, topology, cpus=1):
         # Get graph data
         graph_data = frames_dataset[i]
 
-        # Extract residue features from topology
+        # Extract residue features from topology using atom indices from the original dataset
         residue_features = {}
         for node_idx in range(graph_data.num_nodes):
-            # Get residue name from topology using atom indices
-            # You'll need to adapt this based on your VAMPNetDataset structure
-            atom_idx = frames_dataset.parent.atom_indices[node_idx]  # Assuming this exists
-            residue = topology.atom(atom_idx).residue
+            # Get the actual atom index from the original VAMPNet dataset
+            # Access atom_indices directly from the original dataset that created frames_dataset
+            atom_idx = frames_dataset.atom_indices[node_idx]  # Use the original dataset variable
+
+            # Get residue information from topology
+            atom = frames_dataset.topology.atom(atom_idx)  # Use dataset.topology
+            residue = atom.residue
             residue_features[node_idx] = residue.name
 
         frame_obj = ProteinFrameInPiece(graph_data, residue_features)
@@ -267,6 +271,7 @@ def protein_bpe(frames_dataset, vocab_len, vocab_path, topology, cpus=1):
 
 
 # Usage example for your VAMPNet dataset:
+# TODO: Remove
 def create_protein_tokenizer_from_vampnet(vampnet_dataset, vocab_size=500, vocab_path="protein_vocab.txt"):
     """
     Create a protein tokenizer from VAMPNet dataset.
@@ -291,22 +296,3 @@ def create_protein_tokenizer_from_vampnet(vampnet_dataset, vocab_size=500, vocab
 
     return vocab, details
 
-
-# Example usage:
-if __name__ == "__main__":
-    # Assuming you have your VAMPNet dataset ready
-    vampnet_dataset = VAMPNetDataset()
-
-    # Create vocabulary
-    # vocab, details = create_protein_tokenizer_from_vampnet(
-    #     vampnet_dataset,
-    #     vocab_size=500,
-    #     vocab_path="protein_vocab.txt"
-    # )
-
-    # The vocabulary will contain protein fragments like:
-    # - Individual residues: "ALA", "GLY", "PRO"
-    # - Small motifs: "ALA:1_GLY:1_edges:1_size:2"
-    # - Larger structural elements: "ALA:2_GLY:1_PRO:1_edges:3_size:4"
-
-    pass
