@@ -191,10 +191,10 @@ def protein_bpe(frames_dataset, vocab_len, vocab_path, topology, cpus=1):
         for node_idx in range(graph_data.num_nodes):
             # Get the actual atom index from the original VAMPNet dataset
             # Access atom_indices directly from the original dataset that created frames_dataset
-            atom_idx = frames_dataset.atom_indices[node_idx]  # Use the original dataset variable
+            atom_idx = frames_dataset.parent.atom_indices[node_idx]  # Use the original dataset variable
 
-            # Get residue information from topology
-            atom = frames_dataset.topology.atom(atom_idx)  # Use dataset.topology
+            # Get residue information from topology of the dataset
+            atom = frames_dataset.parent.topology.atom(atom_idx)  # Use dataset.topology
             residue = atom.residue
             residue_features[node_idx] = residue.name
 

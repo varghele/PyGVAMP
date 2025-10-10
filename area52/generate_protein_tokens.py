@@ -121,9 +121,10 @@ def test_protein_tokenizer():
     # Run protein BPE using the psevo implementation
     print("Running protein BPE...")
     vocab, details = protein_bpe(
-        frame_objects,  # Pass the frame objects directly # TODO: this ain't great
-        vocab_size,
-        vocab_path,
+        #frame_objects,  # Pass the frame objects directly # TODO: this ain't great
+        frames_dataset = frames_dataset,
+        vocab_len = vocab_size,
+        vocab_path = vocab_path,
         topology=dataset.topology,
         cpus=1
     )
