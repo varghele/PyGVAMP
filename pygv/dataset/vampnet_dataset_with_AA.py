@@ -7,7 +7,7 @@ import mdtraj as md
 from typing import List, Tuple, Optional, Union
 import pickle
 from tqdm import tqdm
-from pygv.utils.features import get_amino_acid_features
+from pygv.utils.features import get_amino_acid_features, get_amino_acid_labels
 
 
 class VAMPNetDataset(Dataset):
@@ -368,14 +368,15 @@ class VAMPNetDataset(Dataset):
         #    print("Created node embeddings parameter for the first time")
         #node_attr = self.node_embeddings.clone()
 
-        if use_amino_acid_encoding:
+        if use_amino_acid_encoding:# TODO: CLEAN UP!!
             # Create property-based node features
-            node_attr = torch.zeros(self.n_atoms, 4)  # 4 properties
+            node_attr = torch.zeros(self.n_atoms, 1)  # 4 properties
             # Get residue names from topology
             for i, atom_idx in enumerate(self.atom_indices):
                 residue = self.topology.atom(atom_idx).residue
                 residue_name = residue.name
-                properties = get_amino_acid_features(residue_name)
+                #properties = get_amino_acid_features(residue_name) # TODO: clean up and check
+                properties = get_amino_acid_labels(residue_name)
                 node_attr[i] = torch.tensor(properties, dtype=torch.float32)
         else:
             # Generate node features base on positional encoding

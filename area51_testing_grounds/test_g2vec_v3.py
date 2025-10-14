@@ -51,7 +51,7 @@ def test_trajectory_graph2vec_minibatch(trajectory_path, topology_file, max_traj
     # Train Graph2Vec
     print("Training Graph2Vec...")
     model = Graph2Vec(
-        embedding_dim=4098,
+        embedding_dim=512,
         max_degree=3,
         epochs=10,
         batch_size=1024,
@@ -238,7 +238,7 @@ def test_birch_hdbscan_pipeline(trajectory_path, topology_file, max_trajectories
     # Train Graph2Vec
     print("Training Graph2Vec...")
     model = Graph2Vec(
-        embedding_dim=4098,
+        embedding_dim=512,
         max_degree=3,
         epochs=10,
         batch_size=1024,

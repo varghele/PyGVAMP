@@ -82,6 +82,73 @@ class TrainingCallback(CallbackAny2Vec):
             print(f"Total loss reduction: {self.losses[0] - self.losses[-1]:.6f}")
 
 
+class EnhancedTrainingCallback(CallbackAny2Vec):
+    """Enhanced callback with better loss tracking and model evaluation."""
+
+    def __init__(self, compute_loss=True, eval_every=5):
+        self.epoch = 0
+        self.start_time = time.time()
+        self.epoch_start_time = time.time()
+        self.compute_loss = compute_loss
+        self.losses = []
+        self.eval_every = eval_every
+
+    def on_epoch_end(self, model):
+        epoch_time = time.time() - self.epoch_start_time
+        total_time = time.time() - self.start_time
+        current_lr = model.alpha
+
+        # Try multiple ways to get loss
+        loss_str = ""
+        current_loss = None
+
+        # Method 1: get_latest_training_loss
+        if hasattr(model, 'get_latest_training_loss'):
+            try:
+                current_loss = model.get_latest_training_loss()
+            except:
+                pass
+
+        # Method 2: running_training_loss
+        if current_loss==0.0 and hasattr(model, 'running_training_loss'):
+            current_loss = model.running_training_loss
+
+        # Method 3: Compute perplexity as proxy for loss
+        if current_loss==0.0 and self.epoch % self.eval_every == 0:
+            try:
+                # Sample some documents and compute average log probability
+                sample_docs = model.docvecs.doctags[:min(100, len(model.docvecs.doctags))]
+                log_probs = []
+                for doc_tag in sample_docs:
+                    try:
+                        # Get document vector
+                        doc_vec = model.docvecs[doc_tag]
+                        # This is a rough approximation
+                        log_prob = np.mean([model.wv.similarity(word, doc_vec)
+                                            for word in list(model.wv.index_to_key)[:10]])
+                        log_probs.append(log_prob)
+                    except:
+                        continue
+
+                if log_probs:
+                    current_loss = -np.mean(log_probs)  # Negative log likelihood approximation
+            except:
+                pass
+
+        if current_loss is not None:
+            self.losses.append(current_loss)
+            if len(self.losses) > 1:
+                loss_change = current_loss - self.losses[-2]
+                loss_str = f", Loss: {current_loss:.6f} (Δ: {loss_change:+.6f})"
+            else:
+                loss_str = f", Loss: {current_loss:.6f}"
+
+        print(f"Epoch {self.epoch + 1} completed in {epoch_time:.2f}s "
+              f"(Total: {total_time:.2f}s, LR: {current_lr:.6f}{loss_str})")
+
+        self.epoch += 1
+
+
 class Graph2Vec:
     """
     Graph2Vec implementation using Gensim's Doc2Vec with PyTorch Geometric graph processing.
@@ -173,7 +240,8 @@ class Graph2Vec:
         self.graph_documents = self._create_doc2vec_documents(num_graphs)
 
         # Create training callback
-        training_callback = TrainingCallback()
+        #training_callback = TrainingCallback()
+        training_callback = TrainingCallback() # TODO: Decide on one, delete the other
 
         # Train Doc2Vec model
         print("Training Doc2Vec model...")
@@ -193,9 +261,13 @@ class Graph2Vec:
             compute_loss=True
         )
 
+        # Evaluate model quality after training
+        self.evaluate_model_quality()
+
         print(f"Training completed. Vocabulary size: {len(self.doc2vec_model.wv)}")
         return self
 
+    # TODO: Check and remove
     def _create_doc2vec_documents_o(self, num_graphs: int) -> List[TaggedDocument]:
         """
         Convert cached subgraphs to Doc2Vec TaggedDocument format.
@@ -525,3 +597,210 @@ class Graph2Vec:
         self.min_count = config['min_count']
         self.window = config['window']
         self.dm = config['dm']
+
+    # TODO: Redo evaluation
+    def evaluate_model_quality(self, test_graphs=None, num_test_graphs=100):
+        """
+        Comprehensive evaluation of the trained Graph2Vec model.
+        """
+        if self.doc2vec_model is None:
+            raise ValueError("Model has not been fitted yet")
+
+        print("=" * 60)
+        print("GRAPH2VEC MODEL QUALITY ASSESSMENT")
+        print("=" * 60)
+
+        # 1. Vocabulary Statistics
+        self._evaluate_vocabulary_quality()
+
+        # 2. Embedding Quality
+        self._evaluate_embedding_quality()
+
+        # 3. Similarity Analysis
+        self._evaluate_similarity_patterns()
+
+        # 4. Convergence Analysis
+        if hasattr(self, 'training_callback') and hasattr(self.training_callback,
+                                                          'losses') and self.training_callback.losses:
+            self._evaluate_convergence()
+
+        # 5. Reconstruction Quality (if test graphs provided)
+        if test_graphs is not None:
+            self._evaluate_reconstruction_quality(test_graphs, num_test_graphs)
+
+    def _evaluate_vocabulary_quality(self):
+        """Evaluate the quality of the subgraph vocabulary."""
+        print("\n1. VOCABULARY QUALITY:")
+        print("-" * 30)
+
+        vocab_size = len(self.subgraph_vocab)
+        doc2vec_vocab_size = len(self.doc2vec_model.wv)
+
+        print(f"Subgraph vocabulary size: {vocab_size}")
+        print(f"Doc2Vec vocabulary size: {doc2vec_vocab_size}")
+        print(f"Vocabulary utilization: {doc2vec_vocab_size / vocab_size * 100:.1f}%")
+
+        # Analyze subgraph frequency distribution
+        subgraph_counts = Counter()
+        for doc in self.graph_documents:
+            for word in doc.words:
+                subgraph_counts[word] += 1
+
+        if subgraph_counts:
+            frequencies = list(subgraph_counts.values())
+            print(f"Most frequent subgraph appears {max(frequencies)} times")
+            print(f"Least frequent subgraph appears {min(frequencies)} times")
+            print(f"Average subgraph frequency: {np.mean(frequencies):.2f}")
+            print(f"Subgraph frequency std: {np.std(frequencies):.2f}")
+
+    def _evaluate_embedding_quality(self):
+        """Evaluate the quality of learned embeddings."""
+        print("\n2. EMBEDDING QUALITY:")
+        print("-" * 30)
+
+        # Get all graph embeddings
+        embeddings = self.get_embeddings().numpy()
+
+        # Basic statistics
+        print(f"Embedding dimension: {embeddings.shape[1]}")
+        print(f"Number of graph embeddings: {embeddings.shape[0]}")
+        print(f"Embedding mean: {np.mean(embeddings):.6f}")
+        print(f"Embedding std: {np.std(embeddings):.6f}")
+        print(f"Embedding range: [{np.min(embeddings):.6f}, {np.max(embeddings):.6f}]")
+
+        # Check for degenerate embeddings (all zeros or all same)
+        zero_embeddings = np.sum(np.all(embeddings == 0, axis=1))
+        if zero_embeddings > 0:
+            print(f"WARNING: {zero_embeddings} graphs have zero embeddings!")
+
+        # Check embedding diversity
+        pairwise_similarities = []
+        sample_size = min(100, len(embeddings))
+        indices = np.random.choice(len(embeddings), sample_size, replace=False)
+
+        for i in range(len(indices)):
+            for j in range(i + 1, len(indices)):
+                sim = np.dot(embeddings[indices[i]], embeddings[indices[j]]) / (
+                        np.linalg.norm(embeddings[indices[i]]) * np.linalg.norm(embeddings[indices[j]]) + 1e-8
+                )
+                pairwise_similarities.append(sim)
+
+        if pairwise_similarities:
+            print(f"Average pairwise cosine similarity: {np.mean(pairwise_similarities):.6f}")
+            print(f"Similarity std: {np.std(pairwise_similarities):.6f}")
+
+            if np.mean(pairwise_similarities) > 0.9:
+                print("WARNING: Very high average similarity - embeddings may be too similar!")
+            elif np.mean(pairwise_similarities) < 0.1:
+                print("GOOD: Low average similarity indicates diverse embeddings")
+
+    def _evaluate_similarity_patterns(self):
+        """Evaluate similarity patterns in the embedding space."""
+        print("\n3. SIMILARITY PATTERNS:")
+        print("-" * 30)
+
+        # Test similarity queries
+        num_graphs = len(self.cached_subgraphs)
+        if num_graphs < 10:
+            print("Not enough graphs for similarity analysis")
+            return
+
+        # Sample some graphs and find their most similar neighbors
+        sample_graphs = np.random.choice(num_graphs, min(5, num_graphs), replace=False)
+
+        for graph_id in sample_graphs:
+            try:
+                similar_graphs = self.most_similar_graphs(graph_id, topn=3)
+                print(f"Graph {graph_id} most similar to: {similar_graphs}")
+            except Exception as e:
+                print(f"Could not compute similarities for graph {graph_id}: {str(e)}")
+
+    def _evaluate_convergence(self):
+        """Evaluate training convergence."""
+        print("\n4. CONVERGENCE ANALYSIS:")
+        print("-" * 30)
+
+        losses = self.training_callback.losses
+        if len(losses) < 2:
+            print("Insufficient loss data for convergence analysis")
+            return
+
+        # Check if loss is decreasing
+        loss_trend = np.polyfit(range(len(losses)), losses, 1)[0]
+        print(f"Loss trend (slope): {loss_trend:.6f}")
+
+        if loss_trend < 0:
+            print("GOOD: Loss is decreasing over time")
+        else:
+            print("WARNING: Loss is not decreasing - model may not be converging")
+
+        # Check for convergence in last few epochs
+        if len(losses) >= 5:
+            recent_losses = losses[-5:]
+            recent_std = np.std(recent_losses)
+            print(f"Recent loss stability (std of last 5): {recent_std:.6f}")
+
+            if recent_std < 0.01:
+                print("GOOD: Loss has stabilized")
+            else:
+                print("INFO: Loss still changing - may need more epochs")
+
+    def _evaluate_reconstruction_quality(self, test_graphs, num_test_graphs):
+        """Evaluate how well the model can reconstruct/represent test graphs."""
+        print("\n5. RECONSTRUCTION QUALITY:")
+        print("-" * 30)
+
+        # Transform test graphs and check embedding quality
+        try:
+            test_embeddings = self.transform(test_graphs[:num_test_graphs])
+
+            # Check for zero embeddings (indicates poor vocabulary coverage)
+            zero_test_embeddings = torch.sum(torch.all(test_embeddings == 0, dim=1)).item()
+            coverage = (num_test_graphs - zero_test_embeddings) / num_test_graphs * 100
+
+            print(f"Test graph coverage: {coverage:.1f}%")
+            print(f"Graphs with zero embeddings: {zero_test_embeddings}/{num_test_graphs}")
+
+            if coverage > 80:
+                print("GOOD: High vocabulary coverage on test graphs")
+            elif coverage > 50:
+                print("MODERATE: Reasonable vocabulary coverage")
+            else:
+                print("WARNING: Low vocabulary coverage - may need larger vocabulary")
+
+        except Exception as e:
+            print(f"Could not evaluate reconstruction quality: {str(e)}")
+
+    def similarity(self, graph_id1: int, graph_id2: int) -> float:
+        """Calculate similarity between two graphs."""
+        if self.doc2vec_model is None:
+            raise ValueError("Model has not been fitted yet")
+
+        tag1 = f"graph_{graph_id1}"
+        tag2 = f"graph_{graph_id2}"
+
+        try:
+            vec1 = self.doc2vec_model.dv[tag1]
+            vec2 = self.doc2vec_model.dv[tag2]
+
+            # Cosine similarity
+            similarity = np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
+            return float(similarity)
+        except KeyError as e:
+            print(f"Graph not found: {e}")
+            return 0.0
+
+    def most_similar_graphs(self, graph_id: int, topn: int = 5) -> List[Tuple[str, float]]:
+        """Find most similar graphs to the given graph."""
+        if self.doc2vec_model is None:
+            raise ValueError("Model has not been fitted yet")
+
+        tag = f"graph_{graph_id}"
+
+        try:
+            # Get similar document vectors
+            similar = self.doc2vec_model.dv.most_similar(tag, topn=topn)
+            return similar
+        except KeyError:
+            print(f"Graph {graph_id} not found in model")
+            return []

@@ -33,12 +33,12 @@ def test_trajectory_graph2vec_birch(trajectory_path, topology_file, max_trajecto
     dataset = VAMPNetDataset(
         trajectory_files=trajectory_files,
         topology_file=topology_file,
-        lag_time=1,  # 1 ns lag time
+        lag_time=10,  # 1 ns lag time
         n_neighbors=20,
         node_embedding_dim=16,
         gaussian_expansion_dim=8,
         selection="name CA",
-        stride=1,  # Take every 10th frame for speed
+        stride=10,  # Take every 10th frame for speed
         chunk_size=100,
         cache_dir="./cache",
         use_cache=False
@@ -53,8 +53,8 @@ def test_trajectory_graph2vec_birch(trajectory_path, topology_file, max_trajecto
     # Train Graph2Vec
     print("Training Graph2Vec...")
     model = Graph2Vec(
-        embedding_dim=4098,
-        max_degree=4,
+        embedding_dim=512,
+        max_degree=3,
         epochs=10,
         batch_size=1024,
         min_count=5,

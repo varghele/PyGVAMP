@@ -35,14 +35,14 @@ def test_trajectory_graph2vec(trajectory_path, topology_file, max_trajectories=1
         trajectory_files=trajectory_files,
         topology_file=topology_file,
         lag_time=10,  # 1 ns lag time
-        n_neighbors=10,
+        n_neighbors=20,
         node_embedding_dim=16,
         gaussian_expansion_dim=8,
         selection="name CA",
         stride=10,  # Take every 10th frame for speed
         chunk_size=100,
         cache_dir="./cache",
-        use_cache=False
+        use_cache=True
     )
 
     # Get individual frames dataset (no time-lagged pairs)
@@ -54,11 +54,11 @@ def test_trajectory_graph2vec(trajectory_path, topology_file, max_trajectories=1
     # Train Graph2Vec
     print("Training Graph2Vec...")
     model = Graph2Vec(
-        embedding_dim=4098,
-        max_degree=2,
-        epochs=100,
+        embedding_dim=512,
+        max_degree=3,
+        epochs=50,
         batch_size=1024,
-        min_count=5,
+        min_count=10,
         negative_samples=50,
         learning_rate=0.025,
     )
@@ -76,7 +76,7 @@ def test_trajectory_graph2vec(trajectory_path, topology_file, max_trajectories=1
     # Use verbose output and timing
     hdbscan = HDBSCAN(
         min_cluster_size=10,  # Minimum points to form a cluster
-        min_samples=5,  # Conservative noise threshold
+        min_samples=50,  # Conservative noise threshold
         metric='cosine',  # Good for high-dimensional embeddings
         cluster_selection_epsilon=0.01,  # Helps merge close clusters
         cluster_selection_method='eom',  # Excess of Mass (default, usually best)
@@ -164,10 +164,10 @@ def test_trajectory_graph2vec(trajectory_path, topology_file, max_trajectories=1
 
 if __name__ == "__main__":
     # Update these paths for your data
-    #trajectory_path = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/r1')
-    #topology_file = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/topol.pdb')
-    trajectory_path = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/r1')
-    topology_file = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb')
+    trajectory_path = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/r1')
+    topology_file = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ab42/trajectories/red/topol.pdb')
+    #trajectory_path = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/r1')
+    #topology_file = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/traj_revgraphvamp_org/trajectories/red/topol.pdb')
     #trajectory_path = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/r0/')
     #topology_file = os.path.expanduser('~/PycharmProjects/DDVAMP/datasets/ATR/prot.pdb')
 
