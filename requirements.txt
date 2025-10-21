@@ -1,14 +1,40 @@
+# docs/requirements.txt
+# Minimal requirements for building documentation
+
+# Core documentation
+sphinx>=4.0
+sphinx-rtd-theme
+sphinx-autodoc-typehints
+myst-parser
+numpydoc
+
+# Core scientific packages (needed for autodoc)
+numpy
+scipy
 matplotlib
-joblib
 pandas
-torch==2.5.1
-torchvision==0.20.1
-torchaudio==2.5.1
+scikit-learn
+tqdm
+
+# PyTorch (CPU version for docs)
+torch
+torchvision
+torchaudio
+
+# PyTorch Geometric (base package only)
 torch_geometric
-pyg_lib
-torch_scatter
-torch_sparse
-torch_cluster
-torch_spline_conv
+
+# MD analysis
 mdtraj
+
+# Other dependencies
+joblib
 gensim
+
+# Note: The following packages are excluded because they require
+# special installation or CUDA support not available on Read the Docs:
+# - pyg_lib (requires special wheel installation)
+# - torch_scatter (requires compilation)
+# - torch_sparse (requires compilation)
+# - torch_cluster (requires compilation)
+# - torch_spline_conv (requires compilation)
