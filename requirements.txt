@@ -1,0 +1,14 @@
+matplotlib
+joblib
+pandas
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+torch_geometric
+pyg_lib
+torch_scatter
+torch_sparse
+torch_cluster
+torch_spline_conv
+mdtraj
+gensim
