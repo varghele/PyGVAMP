@@ -24,6 +24,11 @@ pip install mdtraj
 #On windows, or on pip failure
 conda install -c conda-forge mdtraj
 pip install gensim
+
+conda install conda-forge::rdkit
+# For Dockstring
+conda install conda-forge::openbabel
+pip install dockstring
 ```
 Path needs to be exported!
 ```bash
