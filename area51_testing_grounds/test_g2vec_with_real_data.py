@@ -54,13 +54,13 @@ def test_trajectory_graph2vec(trajectory_path, topology_file, max_trajectories=1
     # Train Graph2Vec
     print("Training Graph2Vec...")
     model = Graph2Vec(
-        embedding_dim=512,
-        max_degree=3,
+        embedding_dim=64,
+        max_degree=2,
         epochs=50,
         batch_size=1024,
         min_count=10,
-        negative_samples=50,
-        learning_rate=0.025,
+        negative_samples=500,
+        learning_rate=0.01,
     )
 
     model.fit(frames_dataset, len(frames_dataset))
