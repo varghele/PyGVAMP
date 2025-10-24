@@ -59,7 +59,7 @@ def test_trajectory_graph2vec(trajectory_path, topology_file, max_trajectories=1
         epochs=50,
         batch_size=1024,
         min_count=10,
-        negative_samples=500,
+        negative_samples=50.0,
         learning_rate=0.01,
     )
 
