@@ -26,7 +26,7 @@ from pygv.pipe.preparation import run_preparation
 from pygv.pipe.training import run_training
 from pygv.pipe.analysis import run_analysis
 from pygv.config import get_config, list_presets
-
+from pygv.pipe.args import parse_pipeline_args
 
 class PipelineOrchestrator:
     """
@@ -362,98 +362,6 @@ class PipelineOrchestrator:
         summary_path = self.experiment_dir / 'pipeline_summary.json'
         with open(summary_path, 'w') as f:
             json.dump(summary, f, indent=2)
-
-
-class CacheManager:
-    """Manages dataset caching"""
-
-    def __init__(self, config):
-        self.config = config
-
-    def get_dataset_hash(self):
-        """Generate unique hash for dataset based on parameters"""
-        # Create hash from relevant parameters
-        hash_input = f"{self.config.traj_dir}_{self.config.selection}_{self.config.stride}_{self.config.n_neighbors}"
-        return hashlib.md5(hash_input.encode()).hexdigest()[:8]
-
-    def check_cached_dataset(self, dataset_hash):
-        """Check if cached dataset exists"""
-        if not self.config.cache:
-            return None
-
-        cache_dir = Path(self.config.cache_dir) if hasattr(self.config, 'cache_dir') else Path(
-            self.config.output_dir) / 'cache'
-        cache_file = cache_dir / f"dataset_{dataset_hash}.pkl"
-
-        return str(cache_file) if cache_file.exists() else None
-
-    def cache_dataset(self, dataset_path, dataset_hash):
-        """Cache dataset for future use"""
-        # Implementation depends on your dataset format
-        pass
-
-
-def parse_pipeline_args():
-    """Parse command-line arguments for pipeline"""
-    parser = argparse.ArgumentParser(
-        description='Run complete VAMPNet pipeline',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Use preset configuration
-  python run_pipeline.py --preset medium_schnet --traj_dir ./data --top topology.pdb --cache --hurry
-
-  # Specify lag times and states
-  python run_pipeline.py --preset small_meta --traj_dir ./data --top topology.pdb \\
-      --lag_times 10 20 50 --n_states 5 8 --cache
-
-  # Custom configuration
-  python run_pipeline.py --model schnet --traj_dir ./data --top topology.pdb \\
-      --lag_times 10 20 --n_states 5 --epochs 100 --cache
-        """
-    )
-
-    # Required arguments
-    parser.add_argument('--traj_dir', type=str, required=True,
-                        help='Directory containing trajectory files')
-    parser.add_argument('--top', type=str, required=True,
-                        help='Topology file (will be converted if not PDB)')
-
-    # Configuration options
-    parser.add_argument('--preset', type=str, default=None,
-                        help='Configuration preset (small_schnet, medium_meta, etc.)')
-    parser.add_argument('--model', type=str, default=None,
-                        help='Model type (schnet, meta, ml3)')
-
-    # Lag times and states
-    parser.add_argument('--lag_times', type=float, nargs='+', default=[10.0],
-                        help='Lag times in nanoseconds (can specify multiple)')
-    parser.add_argument('--n_states', type=int, nargs='+', default=[5],
-                        help='Number of states (can specify multiple)')
-
-    # Pipeline control
-    parser.add_argument('--cache', action='store_true',
-                        help='Cache datasets for faster re-training')
-    parser.add_argument('--hurry', action='store_true',
-                        help='Use larger stride (up to 10) to speed up processing')
-
-    # Output
-    parser.add_argument('--output_dir', type=str, default='./experiments',
-                        help='Output directory for experiments')
-    parser.add_argument('--protein_name', type=str, default='protein',
-                        help='Protein name for labeling')
-
-    # Resume options
-    parser.add_argument('--resume', type=str, default=None,
-                        help='Resume from experiment directory')
-    parser.add_argument('--skip_preparation', action='store_true',
-                        help='Skip preparation phase')
-    parser.add_argument('--skip_training', action='store_true',
-                        help='Skip training phase')
-    parser.add_argument('--only_analysis', action='store_true',
-                        help='Only run analysis phase')
-
-    return parser.parse_args()
 
 
 def main():
