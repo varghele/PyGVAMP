@@ -1,3 +1,7 @@
+import hashlib
+from pathlib import Path
+
+
 class CacheManager:
     """Manages dataset caching"""
 
@@ -24,4 +28,5 @@ class CacheManager:
     def cache_dataset(self, dataset_path, dataset_hash):
         """Cache dataset for future use"""
         # Implementation depends on your dataset format
+        # TODO: Implement this
         pass

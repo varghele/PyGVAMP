@@ -13,13 +13,13 @@ Supports configuration presets and selective re-running of pipeline stages.
 """
 
 import os
-import sys
 import argparse
 import json
-import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Optional
+
+# Import CacheManager
+from pygv.pipe.caching import CacheManager
 
 # Import pipeline components
 from pygv.pipe.preparation import run_preparation
@@ -209,24 +209,54 @@ class PipelineOrchestrator:
 
     def _calculate_optimal_stride(self):
         """
-        Calculate optimal stride for hurry mode
+        Calculate optimal stride for hurry mode using actual trajectory timestep
 
         Tries stride=10 first, then reduces until compatible with lag times
         """
-        max_stride = 10
+        max_stride = 50
         min_lag_time = min(self.config.lag_times) if isinstance(self.config.lag_times, list) else self.config.lag_times
 
-        # Assume timestep of 0.1 ns (typical for MD simulations)
-        # This should be inferred from trajectory, but we use a default here
-        assumed_timestep = 0.1  # ns
+        # Infer timestep from trajectory (in picoseconds)
+        try:
+            # Load first few frames to get timestep
+            import mdtraj as md
+            traj_iterator = md.iterload(self.config.traj_dir, top=self.config.top, chunk=2)
+            first_chunk = next(traj_iterator)
 
+            if len(first_chunk.time) < 2:
+                raise ValueError("Trajectory must have at least 2 frames to infer timestep")
+
+            # Calculate timestep from time differences (in picoseconds)
+            timestep_ps = first_chunk.time[1] - first_chunk.time[0]
+
+            # Convert to nanoseconds for comparison with lag_time
+            timestep_ns = timestep_ps / 1000.0
+
+            print(f"Inferred trajectory timestep: {timestep_ps:.3f} ps ({timestep_ns:.6f} ns)")
+
+        except Exception as e:
+            print(f"Warning: Could not infer timestep from trajectory: {str(e)}")
+            print("Falling back to assumed timestep of 0.1 ns")
+            timestep_ns = 0.1  # Fallback to assumed value
+
+        # Convert min_lag_time to same units (nanoseconds)
+        min_lag_time_ns = min_lag_time
+
+        # Try different stride values from max down to 1
         for stride in range(max_stride, 0, -1):
-            effective_timestep = assumed_timestep * stride
+            effective_timestep_ns = timestep_ns * stride
+
             # Check if lag time is divisible by effective timestep
-            if (min_lag_time % effective_timestep) < 1e-6:
+            # Use small epsilon for floating point comparison
+            remainder = min_lag_time_ns % effective_timestep_ns
+
+            if remainder < 1e-6 or abs(remainder - effective_timestep_ns) < 1e-6:
+                print(f"Selected stride: {stride} (effective timestep: {effective_timestep_ns:.6f} ns)")
                 return stride
 
-        return 1  # Fallback to stride=1
+        # If no compatible stride found, return 1 as fallback
+        print(f"Warning: No compatible stride found. Using stride=1")
+        return 1
 
     def _create_prep_args(self, dirs):
         """Create arguments for preparation phase"""

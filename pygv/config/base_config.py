@@ -1,11 +1,10 @@
 """
 Base configuration class for VAMPNet training
 """
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any
 import yaml
 import json
-from pathlib import Path
 
 
 @dataclass
@@ -43,7 +42,7 @@ class BaseConfig:
     encoder_type: str = "schnet"
     n_states: int = 5
 
-    # Optimizationü
+    # Optimization
     save_every: int = 10
     sample_validate_every: int = 5
 

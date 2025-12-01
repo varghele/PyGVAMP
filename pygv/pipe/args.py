@@ -1,3 +1,6 @@
+import argparse
+
+
 def parse_pipeline_args():
     """Parse command-line arguments for pipeline"""
     parser = argparse.ArgumentParser(
