@@ -1,5 +1,7 @@
 # PyGVAMP
 
+STORING THIS FOR LATER PSEVO RE-INTEGRATION!
+
 This is the refactoring/new development of [GraphVAMPNets](https://github.com/ghorbanimahdi73/GraphVampNet) from Ghorbani et.al. based on the PyTorch Geometric architecture. Our code achieves a speedup of up to 50x compared to the original, and is built (hopefully) on a more future-proof framework.\
 This code however is being actively worked on for our upcoming publications, so be aware, that changes, and pushes to `main` can happen at any moment. A stable release will come at one point, but not yet. 
 
