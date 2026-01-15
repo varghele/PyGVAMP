@@ -1,62 +1,58 @@
 # args/args_prep.py
 
 """
-Command line arguments for VAMPNet data preparation script
+Command line arguments for VAMPNet data preparation script.
+
+Imports common arguments from args_base, then adds preparation-specific arguments.
 """
 
 import argparse
+from .args_base import add_common_args
+
+
+def add_prep_args(parser: argparse.ArgumentParser):
+    """Add preparation-specific arguments to parser."""
+    prep_group = parser.add_argument_group('Preparation Options')
+    prep_group.add_argument('--sample_batch', action='store_true',
+                            help='Create and analyze a sample batch after preparation')
+    prep_group.add_argument('--batch_size', type=int, default=1,
+                            help='Batch size for sample analysis')
+    prep_group.add_argument('--precompute_graphs', action='store_true',
+                            help='Precompute all graphs (uses more memory but faster)')
+    prep_group.add_argument('--max_precompute', type=int, default=None,
+                            help='Maximum number of graphs to precompute (None for all)')
+    return prep_group
 
 
 def get_prep_parser():
-    """Create argument parser for data preparation"""
+    """
+    Create argument parser for data preparation.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Parser with all preparation arguments
+    """
     parser = argparse.ArgumentParser(
         description='Prepare molecular dynamics data for VAMPNet training',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    # Input data arguments
-    data_group = parser.add_argument_group('Input Data')
-    data_group.add_argument('--traj_dir', required=True,
-                            help='Path to directory containing trajectory files')
-    data_group.add_argument('--top', required=True,
-                            help='Path to topology file')
-    data_group.add_argument('--file-pattern', default='*.xtc',
-                            help='Pattern to match trajectory files')
-    data_group.add_argument('--recursive', action='store_true',
-                            help='Search recursively for trajectory files')
+    # Add common arguments (data, processing, graph, output, hardware)
+    add_common_args(parser)
 
-    # Dataset processing arguments
-    proc_group = parser.add_argument_group('Data Processing')
-    proc_group.add_argument('--selection', default='name CA',
-                            help='Atom selection (MDTraj syntax)')
-    proc_group.add_argument('--stride', type=int, default=1,
-                            help='Stride for reading trajectories')
-    proc_group.add_argument('--lag-time', type=float, default=1.0,
-                            help='Lag time in nanoseconds')
-    proc_group.add_argument('--n-neighbors', type=int, default=10,
-                            help='Number of neighbors for graph construction')
-    proc_group.add_argument('--node-embedding-dim', type=int, default=16,
-                            help='Dimension for node embeddings')
-    proc_group.add_argument('--gaussian-expansion-dim', type=int, default=8,
-                            help='Dimension for Gaussian expansion of distances')
-
-    # Output arguments
-    out_group = parser.add_argument_group('Output')
-    out_group.add_argument('--output-dir', default='./processed_data',
-                           help='Directory to save outputs')
-    out_group.add_argument('--cache-dir', default=None,
-                           help='Directory to cache processed dataset')
-    out_group.add_argument('--use-cache', action='store_true',
-                           help='Use cached dataset if available')
-    out_group.add_argument('--sample-batch', action='store_true',
-                           help='Create and analyze a sample batch')
-    out_group.add_argument('--batch-size', type=int, default=1,
-                           help='Batch size for sample analysis')
+    # Add preparation-specific arguments
+    add_prep_args(parser)
 
     return parser
 
 
 def parse_prep_args():
-    """Parse data preparation arguments"""
+    """Parse data preparation arguments from command line."""
     parser = get_prep_parser()
     return parser.parse_args()
+
+
+if __name__ == "__main__":
+    parser = get_prep_parser()
+    parser.print_help()

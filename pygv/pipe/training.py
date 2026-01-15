@@ -26,7 +26,7 @@ from pygv.utils.its import analyze_implied_timescales
 from pygv.utils.nn_utils import init_for_vamp
 
 from pygv.vampnet import VAMPNet
-from pygv.encoder.schnet_wo_embed_v2 import SchNetEncoderNoEmbed
+from pygv.encoder.schnet import SchNetEncoderNoEmbed
 from pygv.encoder.meta_att import Meta
 
 from pygv.scores.vamp_score_v0 import VAMPScore
