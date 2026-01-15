@@ -1,0 +1,30 @@
+# Core dependencies
+numpy>=1.20.0
+jinja2>=3.0.0
+
+# Optional dependencies for trajectory handling
+# Uncomment the one you prefer to use:
+
+# MDTraj (recommended for most users)
+mdtraj>=1.9.0
+
+# OR MDAnalysis (alternative to MDTraj)
+# MDAnalysis>=2.0.0
+
+# Optional dependencies for advanced features
+
+# For graph export functionality
+networkx>=2.6.0
+
+# For reading/writing various file formats
+# scipy>=1.7.0
+
+# Development and testing dependencies
+# pytest>=7.0.0
+# pytest-cov>=3.0.0
+
+# Note: The following are loaded via CDN in the HTML template:
+# - Three.js (3D embeddings visualization)
+# - 3Dmol.js (protein structure visualization)
+# - D3.js (transition matrix visualization)
+# - jQuery (required by 3Dmol.js)

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <!-- 3Dmol.js for protein visualization -->
+    <script src="https://3dmol.csb.pitt.edu/build/3Dmol-min.js"></script>
+
+    <!-- D3.js for transition matrix -->
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+
+    <!-- jQuery (required by 3Dmol.js) -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+    <style>{% include 'assets/style.css' %}</style>
+</head>
+<body>
+    <!-- Loading screen -->
+    <div id="loading">
+        <div class="spinner"></div>
+        <p>Loading visualization...</p>
+    </div>
+
+    <!-- Tooltip -->
+    <div id="tooltip"></div>
+
+    <!-- Main application -->
+    <div id="app">
+        <!-- Header -->
+        <div id="header">
+            <h1>{{ title }}</h1>
+            <div id="header-info">
+                <span class="info-badge" id="timescale-count"></span>
+                <span class="info-badge" id="frame-count"></span>
+            </div>
+        </div>
+
+        <!-- Sidebar controls -->
+        <div id="sidebar">
+            <!-- Timescale selection -->
+            <div class="control-section">
+                <h3>Timescales</h3>
+                <div id="timescale-list"></div>
+            </div>
+
+            <!-- State legend -->
+            <div class="control-section">
+                <div id="state-legend"></div>
+            </div>
+
+            <!-- Visualization controls -->
+            <div class="control-section">
+                <h3>View Controls</h3>
+
+                <div class="control-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="attention-toggle">
+                        Show Attention Coloring
+                    </label>
+                </div>
+
+                <div class="control-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="camera-rotation">
+                        Auto-rotate Camera
+                    </label>
+                </div>
+
+                <div class="control-group">
+                    <label for="protein-representation">Protein Style</label>
+                    <select id="protein-representation">
+                        <option value="cartoon">Cartoon</option>
+                        <option value="surface">Surface</option>
+                        <option value="stick">Stick</option>
+                        <option value="sphere">Sphere</option>
+                        <option value="line">Line</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Attention color scale -->
+            <div class="control-section">
+                <div id="attention-scale">
+                    <h4>Attention Scale</h4>
+                    <div class="color-gradient" style="background: linear-gradient(to right,
+                        {{ data_json | safe | tojson }}['config']['colors']['attention']['low'] if data_json else '#0000FF',
+                        {{ data_json | safe | tojson }}['config']['colors']['attention']['high'] if data_json else '#FF0000'
+                    );"></div>
+                    <div class="gradient-labels">
+                        <span>Low</span>
+                        <span>High</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Instructions -->
+            <div class="control-section">
+                <h3>Instructions</h3>
+                <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
+                    <p><strong>Embeddings:</strong></p>
+                    <ul style="margin-left: 15px; margin-top: 5px;">
+                        <li>Click to select a frame</li>
+                        <li>Drag to rotate view</li>
+                        <li>Scroll to zoom</li>
+                        <li>Hover for details</li>
+                    </ul>
+                    <p style="margin-top: 10px;"><strong>Protein:</strong></p>
+                    <ul style="margin-left: 15px; margin-top: 5px;">
+                        <li>Colors show attention</li>
+                        <li>Blue = low attention</li>
+                        <li>Red = high attention</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Embedding viewer -->
+        <div id="embedding-viewer">
+            <div class="viewer-label">3D Embeddings</div>
+        </div>
+
+        <!-- Protein viewer -->
+        <div id="protein-viewer">
+            <div class="viewer-label">Protein Structure</div>
+        </div>
+
+        <!-- Transition matrix -->
+        <div id="transition-matrix">
+            <div id="matrix-container"></div>
+        </div>
+    </div>
+
+    <script>
+        // Inject visualization data from Python
+        const VISUALIZATION_DATA = {{ data_json | safe }};
+
+        // Update header info
+        document.getElementById('timescale-count').textContent =
+            `${VISUALIZATION_DATA.timescales.length} Timescales`;
+
+        const totalFrames = VISUALIZATION_DATA.timescales.reduce(
+            (sum, ts) => sum + ts.n_frames, 0
+        );
+        document.getElementById('frame-count').textContent =
+            `${totalFrames} Total Frames`;
+
+        // Fix attention gradient colors
+        const attentionScale = document.getElementById('attention-scale');
+        if (attentionScale) {
+            const gradient = attentionScale.querySelector('.color-gradient');
+            if (gradient) {
+                gradient.style.background = `linear-gradient(to right, ${VISUALIZATION_DATA.config.colors.attention.low}, ${VISUALIZATION_DATA.config.colors.attention.high})`;
+            }
+        }
+    </script>
+
+    <script>{% include 'assets/main.js' %}</script>
+</body>
+</html>

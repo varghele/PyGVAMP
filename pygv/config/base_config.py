@@ -132,37 +132,69 @@ class SchNetConfig(BaseConfig):
     activation: str = "tanh"
     use_attention: bool = True
 
-#TODO: WIP
-#@dataclass
-#class MetaConfig(BaseConfig):
-#    """Configuration specific to Meta encoder"""
-#    encoder_type: str = "meta"
-#
-#    # Meta specific parameters
-#    meta_node_dim: int = 16
-#    meta_edge_dim: int = 16
-#    meta_global_dim: int = 0
-#    meta_num_node_mlp_layers: int = 2
-#    meta_num_edge_mlp_layers: int = 2
-#    meta_num_global_mlp_layers: int = 2
-#    meta_hidden_dim: int = 128
-#    meta_output_dim: int = 64
-#    meta_num_meta_layers: int = 3
-#    meta_embedding_type: str = "positional"
-#    meta_activation: str = "relu"
-#    meta_norm: Optional[str] = "layer_norm"
-#    meta_dropout: float = 0.1
+@dataclass
+class MetaConfig(BaseConfig):
+    """
+    Configuration specific to Meta encoder with attention.
 
-#TODO: WIP
-#@dataclass
-#class ML3Config(BaseConfig):
-#    """Configuration specific to ML3 encoder"""
-#    encoder_type: str = "ml3"
-#
-#    # ML3 specific parameters
-#    ml3_node_dim: int = 16
-#    ml3_edge_dim: int = 16
-#    ml3_hidden_dim: int = 128
-#    ml3_output_dim: int = 64
-#    ml3_num_layers: int = 3
-#    ml3_activation: str = "relu"
+    Meta uses MetaLayer from PyG with separate edge, node, and global models,
+    plus optional attention mechanism for edge importance weighting.
+    """
+    encoder_type: str = "meta"
+
+    # Core dimensions
+    meta_node_dim: int = 16          # Node feature dimension
+    meta_edge_dim: int = 16          # Edge feature dimension
+    meta_global_dim: int = 16        # Global feature dimension
+    meta_hidden_dim: int = 128       # Hidden dimension for MLPs
+    meta_output_dim: int = 64        # Output dimension
+
+    # MLP layer configuration
+    meta_num_node_mlp_layers: int = 2     # Layers in node MLP
+    meta_num_edge_mlp_layers: int = 2     # Layers in edge MLP
+    meta_num_global_mlp_layers: int = 2   # Layers in global MLP
+    meta_num_meta_layers: int = 3         # Number of MetaLayer blocks
+
+    # Embedding type: "node", "global", or "combined"
+    meta_embedding_type: str = "node"
+
+    # Attention
+    meta_use_attention: bool = True       # Whether to use attention mechanism
+
+    # Regularization and activation
+    meta_activation: str = "relu"         # Activation function
+    meta_norm: Optional[str] = "batch_norm"  # Normalization type
+    meta_dropout: float = 0.1             # Dropout rate
+
+@dataclass
+class ML3Config(BaseConfig):
+    """
+    Configuration specific to ML3 (GNNML3) encoder.
+
+    ML3 uses spectral convolutions with higher-order expressivity,
+    featuring learned edge transformations and skip connections.
+    """
+    encoder_type: str = "ml3"
+
+    # Core dimensions
+    ml3_node_dim: int = 16          # Dimension of encoded node features
+    ml3_edge_dim: int = 16          # Dimension of encoded edge features
+    ml3_global_dim: int = 0         # Dimension of global features (0 = not used)
+    ml3_hidden_dim: int = 30        # Hidden dimension for ML3 layers
+    ml3_output_dim: int = 32        # Output dimension (also skip connection dim)
+
+    # Layer configuration
+    ml3_num_layers: int = 4              # Number of ML3 layers
+    ml3_num_encoder_layers: int = 2      # Layers in node/edge encoder MLPs
+
+    # Shift predictor configuration
+    ml3_shift_predictor_hidden_dim: int = 32   # Hidden dim for shift predictor
+    ml3_shift_predictor_layers: int = 1        # Layers in shift predictor
+
+    # Embedding type: "node", "global", or "combined"
+    ml3_embedding_type: str = "node"
+
+    # Regularization and activation
+    ml3_activation: str = "relu"         # Activation function
+    ml3_norm: Optional[str] = "batch_norm"  # Normalization type
+    ml3_dropout: float = 0.0             # Dropout rate

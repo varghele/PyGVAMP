@@ -7,7 +7,6 @@ VAMPNet Training Pipeline
 This script provides a command-line interface for training VAMPNet models
 on molecular dynamics data.
 """
-from pymol.querying import distance
 
 # Import arguments parser
 from pygv.args import parse_train_args
@@ -265,7 +264,10 @@ def create_model(args):
 
     # Apply to your model
     init_for_vamp(model, method='kaiming_normal')
-    model.to('cuda')
+
+    # Move model to appropriate device
+    device = torch.device("cpu" if args.cpu else "cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
 
     return model
 

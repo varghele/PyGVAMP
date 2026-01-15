@@ -2,9 +2,9 @@
 Configuration management for PyGVAMP
 """
 from .base_config import BaseConfig, SchNetConfig, MetaConfig, ML3Config
-from .presets.small import SmallSchNetConfig, SmallMetaConfig
-from .presets.medium import MediumSchNetConfig, MediumMetaConfig
-from .presets.large import LargeSchNetConfig, LargeMetaConfig
+from .presets.small import SmallSchNetConfig, SmallMetaConfig, SmallML3Config
+from .presets.medium import MediumSchNetConfig, MediumMetaConfig, MediumML3Config
+from .presets.large import LargeSchNetConfig, LargeMetaConfig, LargeML3Config
 
 # Registry of available configurations
 CONFIG_REGISTRY = {
@@ -14,17 +14,20 @@ CONFIG_REGISTRY = {
     'meta': MetaConfig,
     'ml3': ML3Config,
 
-    # Small presets
+    # Small presets (small molecules, ligands)
     'small_schnet': SmallSchNetConfig,
     'small_meta': SmallMetaConfig,
+    'small_ml3': SmallML3Config,
 
-    # Medium presets
+    # Medium presets (peptides, small protein domains)
     'medium_schnet': MediumSchNetConfig,
     'medium_meta': MediumMetaConfig,
+    'medium_ml3': MediumML3Config,
 
-    # Large presets
+    # Large presets (proteins, protein complexes)
     'large_schnet': LargeSchNetConfig,
     'large_meta': LargeMetaConfig,
+    'large_ml3': LargeML3Config,
 }
 
 
@@ -71,27 +74,41 @@ def list_presets():
         if name in CONFIG_REGISTRY:
             print(f"  - {name}")
 
-    print("\nSmall presets (quick experiments):")
+    print("\nSmall presets (small molecules, ligands):")
     for name in CONFIG_REGISTRY:
         if name.startswith('small_'):
             print(f"  - {name}")
 
-    print("\nMedium presets (standard training):")
+    print("\nMedium presets (peptides, small protein domains):")
     for name in CONFIG_REGISTRY:
         if name.startswith('medium_'):
             print(f"  - {name}")
 
-    print("\nLarge presets (production training):")
+    print("\nLarge presets (proteins, protein complexes):")
     for name in CONFIG_REGISTRY:
         if name.startswith('large_'):
             print(f"  - {name}")
 
 
 __all__ = [
+    # Base configs
     'BaseConfig',
     'SchNetConfig',
     'MetaConfig',
     'ML3Config',
+    # Small presets
+    'SmallSchNetConfig',
+    'SmallMetaConfig',
+    'SmallML3Config',
+    # Medium presets
+    'MediumSchNetConfig',
+    'MediumMetaConfig',
+    'MediumML3Config',
+    # Large presets
+    'LargeSchNetConfig',
+    'LargeMetaConfig',
+    'LargeML3Config',
+    # Functions
     'get_config',
     'list_presets',
     'CONFIG_REGISTRY',
