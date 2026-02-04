@@ -62,8 +62,8 @@ PyGVAMP/
 │   │   ├── training.py           # Phase 2: Model training
 │   │   └── analysis.py           # Phase 3: Post-analysis
 │   ├── dataset/              # Data handling
-│   │   ├── vampnet_dataset.py    # Main: MD→PyG graphs (692 lines)
-│   │   └── vampnet_dataset_with_AA.py  # Amino acid variant (duplicate)
+│   │   ├── vampnet_dataset.py    # Unified: MD→PyG graphs with optional AA encoding
+│   │   └── legacy/               # Old dataset variants (deprecated)
 │   ├── vampnet/              # Model architecture
 │   │   └── vampnet.py            # VAMPNet model (1184 lines)
 │   ├── encoder/              # Message-passing encoders
@@ -204,7 +204,7 @@ sbatch cluster_scripts/atr.sh
 | File | Lines | Purpose |
 |------|-------|---------|
 | `vampnet.py` | 1184 | Full VAMPNet model |
-| `vampnet_dataset.py` | 692 | Dataset creation |
+| `vampnet_dataset.py` | 810 | Unified dataset with AA encoding & continuous flag |
 | `plotting.py` | 2133 | All visualizations |
 | `analysis.py` (utils) | 1048 | Analysis utilities |
 | `master_pipeline.py` | 431 | Pipeline orchestration |

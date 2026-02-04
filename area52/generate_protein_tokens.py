@@ -6,7 +6,7 @@ import torch
 from torch_geometric.data import Data
 from collections import Counter
 import mdtraj as md
-from pygv.dataset.vampnet_dataset_with_AA import VAMPNetDataset
+from pygv.dataset.vampnet_dataset import VAMPNetDataset  # Use use_amino_acid_encoding=True for AA features
 from psevo.tokenizer.prot_bpe_v2 import ProteinFrameInPiece, protein_bpe
 
 

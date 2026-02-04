@@ -336,7 +336,7 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 
 | Issue | Location | Description | Suggested Fix |
 |-------|----------|-------------|---------------|
-| Dual dataset files | `vampnet_dataset.py`, `vampnet_dataset_with_AA.py` | Two nearly identical files; AA encoding is also accessible via `use_amino_acid_encoding` flag in `_create_graph_from_frame()` | Consolidate into single file with encoding flag; remove duplicate |
+| ~~Dual dataset files~~ | ~~`vampnet_dataset.py`, `vampnet_dataset_with_AA.py`~~ | ~~Two nearly identical files~~ | ✅ Consolidated: old files moved to `legacy/`, unified `vampnet_dataset.py` with `use_amino_acid_encoding` flag |
 | One-hot node features | `vampnet_dataset.py` | Creates N×N matrix for N atoms (memory inefficient) | Learned embeddings exist but had issues; document tradeoffs |
 | Magic numbers | Various | Epsilon values, thresholds hardcoded | Move to configuration |
 | NaN masking | `vampnet.py` | NaN outputs replaced with zeros | Fix root cause of NaN generation |
@@ -377,10 +377,10 @@ In `analysis.py:212-326` (Analysis phase):
 
 | Feature | Description | Priority |
 |---------|-------------|----------|
-| Non-continuous trajectories | Add `continuous` flag to handle trajectories that aren't continuous. Currently all MD files are concatenated as one continuous trajectory. When disabled, skip time-lagged pairs that would cross trajectory boundaries. | High |
+| ~~Non-continuous trajectories~~ | ~~Add `continuous` flag to handle trajectories that aren't continuous.~~ | ✅ Done - `continuous` parameter in `vampnet_dataset.py` and `BaseConfig` |
 | Automatic n_states selection | Find correct/comparable number of states for each timescale | High |
 | Comparable state counts | Ensure consistent state definitions across different lag times | High |
-| Dataset encoding flag | Clean up dual dataset system (one-hot vs amino acid encoding). Add flag to select encoding type instead of having separate datasets/methods. See `vampnet_dataset_with_AA.py` and `_create_graph_from_frame()` `use_amino_acid_encoding` parameter. | High |
+| ~~Dataset encoding flag~~ | ~~Clean up dual dataset system (one-hot vs amino acid encoding).~~ | ✅ Done - unified `vampnet_dataset.py` with `use_amino_acid_encoding` parameter |
 | Complete preset system | Add missing preset files (`medium.py`, `large.py`) and uncomment MetaConfig/ML3Config in `base_config.py`. Currently `__init__.py` imports them but they're commented out (will cause ImportError). | Medium |
 | ML3 pipeline integration | Integrate working ML3 encoder (`pygv/encoder/ml3.py` - GNNML3 class) into training pipeline. Currently `training.py:194` returns `None` for ML3. | Medium |
 | HTML report generation | Combine all analysis outputs into single HTML file for sharing | Medium |
@@ -451,8 +451,7 @@ Key files for understanding the pipeline:
 | `pygv/pipe/preparation.py` | 197 | Data preparation |
 | `pygv/pipe/training.py` | 449 | Model training |
 | `pygv/pipe/analysis.py` | 352 | Post-training analysis |
-| `pygv/dataset/vampnet_dataset.py` | 693 | MD trajectory → PyG graphs (main) |
-| `pygv/dataset/vampnet_dataset_with_AA.py` | 759 | MD trajectory → PyG graphs (with AA encoding - duplicate) |
+| `pygv/dataset/vampnet_dataset.py` | 810 | MD trajectory → PyG graphs (unified with AA encoding & continuous flag) |
 | `pygv/vampnet/vampnet.py` | 1184 | VAMPNet model |
 | `pygv/scores/vamp_score_v0.py` | 341 | VAMP loss calculation |
 | `pygv/encoder/schnet_wo_embed_v2.py` | 300+ | SchNet encoder |

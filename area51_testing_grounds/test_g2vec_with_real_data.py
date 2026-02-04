@@ -11,7 +11,7 @@ import time
 from torch_geometric.graphgym import compute_loss
 
 #from area52.create_dataset import topology_file
-from pygv.dataset.vampnet_dataset_with_AA import VAMPNetDataset
+from pygv.dataset.vampnet_dataset import VAMPNetDataset  # Use use_amino_acid_encoding=True for AA features
 from pygv.clustering.graph2vec import Graph2Vec  # Replace with actual import
 import os
 import glob

@@ -8,7 +8,7 @@ from torch_geometric.data import Data
 from sklearn.metrics import silhouette_score
 import time
 
-from pygv.dataset.vampnet_dataset_with_AA import VAMPNetDataset
+from pygv.dataset.vampnet_dataset import VAMPNetDataset  # Use use_amino_acid_encoding=True for AA features
 from pygv.clustering.graph2vec import Graph2Vec  # Replace with actual import
 import os
 import glob

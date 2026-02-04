@@ -1,51 +1,94 @@
+"""
+VAMPNet Dataset - Unified implementation with optional amino acid encoding.
+
+This module provides a unified VAMPNetDataset class that can create graph representations
+from MD trajectories with either one-hot node encoding or amino acid property encoding.
+"""
+
 import os
 import torch
 import numpy as np
 from torch.utils.data import Dataset
 from torch_geometric.data import Data
 import mdtraj as md
-from typing import List, Tuple, Optional, Union
+from typing import List, Optional, Literal
 import pickle
 from tqdm import tqdm
 
+from pygv.utils.features import get_amino_acid_features, get_amino_acid_labels
+
 
 class VAMPNetDataset(Dataset):
+    """
+    VAMPNet dataset for creating graph representations from MD trajectories.
+
+    This dataset converts molecular dynamics trajectories into time-lagged pairs of
+    graphs suitable for training VAMPNet models. Each molecular structure is represented
+    as a k-nearest neighbor graph with Gaussian-expanded edge features.
+
+    Parameters
+    ----------
+    trajectory_files : List[str]
+        List of MD trajectory files (.xtc, .dcd, etc.)
+    topology_file : str
+        Topology file for the trajectories (.pdb)
+    lag_time : float, default=1
+        Time lag between pairs (in nanoseconds)
+    n_neighbors : int, default=10
+        Number of nearest neighbors for graph construction
+    node_embedding_dim : int, default=16
+        Dimension of node embeddings (used for positional encoding)
+    gaussian_expansion_dim : int, default=16
+        Dimension of Gaussian expansion for edge features
+    distance_min : float, optional
+        Minimum distance for Gaussian expansion (auto-determined if None)
+    distance_max : float, optional
+        Maximum distance for Gaussian expansion (auto-determined if None)
+    selection : str, default="name CA"
+        MDTraj selection string for atoms to include
+    seed : int, default=42
+        Random seed for reproducibility
+    stride : int, default=1
+        Process every 'stride' frames from trajectories
+    chunk_size : int, default=1000
+        Number of frames to process at once (memory management)
+    cache_dir : str, optional
+        Directory to save/load cached data
+    use_cache : bool, default=True
+        Whether to use cached data if available
+    use_amino_acid_encoding : bool, default=False
+        If True, use amino acid property-based node features.
+        If False, use one-hot encoding for node features.
+    amino_acid_feature_type : str, default="labels"
+        Type of amino acid features to use when use_amino_acid_encoding=True.
+        Options: "labels" (integer labels 0-20) or "properties" (4D property vector)
+    continuous : bool, default=True
+        If True, treat all trajectory files as one continuous trajectory (original behavior).
+        If False, treat each trajectory file as independent - time-lagged pairs will not
+        cross trajectory boundaries. Use False when trajectories are from independent
+        simulations (e.g., multiple replicas, different starting conditions).
+    """
+
     def __init__(
             self,
             trajectory_files: List[str],
             topology_file: str,
             lag_time: float = 1,
-            n_neighbors: int = 10,  # M nearest neighbors
+            n_neighbors: int = 10,
             node_embedding_dim: int = 16,
-            gaussian_expansion_dim: int = 16,  # K in the paper
+            gaussian_expansion_dim: int = 16,
             distance_min: Optional[float] = None,
             distance_max: Optional[float] = None,
-            selection: str = "name CA",  # Select C-alpha atoms by default
+            selection: str = "name CA",
             seed: int = 42,
-            stride: int = 1,  # Take every 'stride' frame
-            chunk_size: int = 1000,  # Process trajectories in chunks to save memory
-            cache_dir: Optional[str] = None,  # Directory to save/load cached data
-            use_cache: bool = True,  # Whether to use cached data if available
+            stride: int = 1,
+            chunk_size: int = 1000,
+            cache_dir: Optional[str] = None,
+            use_cache: bool = True,
+            use_amino_acid_encoding: bool = False,
+            amino_acid_feature_type: Literal["labels", "properties"] = "labels",
+            continuous: bool = True,
     ):
-        """
-        Create a VAMPNet dataset from MD trajectories, representing each structure as a graph.
-
-        Args:
-            trajectory_files: List of MD trajectory files
-            topology_file: Topology file for the trajectories
-            lag_time: Time lag between pairs (in ns)
-            n_neighbors: Number of nearest neighbors for graph construction (M in the paper)
-            node_embedding_dim: Dimension of random node features
-            gaussian_expansion_dim: Dimension of Gaussian expansion (K in the paper)
-            distance_min: Minimum distance for Gaussian expansion (if None, will be determined from data)
-            distance_max: Maximum distance for Gaussian expansion (if None, will be determined from data)
-            selection: MDTraj selection string for atoms to include
-            seed: Random seed for reproducibility
-            stride: Process every 'stride' frames from trajectories
-            chunk_size: Number of frames to process at once (to avoid memory issues)
-            cache_dir: Directory to save/load cached data
-            use_cache: Whether to use cached data if available
-        """
         super(VAMPNetDataset, self).__init__()
 
         self.trajectory_files = trajectory_files
@@ -58,6 +101,9 @@ class VAMPNetDataset(Dataset):
         self.stride = stride
         self.chunk_size = chunk_size
         self.cache_dir = cache_dir
+        self.use_amino_acid_encoding = use_amino_acid_encoding
+        self.amino_acid_feature_type = amino_acid_feature_type
+        self.continuous = continuous
 
         # Create cache directory if it doesn't exist
         if self.cache_dir and not os.path.exists(self.cache_dir):
@@ -66,6 +112,9 @@ class VAMPNetDataset(Dataset):
         # Set random seed for reproducibility
         np.random.seed(seed)
         torch.manual_seed(seed)
+
+        # Load topology (needed for amino acid encoding and atom selection)
+        self.topology = md.load_topology(self.topology_file)
 
         # Load from cache or process trajectories
         cache_loaded = False
@@ -79,7 +128,6 @@ class VAMPNetDataset(Dataset):
             # Process trajectories and create graphs
             self._process_trajectories()
 
-            # TODO: this doesn't work with cached data, see if there is a better alternative
             # Create trainable node embeddings
             self.node_embeddings = torch.nn.Parameter(
                 torch.zeros(self.n_atoms, self.node_embedding_dim)
@@ -103,34 +151,32 @@ class VAMPNetDataset(Dataset):
                 self._save_to_cache()
 
     def _process_trajectories(self):
-        """Process trajectory files and select atoms with tqdm progress"""
+        """Process trajectory files and select atoms with tqdm progress.
+
+        Also tracks trajectory boundaries for non-continuous trajectory handling.
+        """
         print(f"Processing {len(self.trajectory_files)} trajectory files...")
 
-        # Initialize an empty list for storing selected frames
         self.frames = []
         self.atom_indices = None
+        self.trajectory_boundaries = [0]  # Start indices of each trajectory
 
-        # Process each trajectory file with progress bar
         for traj_file in tqdm(self.trajectory_files, desc="Trajectory files", unit="file"):
             try:
-                # Load the entire trajectory first
                 traj = md.load(traj_file, top=self.topology_file)
 
-                # Select atoms (only need to do this once)
                 if self.atom_indices is None:
                     self.atom_indices = traj.topology.select(self.selection)
                     if len(self.atom_indices) == 0:
                         raise ValueError(f"Selection '{self.selection}' returned no atoms")
                     print(f"Selected {len(self.atom_indices)} atoms with selection: '{self.selection}'")
 
-                # Apply stride to frames
                 traj = traj[::self.stride]
-
-                # Extract coordinates for selected atoms with progress bar
                 coords = traj.xyz[:, self.atom_indices, :]
                 self.frames.extend(coords)
 
-                #print(f"Processed {len(traj)} frames from {traj_file}")
+                # Track where this trajectory ends (= where next one starts)
+                self.trajectory_boundaries.append(len(self.frames))
 
             except Exception as e:
                 print(f"Error processing {traj_file}: {str(e)}")
@@ -143,32 +189,31 @@ class VAMPNetDataset(Dataset):
         self.n_frames = len(self.frames)
         self.n_atoms = len(self.atom_indices)
 
+        # Report trajectory info
+        n_trajectories = len(self.trajectory_boundaries) - 1
+        if n_trajectories > 1:
+            frames_per_traj = [self.trajectory_boundaries[i+1] - self.trajectory_boundaries[i]
+                              for i in range(n_trajectories)]
+            print(f"Loaded {n_trajectories} trajectories with frames: {frames_per_traj}")
+            if not self.continuous:
+                print(f"Non-continuous mode: pairs will not cross trajectory boundaries")
+
         print(f"Total frames: {self.n_frames}, Atoms per frame: {self.n_atoms}")
 
     def _determine_distance_range(self):
-        """Determine minimum and maximum distances from data samples with progress bar"""
+        """Determine minimum and maximum distances from data samples."""
         print("Calculating distance range from data samples...")
 
-        # Take a reasonable subset of frames to calculate distances
-        sample_size = self.n_frames #min(100, self.n_frames)
+        sample_size = self.n_frames
         indices = np.random.choice(self.n_frames, sample_size, replace=False)
 
         min_distances = []
         max_distances = []
 
-        # Use tqdm progress bar
         for idx in tqdm(indices, desc="Computing distance range", unit="frame"):
-        #for idx in indices:
-            # Calculate pairwise distances for selected atoms in this frame
             coords = self.frames[idx]
-
-            # Compute all pairwise distances
             distances = np.sqrt(np.sum((coords[:, np.newaxis, :] - coords[np.newaxis, :, :]) ** 2, axis=2))
-
-            # Exclude self-distances (diagonal)
             np.fill_diagonal(distances, -1)
-
-            # Convert to mask to filter out -1 values
             valid_distances = distances[distances > 0]
 
             if len(valid_distances) > 0:
@@ -184,75 +229,87 @@ class VAMPNetDataset(Dataset):
         print(f"Distance range: {self.distance_min:.2f} to {self.distance_max:.2f} Å")
 
     def _create_time_lagged_pairs(self):
-        """Create time-lagged pairs of frame indices"""
-        self.t0_indices = list(range(self.n_frames - self.lag_frames))
-        self.t1_indices = list(range(self.lag_frames, self.n_frames))
+        """Create time-lagged pairs of frame indices.
 
-        print(f"Created {len(self.t0_indices)} time-lagged pairs with lag time {self.lag_time} and "
-              f"{self.lag_frames} lag frames. 1 lag frame == {self.lag_time/self.lag_frames} ns")
+        When continuous=True (default), pairs can span across trajectory boundaries.
+        When continuous=False, pairs that would cross trajectory boundaries are excluded.
+        """
+        if self.continuous:
+            # Original behavior: treat all frames as one continuous trajectory
+            self.t0_indices = list(range(self.n_frames - self.lag_frames))
+            self.t1_indices = list(range(self.lag_frames, self.n_frames))
+        else:
+            # Non-continuous: only create pairs within the same trajectory
+            self.t0_indices = []
+            self.t1_indices = []
+
+            n_trajectories = len(self.trajectory_boundaries) - 1
+            for traj_idx in range(n_trajectories):
+                traj_start = self.trajectory_boundaries[traj_idx]
+                traj_end = self.trajectory_boundaries[traj_idx + 1]
+                traj_length = traj_end - traj_start
+
+                # Only create pairs if trajectory is long enough for the lag
+                if traj_length > self.lag_frames:
+                    # Valid t0 indices: from traj_start to (traj_end - lag_frames - 1)
+                    for t0 in range(traj_start, traj_end - self.lag_frames):
+                        t1 = t0 + self.lag_frames
+                        self.t0_indices.append(t0)
+                        self.t1_indices.append(t1)
+                else:
+                    print(f"Warning: Trajectory {traj_idx} has {traj_length} frames, "
+                          f"which is less than lag_frames={self.lag_frames}. Skipping.")
+
+        n_pairs = len(self.t0_indices)
+        print(f"Created {n_pairs} time-lagged pairs with lag time {self.lag_time} and "
+              f"{self.lag_frames} lag frames. 1 lag frame == {self.lag_time / self.lag_frames} ns")
+
+        if not self.continuous:
+            # Report how many pairs were excluded
+            max_possible = self.n_frames - self.lag_frames
+            excluded = max_possible - n_pairs
+            if excluded > 0:
+                print(f"Non-continuous mode excluded {excluded} cross-boundary pairs")
 
     def _compute_gaussian_expanded_distances(self, distances):
         """
-        Compute Gaussian expanded distances according to the formula:
-        e_t(i,j) = exp(-(d_ij - μ_t)²/σ²)
+        Compute Gaussian expanded distances.
 
-        where:
-        - d_ij is the distance between atoms i and j
-        - μ_t = dmin + t * (dmax - dmin)/K
-        - σ = (dmax - dmin)/K
-        - t = 0, 1, ..., K-1
-        - K is the Gaussian expansion dimension
+        Formula: e_t(i,j) = exp(-(d_ij - μ_t)²/σ²)
+        where μ_t = dmin + t * (dmax - dmin)/K and σ = (dmax - dmin)/K
         """
         K = self.gaussian_expansion_dim
         d_range = self.distance_max - self.distance_min
         sigma = d_range / K
 
-        # Filter out invalid distances (diagonals set to -1)
         valid_mask = distances >= 0
-
-        # Reshape to prepare for broadcasting
-        distances_reshaped = distances.reshape(-1, 1)  # [num_edges, 1]
-
-        # Calculate μ_t values [1, K]
+        distances_reshaped = distances.reshape(-1, 1)
         mu_values = torch.linspace(self.distance_min, self.distance_max, K).view(1, -1)
 
-        # Compute expanded features: exp(-(d_ij - μ_t)²/σ²)
         expanded_features = torch.zeros((distances_reshaped.shape[0], K),
                                         device=distances.device,
                                         dtype=torch.float32)
 
-        # Apply computation only to valid distances
         valid_indices = torch.nonzero(valid_mask).squeeze()
         valid_distances = distances_reshaped[valid_indices]
-
-        # Compute Gaussian expansion only for valid distances
         valid_expanded = torch.exp(-((valid_distances - mu_values) ** 2) / (sigma ** 2))
-
-        # Place results back in the output tensor
         expanded_features[valid_indices] = valid_expanded
 
         return expanded_features
 
     def _initialize_node_embeddings(self):
-        """Initialize node embeddings with position encoding for better gradient flow"""
+        """Initialize node embeddings with position encoding for better gradient flow."""
         import math
 
-        # Create positional encodings
         embeddings = torch.zeros(self.n_atoms, self.node_embedding_dim)
-
-        # Use positional encoding for even indices
         position = torch.arange(0, self.n_atoms).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, self.node_embedding_dim, 2) *
                              -(math.log(10000.0) / self.node_embedding_dim))
 
-        # Fill even indices with sine
         embeddings[:, 0::2] = torch.sin(position * div_term)
 
-        # Fill odd indices with cosine if they exist
         if self.node_embedding_dim > 1:
-            # If odd indices exist
             if div_term.size(0) < self.node_embedding_dim // 2 + self.node_embedding_dim % 2:
-                # Need to adjust div_term size
                 remaining = self.node_embedding_dim // 2 + self.node_embedding_dim % 2 - div_term.size(0)
                 extension = torch.exp(torch.arange(div_term.size(0), div_term.size(0) + remaining) *
                                       -(math.log(10000.0) / self.node_embedding_dim))
@@ -260,120 +317,118 @@ class VAMPNetDataset(Dataset):
 
             embeddings[:, 1::2] = torch.cos(position * div_term[:self.node_embedding_dim // 2])
 
-        # Store as plain tensor (not a parameter)
         self.node_embeddings = embeddings
 
-    def _create_graph_from_frame(self, frame_idx):
+    def _create_node_features(self, use_amino_acid_encoding: bool = None):
+        """
+        Create node features based on encoding type.
+
+        Parameters
+        ----------
+        use_amino_acid_encoding : bool, optional
+            Override the instance setting. If None, uses self.use_amino_acid_encoding.
+
+        Returns
+        -------
+        torch.Tensor
+            Node feature tensor
+        """
+        if use_amino_acid_encoding is None:
+            use_amino_acid_encoding = self.use_amino_acid_encoding
+
+        if use_amino_acid_encoding:
+            # Amino acid-based node features
+            if self.amino_acid_feature_type == "properties":
+                # 4D property vector: [hydrophobic, polar, charged, aromatic]
+                node_attr = torch.zeros(self.n_atoms, 4)
+                for i, atom_idx in enumerate(self.atom_indices):
+                    residue = self.topology.atom(atom_idx).residue
+                    properties = get_amino_acid_features(residue.name)
+                    node_attr[i] = torch.tensor(properties, dtype=torch.float32)
+            else:
+                # Integer labels (0-20)
+                node_attr = torch.zeros(self.n_atoms, 1)
+                for i, atom_idx in enumerate(self.atom_indices):
+                    residue = self.topology.atom(atom_idx).residue
+                    label = get_amino_acid_labels(residue.name)
+                    node_attr[i] = torch.tensor(label, dtype=torch.float32)
+        else:
+            # One-hot encoding (n_atoms × n_atoms identity matrix)
+            node_attr = torch.zeros(self.n_atoms, self.n_atoms)
+            for i in range(self.n_atoms):
+                node_attr[i, i] = 1.0
+
+        return node_attr
+
+    def _create_graph_from_frame(self, frame_idx: int, use_amino_acid_encoding: bool = None):
         """
         Create a graph representation for a single frame.
 
-        Args:
-            frame_idx: Index of the frame to process
+        Parameters
+        ----------
+        frame_idx : int
+            Index of the frame to process
+        use_amino_acid_encoding : bool, optional
+            Override the instance setting for amino acid encoding.
+            If None, uses self.use_amino_acid_encoding.
 
-        Returns:
-            torch_geometric.data.Data: Graph representation of the frame
+        Returns
+        -------
+        torch_geometric.data.Data
+            Graph representation of the frame
         """
+        if use_amino_acid_encoding is None:
+            use_amino_acid_encoding = self.use_amino_acid_encoding
+
         # Get coordinates for the frame
         coords = torch.tensor(self.frames[frame_idx], dtype=torch.float32)
 
         # Calculate pairwise distances
-        diff = coords.unsqueeze(1) - coords.unsqueeze(0)  # [n_atoms, n_atoms, 3]
-        distances = torch.sqrt((diff ** 2).sum(dim=2))  # [n_atoms, n_atoms]
+        diff = coords.unsqueeze(1) - coords.unsqueeze(0)
+        distances = torch.sqrt((diff ** 2).sum(dim=2))
 
-        # Create a mask to identify self-connections (diagonal elements)
+        # Create mask to identify self-connections
         diag_mask = torch.eye(self.n_atoms, dtype=torch.bool, device=distances.device)
-
-        # Set self-distances to -1
         distances[diag_mask] = -1.0
-
-        # Create a mask for valid distances (excluding self-connections)
         valid_mask = ~diag_mask
 
-        # For each node, get indices of the k-nearest neighbors (excluding self)
+        # Find k-nearest neighbors for each node
         nn_indices = []
         for i in range(self.n_atoms):
-            # Get distances from node i to all other nodes
             node_distances = distances[i]
-            # Mask out the self-connection
             valid_distances = node_distances[valid_mask[i]]
-            # Get indices of valid nodes (excluding self)
             valid_indices = torch.nonzero(valid_mask[i], as_tuple=True)[0]
-            # Get top-k nearest neighbors
             _, top_k_indices = torch.topk(valid_distances, min(self.n_neighbors, len(valid_distances)), largest=False)
-            # Map back to original indices
             node_nn_indices = valid_indices[top_k_indices]
-            # Add to list
             nn_indices.append(node_nn_indices)
 
-        # Stack indices for all nodes
         nn_indices = torch.stack(nn_indices)
 
-        # Create a set to track all edges for ensuring bidirectionality
+        # Collect directional edges (asymmetric k-NN)
         edge_set = set()
-
-        # First, collect all the original directional edges
         for i in range(self.n_atoms):
             for j in nn_indices[i]:
                 edge_set.add((i, j.item()))
 
-        # Create a list of directional edges (no bidirectionality). k-nearest neighbors relationship is not symmetric.
-        directional_edges = []
-        for source, target in edge_set:
-            #directional_edges.append((source, target))
-            # Flip edges, because edge attributes flow towards node
-            directional_edges.append((target,source))
-            # Don't add reverse edges
+        # Create edge list (flipped for message passing direction)
+        directional_edges = [(target, source) for source, target in edge_set]
 
-        # Convert to tensors for source and target indices
         source_indices = torch.tensor([edge[0] for edge in directional_edges], device=distances.device)
         target_indices = torch.tensor([edge[1] for edge in directional_edges], device=distances.device)
 
-        # TODO: Very likely remove that part. k-nearest neighbors relationship is not symmetric. If node A considers node B as one of its 10 nearest neighbors, it doesn't guarantee that node B considers node A as one of its 10 nearest neighbors.
-        # TODO: Maybe this is important for other network types (write selector for this)
-        # Create a list of all bidirectional edges
-        #bidirectional_edges = []
-        #for source, target in edge_set:
-        #    bidirectional_edges.append((source, target))
-        #    # Add the reverse edge if it doesn't already exist
-        #    if (target, source) not in edge_set:
-        #        bidirectional_edges.append((target, source))
-        #
-        # Convert to tensors for source and target indices
-        #source_indices = torch.tensor([edge[0] for edge in bidirectional_edges], device=distances.device)
-        #target_indices = torch.tensor([edge[1] for edge in bidirectional_edges], device=distances.device)
-
-        # Create the edge_index tensor
+        # Create edge_index tensor
         edge_index = torch.stack([source_indices, target_indices], dim=0)
 
-        # Quick bidirectionality check
-        edge_pairs = set(zip(edge_index[0].tolist(), edge_index[1].tolist()))
-        #assert all((target, source) in edge_pairs for source, target in edge_pairs), "Graph is not bidirectional"
-        #TODO: Probably remove because bidirectionality is not given
-        #TODO: or make selector for other networks
-
-        # Get edge distances (non-negative real distances)
+        # Get edge distances and compute Gaussian expansion
         edge_distances = distances[source_indices, target_indices]
-
-        # Compute Gaussian expanded edge features
         edge_attr = self._compute_gaussian_expanded_distances(edge_distances)
 
-        # Check if node_embeddings exists, and create it if not
-        #if not hasattr(self, 'node_embeddings'):
-        #    # Create node embeddings using position encoding
-        #    self._initialize_node_embeddings()
-        #    print("Created node embeddings parameter for the first time")
-
-        # Generate node features base on positional encoding
-        #node_attr = self.node_embeddings.clone()
-        node_attr = torch.zeros(self.n_atoms, self.n_atoms)  # One-hot encoding (n_atoms × n_atoms)
-        for i in range(self.n_atoms):
-            node_attr[i, i] = 1.0
-        #node_attr = torch.randn(self.n_atoms, self.node_embedding_dim)
-        #node_attr = torch.nn.Embedding(num_embeddings=self.n_atoms, embedding_dim=self.node_embedding_dim)
+        # Create node features
+        node_attr = self._create_node_features(use_amino_acid_encoding)
 
         # Create PyG Data object
         graph = Data(
-            x=node_attr,#.weight.data,
+            x=node_attr,
             edge_index=edge_index,
             edge_attr=edge_attr,
             num_nodes=self.n_atoms
@@ -382,11 +437,11 @@ class VAMPNetDataset(Dataset):
         return graph
 
     def __len__(self):
-        """Return the number of time-lagged pairs"""
+        """Return the number of time-lagged pairs."""
         return len(self.t0_indices)
 
     def __getitem__(self, idx):
-        """Get a time-lagged pair of graphs for the given index"""
+        """Get a time-lagged pair of graphs for the given index."""
         t0_idx = self.t0_indices[idx]
         t1_idx = self.t1_indices[idx]
 
@@ -395,22 +450,34 @@ class VAMPNetDataset(Dataset):
 
         return graph_t0, graph_t1
 
-    def get_graph(self, idx):
-        """Get graph for a specific frame (without time-lagging)"""
-        return self._create_graph_from_frame(idx)
+    def get_graph(self, idx: int, use_amino_acid_encoding: bool = None):
+        """
+        Get graph for a specific frame (without time-lagging).
+
+        Parameters
+        ----------
+        idx : int
+            Frame index
+        use_amino_acid_encoding : bool, optional
+            Override encoding setting for this call
+
+        Returns
+        -------
+        torch_geometric.data.Data
+            Graph for the specified frame
+        """
+        return self._create_graph_from_frame(idx, use_amino_acid_encoding)
 
     def _get_cache_filename(self):
-        """Generate a unique cache filename based on dataset parameters"""
-        # Create a hash from the trajectory files to ensure uniqueness
+        """Generate a unique cache filename based on dataset parameters."""
         import hashlib
         traj_hash = hashlib.md5(str(sorted(self.trajectory_files)).encode()).hexdigest()[:8]
-
-        # Format parameters into the filename
-        cache_name = f"vampnet_data_{traj_hash}_lag{self.lag_time}_nn{self.n_neighbors}_str{self.stride}.pkl"
+        cont_flag = "cont" if self.continuous else "noncont"
+        cache_name = f"vampnet_data_{traj_hash}_lag{self.lag_time}_nn{self.n_neighbors}_str{self.stride}_{cont_flag}.pkl"
         return os.path.join(self.cache_dir, cache_name)
 
     def _save_to_cache(self):
-        """Save processed data to cache file"""
+        """Save processed data to cache file."""
         if not self.cache_dir:
             print("No cache directory specified. Skipping cache save.")
             return False
@@ -418,7 +485,6 @@ class VAMPNetDataset(Dataset):
         cache_file = self._get_cache_filename()
         print(f"Saving dataset to cache: {cache_file}")
 
-        # Prepare data to save
         data = {
             'frames': self.frames,
             'atom_indices': self.atom_indices,
@@ -428,7 +494,7 @@ class VAMPNetDataset(Dataset):
             't1_indices': self.t1_indices,
             'n_frames': self.n_frames,
             'n_atoms': self.n_atoms,
-            # Save configuration parameters as well for reference
+            'trajectory_boundaries': self.trajectory_boundaries,
             'config': {
                 'lag_time': self.lag_time,
                 'n_neighbors': self.n_neighbors,
@@ -437,7 +503,10 @@ class VAMPNetDataset(Dataset):
                 'selection': self.selection,
                 'stride': self.stride,
                 'trajectory_files': self.trajectory_files,
-                'topology_file': self.topology_file
+                'topology_file': self.topology_file,
+                'use_amino_acid_encoding': self.use_amino_acid_encoding,
+                'amino_acid_feature_type': self.amino_acid_feature_type,
+                'continuous': self.continuous,
             }
         }
 
@@ -451,7 +520,7 @@ class VAMPNetDataset(Dataset):
             return False
 
     def _load_from_cache(self):
-        """Load processed data from cache if available"""
+        """Load processed data from cache if available."""
         if not self.cache_dir:
             return False
 
@@ -467,7 +536,6 @@ class VAMPNetDataset(Dataset):
             with open(cache_file, 'rb') as f:
                 data = pickle.load(f)
 
-            # Load data
             self.frames = data['frames']
             self.atom_indices = data['atom_indices']
             self.distance_min = data['distance_min']
@@ -476,14 +544,15 @@ class VAMPNetDataset(Dataset):
             self.t1_indices = data['t1_indices']
             self.n_frames = data['n_frames']
             self.n_atoms = data['n_atoms']
+            self.trajectory_boundaries = data.get('trajectory_boundaries', [0, self.n_frames])
 
-            # Verify configuration compatibility
             cached_config = data['config']
             if (cached_config['lag_time'] != self.lag_time or
                     cached_config['n_neighbors'] != self.n_neighbors or
                     cached_config['gaussian_expansion_dim'] != self.gaussian_expansion_dim or
                     cached_config['selection'] != self.selection or
-                    cached_config['stride'] != self.stride):
+                    cached_config['stride'] != self.stride or
+                    cached_config.get('continuous', True) != self.continuous):
                 print("Warning: Current configuration doesn't match cached configuration.")
                 print("Using cached data anyway, but consider regenerating if needed.")
 
@@ -497,46 +566,34 @@ class VAMPNetDataset(Dataset):
         """
         Infer the trajectory timestep in picoseconds and check lag time compatibility.
 
-        This method determines the timestep of the trajectory and verifies that
-        the requested lag time (in ns) can be achieved with the current stride.
-
-        Returns:
+        Returns
         -------
         float
             Timestep in picoseconds
 
-        Raises:
-        -------
+        Raises
+        ------
         ValueError
-            If the timestep can't be determined or if the lag time can't be achieved
-            with current stride.
+            If timestep can't be determined or lag time is incompatible
         """
         if not self.trajectory_files:
             raise ValueError("No trajectory files provided")
 
-        # Try direct iterload approach (most reliable)
         try:
-            # Load first few frames using iterload
             traj_iterator = md.iterload(self.trajectory_files[0], top=self.topology_file, chunk=2)
             first_chunk = next(traj_iterator)
 
             if len(first_chunk.time) < 2:
                 raise ValueError("Trajectory must have at least 2 frames to infer timestep")
 
-            # Calculate timestep from time differences
             timestep = first_chunk.time[1] - first_chunk.time[0]
         except Exception as e:
-            # If time information is not available, try alternative methods
             print(f"Warning: Could not determine timestep from trajectory time data: {str(e)}")
             timestep = None
 
-        # Convert lag_time from ns to ps for comparison
         lag_time_ps = self.lag_time * 1000.0
-
-        # Calculate effective timestep with stride
         effective_timestep = timestep * self.stride
 
-        # Check if lag time is achievable with the effective timestep
         if lag_time_ps % effective_timestep != 0:
             closest_achievable = round(lag_time_ps / effective_timestep) * effective_timestep
             raise ValueError(
@@ -547,7 +604,6 @@ class VAMPNetDataset(Dataset):
                 f"or adjust the stride to {int(lag_time_ps / timestep)}."
             )
 
-        # Calculate lag time in frames
         self.lag_frames = int(lag_time_ps / effective_timestep)
 
         print(f"Trajectory timestep: {timestep:.3f} ps")
@@ -557,8 +613,22 @@ class VAMPNetDataset(Dataset):
         return timestep
 
     @classmethod
-    def from_cache(cls, cache_file, node_embedding_dim=16):
-        """Create a dataset directly from a cache file"""
+    def from_cache(cls, cache_file: str, node_embedding_dim: int = 16):
+        """
+        Create a dataset directly from a cache file.
+
+        Parameters
+        ----------
+        cache_file : str
+            Path to the cache file
+        node_embedding_dim : int, default=16
+            Node embedding dimension
+
+        Returns
+        -------
+        VAMPNetDataset
+            Dataset loaded from cache
+        """
         if not os.path.exists(cache_file):
             raise FileNotFoundError(f"Cache file not found: {cache_file}")
 
@@ -568,11 +638,9 @@ class VAMPNetDataset(Dataset):
             with open(cache_file, 'rb') as f:
                 data = pickle.load(f)
 
-            # Create a new instance of the class
             instance = cls.__new__(cls)
             super(VAMPNetDataset, instance).__init__()
 
-            # Load data from cache
             instance.frames = data['frames']
             instance.atom_indices = data['atom_indices']
             instance.distance_min = data['distance_min']
@@ -581,8 +649,8 @@ class VAMPNetDataset(Dataset):
             instance.t1_indices = data['t1_indices']
             instance.n_frames = data['n_frames']
             instance.n_atoms = data['n_atoms']
+            instance.trajectory_boundaries = data.get('trajectory_boundaries', [0, data['n_frames']])
 
-            # Set configuration from cached data
             config = data['config']
             instance.lag_time = config['lag_time']
             instance.n_neighbors = config['n_neighbors']
@@ -591,28 +659,32 @@ class VAMPNetDataset(Dataset):
             instance.stride = config['stride']
             instance.trajectory_files = config['trajectory_files']
             instance.topology_file = config['topology_file']
+            instance.use_amino_acid_encoding = config.get('use_amino_acid_encoding', False)
+            instance.amino_acid_feature_type = config.get('amino_acid_feature_type', 'labels')
+            instance.continuous = config.get('continuous', True)
 
-            # Set node embedding dimension (can be different from cached)
             instance.node_embedding_dim = node_embedding_dim
-
-            # Set cache related attributes
             instance.cache_dir = os.path.dirname(cache_file)
+
+            # Load topology for amino acid encoding
+            instance.topology = md.load_topology(instance.topology_file)
 
             print(f"Successfully created dataset from cache: {instance.n_frames} frames, {instance.n_atoms} atoms")
             return instance
         except Exception as e:
             raise RuntimeError(f"Error loading dataset from cache: {str(e)}")
 
-    def precompute_graphs(self, max_graphs=None):
+    def precompute_graphs(self, max_graphs: int = None):
         """
         Precompute all graphs to speed up data loading.
 
-        Args:
-            max_graphs: Maximum number of graphs to precompute (None for all)
+        Parameters
+        ----------
+        max_graphs : int, optional
+            Maximum number of graphs to precompute (None for all)
         """
         print("Precomputing graphs...")
 
-        # Determine number of graphs to compute
         num_graphs = self.n_frames
         if max_graphs is not None and max_graphs < num_graphs:
             num_graphs = max_graphs
@@ -622,71 +694,117 @@ class VAMPNetDataset(Dataset):
 
         self.graphs = []
 
-        # Use tqdm for progress tracking
         for idx in tqdm(range(num_graphs), desc="Creating graphs", unit="graph"):
             graph = self._create_graph_from_frame(idx)
             self.graphs.append(graph)
 
         print(f"Precomputed {len(self.graphs)} graphs")
 
-        # Update getitem to use precomputed graphs if available
         self._original_getitem = self.__getitem__
 
         def new_getitem(idx):
             t0_idx = self.t0_indices[idx]
             t1_idx = self.t1_indices[idx]
 
-            # Use precomputed graphs if available, otherwise compute on-the-fly
             if t0_idx < len(self.graphs) and t1_idx < len(self.graphs):
                 return self.graphs[t0_idx], self.graphs[t1_idx]
             else:
                 return self._create_graph_from_frame(t0_idx), self._create_graph_from_frame(t1_idx)
 
-        self.__getitem__ = new_getitem.__get__(self)  # Bind method to instance
+        self.__getitem__ = new_getitem.__get__(self)
 
-    def get_frames_dataset(self, return_pairs=False):
+    def get_frames_dataset(self, return_pairs: bool = False):
         """
         Create a dataset that returns individual frames instead of time-lagged pairs.
 
-        This is particularly useful for analysis purposes where you want to process
-        each frame independently.
+        Uses the instance's use_amino_acid_encoding setting.
 
         Parameters
         ----------
         return_pairs : bool, default=False
-            If True, return time-lagged pairs as in the original dataset
+            If True, return time-lagged pairs
             If False, return individual frames
 
         Returns
         -------
         VAMPNetFramesDataset
-            A new dataset instance that returns individual frames
+            Dataset returning individual frames
         """
+        parent = self
 
-        # Create a new dataset class for frames
         class VAMPNetFramesDataset(torch.utils.data.Dataset):
             def __init__(self, parent_dataset, return_pairs=False):
                 self.parent = parent_dataset
                 self.return_pairs = return_pairs
-
-                # If not returning pairs, we can access all frames
-                if not return_pairs:
-                    self.n_samples = parent_dataset.n_frames
-                else:
-                    # Otherwise use the time-lagged pairs like the parent
-                    self.n_samples = len(parent_dataset.t0_indices)
+                self.n_samples = len(parent_dataset.t0_indices) if return_pairs else parent_dataset.n_frames
 
             def __len__(self):
                 return self.n_samples
 
             def __getitem__(self, idx):
                 if self.return_pairs:
-                    # Return time-lagged pairs as in the original dataset
                     return self.parent.__getitem__(idx)
                 else:
-                    # Return a single frame as a graph
                     return self.parent._create_graph_from_frame(idx)
 
-        # Create and return the frames dataset
-        return VAMPNetFramesDataset(self, return_pairs=return_pairs)
+        return VAMPNetFramesDataset(parent, return_pairs=return_pairs)
 
+    def get_frames_dataset_with_encoding(self, return_pairs: bool = False, use_amino_acid_encoding: bool = False):
+        """
+        Create a dataset that returns individual frames with explicit encoding control.
+
+        Parameters
+        ----------
+        return_pairs : bool, default=False
+            If True, return time-lagged pairs
+            If False, return individual frames
+        use_amino_acid_encoding : bool, default=False
+            Override the encoding type for this dataset
+
+        Returns
+        -------
+        VAMPNetFramesDataset
+            Dataset returning individual frames with specified encoding
+        """
+        parent = self
+
+        class VAMPNetFramesDataset(torch.utils.data.Dataset):
+            def __init__(self, parent_dataset, return_pairs, use_aa_encoding):
+                self.parent = parent_dataset
+                self.return_pairs = return_pairs
+                self.use_aa_encoding = use_aa_encoding
+                self.n_samples = len(parent_dataset.t0_indices) if return_pairs else parent_dataset.n_frames
+
+            def __len__(self):
+                return self.n_samples
+
+            def __getitem__(self, idx):
+                if self.return_pairs:
+                    t0_idx = self.parent.t0_indices[idx]
+                    t1_idx = self.parent.t1_indices[idx]
+                    graph_t0 = self.parent._create_graph_from_frame(t0_idx, use_amino_acid_encoding=self.use_aa_encoding)
+                    graph_t1 = self.parent._create_graph_from_frame(t1_idx, use_amino_acid_encoding=self.use_aa_encoding)
+                    return graph_t0, graph_t1
+                else:
+                    return self.parent._create_graph_from_frame(idx, use_amino_acid_encoding=self.use_aa_encoding)
+
+        return VAMPNetFramesDataset(parent, return_pairs, use_amino_acid_encoding)
+
+    # Backward compatibility alias
+    def get_AA_frames(self, return_pairs: bool = False):
+        """
+        Create a dataset with amino acid encoding (backward compatibility).
+
+        This is equivalent to get_frames_dataset_with_encoding(return_pairs, use_amino_acid_encoding=True).
+
+        Parameters
+        ----------
+        return_pairs : bool, default=False
+            If True, return time-lagged pairs
+
+        Returns
+        -------
+        VAMPNetFramesDataset
+            Dataset with amino acid encoded node features
+        """
+        return self.get_frames_dataset_with_encoding(return_pairs=return_pairs, use_amino_acid_encoding=True)

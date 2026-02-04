@@ -19,6 +19,7 @@ class BaseConfig:
     selection: str = "name CA"
     stride: int = 10
     lag_time: float = 20.0
+    continuous: bool = True  # If False, time-lagged pairs won't cross trajectory boundaries
 
     # Graph construction
     n_neighbors: int = 4
