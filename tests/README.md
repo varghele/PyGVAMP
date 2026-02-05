@@ -34,8 +34,9 @@ pytest tests/ -v --tb=short
 | `test_training.py` | 30 | Training pipeline, checkpointing, early stopping, device placement |
 | `test_analysis.py` | 43 | Analysis utilities, transition matrices, attention maps |
 | `test_ck_its.py` | 45 | Chapman-Kolmogorov test, implied timescales, Koopman operator |
+| `test_pipeline_integration.py` | 51 | Pipeline utilities, caching, argument parsing |
 
-**Total: 347 passed, 1 skipped**
+**Total: 398 passed, 1 skipped**
 
 ## Test Coverage by Encoder
 
@@ -391,6 +392,49 @@ pytest tests/ -v --tb=short
 - Koopman power property
 - ITS formula
 - Stationary distribution
+
+## Pipeline Integration Tests
+
+### CacheManager (`TestCacheManager`) - 11 tests
+- Initialization with config
+- Hash generation (determinism, length)
+- Hash sensitivity to parameters (traj_dir, stride, n_neighbors, selection)
+- Cache file checking
+
+### Pipeline Args (`TestPipelineArgs`) - 19 tests
+- Required arguments parsing
+- Default values (lag_times, n_states, output_dir, protein_name)
+- Multiple values (lag_times, n_states)
+- Flags (cache, hurry)
+- Optional arguments (preset, model, resume, skip_*, only_analysis)
+
+### Mock Config (`TestMockConfig`) - 4 tests
+- to_dict returns dict
+- Contains all fields
+- YAML creation and validity
+
+### Module Imports (`TestPipelineModuleImports`) - 4 tests
+- Caching module importable
+- Args module importable
+- Training and analysis modules have expected functions
+
+### Edge Cases (`TestCacheEdgeCases`, `TestArgsEdgeCases`) - 6 tests
+- Special characters in paths
+- Unicode in selection
+- Nonexistent cache directory
+- Single values as lists
+
+### Summary Format (`TestPipelineSummaryFormat`) - 2 tests
+- JSON structure
+- Config is dictionary
+
+### Directory Structure (`TestDirectoryStructure`) - 3 tests
+- Experiment directory subdirectories
+- Training/analysis subdirs per experiment
+
+### Config Serialization (`TestConfigSerialization`) - 2 tests
+- YAML roundtrip
+- JSON serializable
 
 ## Known Behaviors
 
