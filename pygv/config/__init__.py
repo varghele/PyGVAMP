@@ -1,7 +1,8 @@
 """
 Configuration management for PyGVAMP
 """
-from .base_config import BaseConfig, SchNetConfig, MetaConfig, ML3Config
+from .base_config import BaseConfig
+from .model_configs import SchNetConfig, MetaConfig, ML3Config
 from .presets.small import SmallSchNetConfig, SmallMetaConfig, SmallML3Config
 from .presets.medium import MediumSchNetConfig, MediumMetaConfig, MediumML3Config
 from .presets.large import LargeSchNetConfig, LargeMetaConfig, LargeML3Config

@@ -1,5 +1,5 @@
 """Small model configuration for small molecular systems (e.g., small molecules, ligands)"""
-from ..base_config import SchNetConfig, MetaConfig, ML3Config
+from ..model_configs import SchNetConfig, MetaConfig, ML3Config
 
 
 class SmallSchNetConfig(SchNetConfig):

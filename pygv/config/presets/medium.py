@@ -1,5 +1,5 @@
 """Medium model configuration for medium-sized molecular systems (e.g., peptides, small protein domains)"""
-from ..base_config import SchNetConfig, MetaConfig, ML3Config
+from ..model_configs import SchNetConfig, MetaConfig, ML3Config
 
 
 class MediumSchNetConfig(SchNetConfig):

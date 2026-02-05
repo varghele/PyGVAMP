@@ -1,5 +1,5 @@
 """Large model configuration for large molecular systems (e.g., proteins, protein complexes)"""
-from ..base_config import SchNetConfig, MetaConfig, ML3Config
+from ..model_configs import SchNetConfig, MetaConfig, ML3Config
 
 
 class LargeSchNetConfig(SchNetConfig):
