@@ -31,8 +31,9 @@ pytest tests/ -v --tb=short
 | `test_dataset.py` | 53 | VAMPNetDataset graph construction, caching, time-lagged pairs |
 | `test_classifier.py` | 33 | SoftmaxMLP probability outputs, gradient flow, configurations |
 | `test_config.py` | 58 | Configuration defaults, presets, serialization, registry |
+| `test_training.py` | 30 | Training pipeline, checkpointing, early stopping, device placement |
 
-**Total: 229 passed, 1 skipped**
+**Total: 259 passed, 1 skipped**
 
 ## Test Coverage by Encoder
 
@@ -208,6 +209,58 @@ pytest tests/ -v --tb=short
 ### Precompute & Distance (`TestPrecomputeGraphs`, `TestDistanceRange`) - 4 tests
 - Graph precomputation
 - Distance range determination
+
+## Training Pipeline Tests
+
+### Setup (`TestSetupOutputDirectory`) - 5 tests
+- Creates directories
+- Returns correct paths
+- Run name generation
+
+### Config (`TestSaveConfig`) - 3 tests
+- Saves config file
+- Contains parameters
+- Values correct
+
+### Training Step (`TestTrainingStep`) - 4 tests
+- Forward pass
+- Loss computation
+- Backward pass
+- Optimizer step
+
+### Training Loop (`TestTrainingLoop`) - 4 tests
+- Fit completes
+- Validation
+- Returns history
+- Training improves score
+
+### Checkpointing (`TestCheckpointing`) - 3 tests
+- Saves checkpoints
+- Saves final model
+- Checkpoint loadable
+
+### Early Stopping (`TestEarlyStopping`) - 1 test
+- Early stopping triggers
+
+### Gradient Clipping (`TestGradientClipping`) - 1 test
+- Gradient clipping applied
+
+### Different Encoders (`TestDifferentEncoders`) - 2 tests
+- Training with SchNet
+- Training with Meta
+
+### Device Placement (`TestDevicePlacement`) - 2 tests
+- Training on CPU
+- Training on GPU (skipped if unavailable)
+
+### Edge Cases (`TestEdgeCases`) - 3 tests
+- Single epoch
+- Small batch size
+- No save directory
+
+### Optimizer Options (`TestOptimizerOptions`) - 2 tests
+- Custom optimizer
+- Different learning rates
 
 ## Known Behaviors
 

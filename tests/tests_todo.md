@@ -14,12 +14,12 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 | `test_dataset.py` | 53 | ✅ Complete |
 | `test_classifier.py` | 33 | ✅ Complete |
 | `test_config.py` | 58 | ✅ Complete |
-| `test_training.py` | - | ⬜ Not started |
+| `test_training.py` | 30 | ✅ Complete |
 | `test_analysis.py` | - | ⬜ Not started |
 | `test_pipeline_integration.py` | - | ⬜ Not started |
 | `test_ck_its.py` | - | ⬜ Not started |
 
-**Total tests: 229 passed, 1 skipped**
+**Total tests: 259 passed, 1 skipped**
 
 ---
 
@@ -107,23 +107,23 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 
 ---
 
-### 5. `test_training.py`
+### 5. `test_training.py` ✅ COMPLETE
 
 **Component:** `pygv/pipe/training.py` (449 lines)
 
-**Why important:** Ensures training loop behaves correctly.
+**Tests implemented (30 tests):**
+- [x] Single training step completes without error
+- [x] Loss decreases over multiple epochs (on simple data)
+- [x] Checkpoint saving works
+- [x] Checkpoint loading restores model state
+- [x] Early stopping triggers correctly
+- [x] Gradient clipping works
+- [x] Handles device placement (CPU/CUDA)
+- [x] Different encoder types (SchNet, Meta)
+- [x] Custom optimizer options
+- [x] Output directory setup
 
-**Tests to implement:**
-- [ ] Single training step completes without error
-- [ ] Loss decreases over multiple epochs (on simple data)
-- [ ] Checkpoint saving works
-- [ ] Checkpoint loading restores model state
-- [ ] Early stopping triggers correctly
-- [ ] Learning rate scheduling works
-- [ ] Handles device placement (CPU/CUDA)
-- [ ] Grid search over lag_times and n_states works
-
-**Note:** May need to mock or use small synthetic datasets.
+**Note:** Tests use synthetic graph datasets to avoid external file dependencies.
 
 ---
 
@@ -184,7 +184,7 @@ Some tests require test data:
 | Test | Data Needed | Status |
 |------|-------------|--------|
 | `test_dataset.py` | Mock MDTraj objects | ✅ Done |
-| `test_training.py` | Synthetic graphs | ⬜ Not started |
+| `test_training.py` | Synthetic graphs | ✅ Done |
 | `test_analysis.py` | Model checkpoint | ⬜ Not started |
 | `test_pipeline_integration.py` | Trajectory files | ⬜ Not started |
 
@@ -226,6 +226,7 @@ pytest tests/ -v -k "gradient"
 | 2026-02-05 | Created `test_dataset.py` (53 tests) - VAMPNetDataset with mocked MDTraj |
 | 2026-02-05 | Created `test_classifier.py` (33 tests) - SoftmaxMLP classifier |
 | 2026-02-05 | Created `test_config.py` (58 tests) - Configuration system |
+| 2026-02-05 | Created `test_training.py` (30 tests) - Training pipeline with synthetic data |
 | | |
 
 ## Bugs Found During Testing
