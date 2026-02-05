@@ -30,8 +30,9 @@ pytest tests/ -v --tb=short
 | `test_vampnet_model.py` | 28 (+1 skip) | Full model integration, training, save/load |
 | `test_dataset.py` | 53 | VAMPNetDataset graph construction, caching, time-lagged pairs |
 | `test_classifier.py` | 33 | SoftmaxMLP probability outputs, gradient flow, configurations |
+| `test_config.py` | 58 | Configuration defaults, presets, serialization, registry |
 
-**Total: 171 passed, 1 skipped**
+**Total: 229 passed, 1 skipped**
 
 ## Test Coverage by Encoder
 

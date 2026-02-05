@@ -13,13 +13,13 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 | `test_vampnet_model.py` | 28 (+1 skipped) | ✅ Complete |
 | `test_dataset.py` | 53 | ✅ Complete |
 | `test_classifier.py` | 33 | ✅ Complete |
-| `test_config.py` | - | ⬜ Not started |
+| `test_config.py` | 58 | ✅ Complete |
 | `test_training.py` | - | ⬜ Not started |
 | `test_analysis.py` | - | ⬜ Not started |
 | `test_pipeline_integration.py` | - | ⬜ Not started |
 | `test_ck_its.py` | - | ⬜ Not started |
 
-**Total tests: 171 passed, 1 skipped**
+**Total tests: 229 passed, 1 skipped**
 
 ---
 
@@ -88,19 +88,22 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 
 ## Medium Priority Tests
 
-### 4. `test_config.py`
+### 4. `test_config.py` ✅ COMPLETE
 
-**Component:** `pygv/config/base_config.py` (169 lines)
+**Component:** `pygv/config/` (base_config.py, model_configs/, presets/)
 
-**Why important:** Configuration errors cause hard-to-debug failures downstream.
-
-**Tests to implement:**
-- [ ] BaseConfig initializes with valid defaults
-- [ ] SchNetConfig has correct encoder-specific defaults
-- [ ] Invalid parameter combinations raise errors
-- [ ] Preset loading works (small preset)
-- [ ] CLI argument overrides work
-- [ ] Config can be serialized/deserialized (for reproducibility)
+**Tests implemented (58 tests):**
+- [x] BaseConfig initializes with valid defaults (all parameter groups)
+- [x] SchNetConfig, MetaConfig, ML3Config have correct encoder-specific defaults
+- [x] Preset classes exist and are instantiable
+- [x] CONFIG_REGISTRY contains all expected entries
+- [x] get_config() works with all presets
+- [x] get_config() applies overrides correctly
+- [x] Invalid preset/parameter raises ValueError
+- [x] YAML/JSON serialization and deserialization
+- [x] Config update() and merge() methods
+- [x] Config inheritance chain
+- [x] Dataclass behavior (equality, repr, fields)
 
 ---
 
@@ -222,6 +225,7 @@ pytest tests/ -v -k "gradient"
 | 2026-01-16 | Created `test_vampnet_model.py` (28 tests + 1 skipped) |
 | 2026-02-05 | Created `test_dataset.py` (53 tests) - VAMPNetDataset with mocked MDTraj |
 | 2026-02-05 | Created `test_classifier.py` (33 tests) - SoftmaxMLP classifier |
+| 2026-02-05 | Created `test_config.py` (58 tests) - Configuration system |
 | | |
 
 ## Bugs Found During Testing
