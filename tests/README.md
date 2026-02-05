@@ -33,8 +33,9 @@ pytest tests/ -v --tb=short
 | `test_config.py` | 58 | Configuration defaults, presets, serialization, registry |
 | `test_training.py` | 30 | Training pipeline, checkpointing, early stopping, device placement |
 | `test_analysis.py` | 43 | Analysis utilities, transition matrices, attention maps |
+| `test_ck_its.py` | 45 | Chapman-Kolmogorov test, implied timescales, Koopman operator |
 
-**Total: 302 passed, 1 skipped**
+**Total: 347 passed, 1 skipped**
 
 ## Test Coverage by Encoder
 
@@ -324,6 +325,72 @@ pytest tests/ -v --tb=short
 ### Output Tests (`TestMetadataOutput`, `TestStateCountsOutput`) - 2 tests
 - Metadata file contains info
 - State counts file format
+
+## Chapman-Kolmogorov & Implied Timescales Tests
+
+### Koopman Operator (`TestEstimateKoopmanOp`) - 7 tests
+- Correct shape
+- Lag=0 is identity
+- Handles list of trajectories
+- Skips short trajectories
+- Eigenvalues bounded
+- Has unit eigenvalue
+- Different lag times differ
+
+### Chapman-Kolmogorov Test (`TestChapmanKolmogorovTest`) - 7 tests
+- Returns list of [predicted, estimated]
+- Output shapes
+- Initial is identity
+- Predicted uses matrix power
+- Probabilities in valid range
+- Two-state system
+- Markovian data agreement
+
+### CK Plotting (`TestCKPlotting`) - 3 tests
+- Creates file
+- Returns figure and axes
+- Axes shape matches states
+
+### CK Analysis (`TestRunCKAnalysis`) - 3 tests
+- Returns dict
+- Creates folder
+- Results contain arrays
+
+### Implied Timescales (`TestGetITS`) - 7 tests
+- Returns tuple
+- Array shape (n_states-1, n_lags)
+- Excludes stationary process
+- Returns lag times
+- Positive values
+- Two-state system
+- Stride affects frames
+
+### ITS Plotting (`TestITSPlotting`) - 3 tests
+- Creates file
+- Returns path
+- Subset of states
+
+### ITS Analysis (`TestAnalyzeImpliedTimescales`) - 5 tests
+- Returns dict
+- Creates folder
+- Saves data and summary
+- Result keys
+
+### Edge Cases (`TestEdgeCases`) - 4 tests
+- Single lag time
+- Many states
+- Short trajectory
+- Empty trajectory list
+
+### Numerical Stability (`TestNumericalStability`) - 3 tests
+- Near-degenerate eigenvalues
+- Deterministic results
+- Large trajectory
+
+### Mathematical Properties (`TestMathematicalProperties`) - 3 tests
+- Koopman power property
+- ITS formula
+- Stationary distribution
 
 ## Known Behaviors
 

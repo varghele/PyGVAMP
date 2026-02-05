@@ -16,10 +16,10 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 | `test_config.py` | 58 | ✅ Complete |
 | `test_training.py` | 30 | ✅ Complete |
 | `test_analysis.py` | 43 | ✅ Complete |
+| `test_ck_its.py` | 45 | ✅ Complete |
 | `test_pipeline_integration.py` | - | ⬜ Not started |
-| `test_ck_its.py` | - | ⬜ Not started |
 
-**Total tests: 302 passed, 1 skipped**
+**Total tests: 347 passed, 1 skipped**
 
 ---
 
@@ -164,18 +164,20 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 
 ---
 
-### 8. `test_ck_its.py`
+### 8. `test_ck_its.py` ✅ COMPLETE
 
 **Components:** `pygv/utils/ck.py`, `pygv/utils/its.py`
 
-**Why important:** Validates Markov model analysis tools.
-
-**Tests to implement:**
-- [ ] Implied timescales calculation is correct
-- [ ] ITS converges for Markovian data
-- [ ] Chapman-Kolmogorov test produces valid comparison
-- [ ] Handles different lag times correctly
-- [ ] Eigenvalue extraction works
+**Tests implemented (45 tests):**
+- [x] Koopman operator estimation (shape, eigenvalues, list handling)
+- [x] Chapman-Kolmogorov test (output shapes, initial identity, predicted uses power)
+- [x] CK plotting functions (file creation, figure/axes return)
+- [x] Full CK analysis (returns dict, creates folder, contains arrays)
+- [x] Implied timescales calculation (shape, excludes stationary, stride handling)
+- [x] ITS plotting and analysis functions
+- [x] Edge cases (single lag, many states, short trajectory)
+- [x] Numerical stability (degenerate eigenvalues, large trajectory)
+- [x] Mathematical properties (Koopman power, ITS formula, stationary distribution)
 
 ---
 
@@ -230,6 +232,7 @@ pytest tests/ -v -k "gradient"
 | 2026-02-05 | Created `test_config.py` (58 tests) - Configuration system |
 | 2026-02-05 | Created `test_training.py` (30 tests) - Training pipeline with synthetic data |
 | 2026-02-05 | Created `test_analysis.py` (43 tests) - Analysis utilities with mock model |
+| 2026-02-05 | Created `test_ck_its.py` (45 tests) - CK test and ITS utilities |
 | | |
 
 ## Bugs Found During Testing
