@@ -28,8 +28,9 @@ pytest tests/ -v --tb=short
 | `test_encoders.py` | 26 | Encoder forward pass, gradient flow, batching |
 | `test_vamp_score.py` | 31 | VAMP score computation, gradients, math properties |
 | `test_vampnet_model.py` | 28 (+1 skip) | Full model integration, training, save/load |
+| `test_dataset.py` | 53 | VAMPNetDataset graph construction, caching, time-lagged pairs |
 
-**Total: 85 passed, 1 skipped**
+**Total: 138 passed, 1 skipped**
 
 ## Test Coverage by Encoder
 
@@ -147,6 +148,64 @@ pytest tests/ -v --tb=short
 ### Edge Cases (`TestEdgeCases`) - 2 tests (+1 skipped)
 - Eval vs train mode
 - Deterministic eval mode
+
+## VAMPNetDataset Tests
+
+### Graph Construction (`TestGraphConstruction`) - 8 tests
+- Correct number of nodes
+- k-NN edge count
+- No self-edges
+- Edge attribute shape and values
+- Valid PyG Data object
+- Deterministic construction
+
+### Node Features (`TestNodeFeatures`) - 6 tests
+- One-hot encoding shape, diagonal, off-diagonal
+- Amino acid labels shape and range
+- Amino acid properties shape
+
+### Gaussian Expansion (`TestGaussianExpansion`) - 4 tests
+- Output shape
+- Non-negative and bounded values
+- Deterministic results
+
+### Time-Lagged Pairs (`TestTimeLaggedPairs`) - 8 tests
+- Continuous mode pair count and offset
+- Non-continuous mode boundary handling
+- Short trajectory handling
+- Getitem returns tuple of different graphs
+
+### Lag Time Validation (`TestLagTimeValidation`) - 4 tests
+- Valid/invalid lag time handling
+- Lag frames calculation
+- Stride effects
+
+### Caching (`TestCaching`) - 6 tests
+- Cache filename format
+- Save on first run
+- Load on second run
+- Config storage and mismatch warnings
+- use_cache=False behavior
+
+### Dataset Interface (`TestDatasetInterface`) - 5 tests
+- len() returns int
+- Valid and negative index access
+- get_graph() and get_frames_dataset()
+
+### Edge Cases (`TestEdgeCases`) - 4 tests
+- Single frame trajectory
+- Few atoms (< n_neighbors)
+- Empty selection raises error
+- Missing file handling
+
+### Frames Dataset (`TestFramesDataset`) - 4 tests
+- Length and single graph return
+- Pairs mode
+- Encoding override
+
+### Precompute & Distance (`TestPrecomputeGraphs`, `TestDistanceRange`) - 4 tests
+- Graph precomputation
+- Distance range determination
 
 ## Known Behaviors
 

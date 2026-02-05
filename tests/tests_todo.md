@@ -11,15 +11,15 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 | `test_encoders.py` | 26 | ✅ Complete |
 | `test_vamp_score.py` | 31 | ✅ Complete |
 | `test_vampnet_model.py` | 28 (+1 skipped) | ✅ Complete |
+| `test_dataset.py` | 53 | ✅ Complete |
 | `test_classifier.py` | - | ⬜ Not started |
-| `test_dataset.py` | - | ⬜ Not started |
 | `test_config.py` | - | ⬜ Not started |
 | `test_training.py` | - | ⬜ Not started |
 | `test_analysis.py` | - | ⬜ Not started |
 | `test_pipeline_integration.py` | - | ⬜ Not started |
 | `test_ck_its.py` | - | ⬜ Not started |
 
-**Total tests: 85 passed, 1 skipped**
+**Total tests: 138 passed, 1 skipped**
 
 ---
 
@@ -60,25 +60,26 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 
 ---
 
-### 3. `test_dataset.py`
+### 3. `test_dataset.py` ✅ COMPLETE
 
-**Component:** `pygv/dataset/vampnet_dataset.py` (692 lines)
+**Component:** `pygv/dataset/vampnet_dataset.py` (811 lines)
 
-**Why important:** Validates the MD trajectory → PyG graph conversion pipeline. Errors here propagate to all downstream components.
+**Tests implemented (53 tests):**
+- [x] Graph construction produces valid PyG Data objects
+- [x] Node features have correct dimensions (one-hot encoding)
+- [x] k-NN edges are created correctly (correct number of neighbors)
+- [x] Edge features (Gaussian expansion) have correct dimensions
+- [x] Time-lagged pairs have correct temporal offset
+- [x] Stride parameter works correctly
+- [x] Caching works (hash-based, loads from cache on second call)
+- [x] Handles multiple trajectory files
+- [x] Graph is asymmetric (k-NN, not mutual k-NN)
+- [x] Amino acid encoding (labels and properties)
+- [x] Continuous vs non-continuous trajectory modes
+- [x] Lag time validation
+- [x] Edge cases (single frame, few atoms, empty selection)
 
-**Tests to implement:**
-- [ ] Graph construction produces valid PyG Data objects
-- [ ] Node features have correct dimensions (one-hot encoding)
-- [ ] k-NN edges are created correctly (correct number of neighbors)
-- [ ] Edge features (Gaussian expansion) have correct dimensions
-- [ ] Time-lagged pairs have correct temporal offset
-- [ ] Stride parameter works correctly
-- [ ] Different atom selections work ("name CA", "protein", etc.)
-- [ ] Caching works (hash-based, loads from cache on second call)
-- [ ] Handles multiple trajectory files
-- [ ] Graph is asymmetric (k-NN, not mutual k-NN)
-
-**Note:** These tests may require mock trajectory data or small test PDB/XTC files.
+**Note:** Tests use mocked MDTraj to avoid external file dependencies.
 
 ---
 
@@ -216,6 +217,7 @@ pytest tests/ -v -k "gradient"
 | 2026-01-16 | Created `test_encoders.py` (26 tests) |
 | 2026-01-16 | Created `test_vamp_score.py` (31 tests) |
 | 2026-01-16 | Created `test_vampnet_model.py` (28 tests + 1 skipped) |
+| 2026-02-05 | Created `test_dataset.py` (53 tests) - VAMPNetDataset with mocked MDTraj |
 | | |
 
 ## Bugs Found During Testing
