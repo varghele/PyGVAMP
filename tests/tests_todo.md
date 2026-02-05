@@ -15,11 +15,11 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 | `test_classifier.py` | 33 | ✅ Complete |
 | `test_config.py` | 58 | ✅ Complete |
 | `test_training.py` | 30 | ✅ Complete |
-| `test_analysis.py` | - | ⬜ Not started |
+| `test_analysis.py` | 43 | ✅ Complete |
 | `test_pipeline_integration.py` | - | ⬜ Not started |
 | `test_ck_its.py` | - | ⬜ Not started |
 
-**Total tests: 259 passed, 1 skipped**
+**Total tests: 302 passed, 1 skipped**
 
 ---
 
@@ -127,19 +127,21 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 
 ---
 
-### 6. `test_analysis.py`
+### 6. `test_analysis.py` ✅ COMPLETE
 
-**Component:** `pygv/pipe/analysis.py` (352 lines)
+**Component:** `pygv/utils/analysis.py` and `pygv/pipe/analysis.py`
 
-**Why important:** Validates that analysis outputs are correct for publication.
-
-**Tests to implement:**
-- [ ] State assignment produces valid labels (0 to n_states-1)
-- [ ] Transition matrix rows sum to 1
-- [ ] Transition matrix values are in [0, 1]
-- [ ] Attention maps have correct shape
-- [ ] Representative structure extraction works
-- [ ] Analysis handles models with different n_states
+**Tests implemented (43 tests):**
+- [x] State assignment produces valid labels (0 to n_states-1)
+- [x] Transition matrix rows sum to 1
+- [x] Transition matrix values are in [0, 1]
+- [x] Attention maps have correct shape
+- [x] State populations sum to 1
+- [x] extract_residue_indices_from_selection returns correct data
+- [x] analyze_vampnet_outputs returns correct outputs
+- [x] Edge cases (single frame, many states, missing attention)
+- [x] Numerical stability (small probabilities, equal probabilities)
+- [x] Metadata and counts file output
 
 ---
 
@@ -185,7 +187,7 @@ Some tests require test data:
 |------|-------------|--------|
 | `test_dataset.py` | Mock MDTraj objects | ✅ Done |
 | `test_training.py` | Synthetic graphs | ✅ Done |
-| `test_analysis.py` | Model checkpoint | ⬜ Not started |
+| `test_analysis.py` | Synthetic data + mock model | ✅ Done |
 | `test_pipeline_integration.py` | Trajectory files | ⬜ Not started |
 
 **Options:**
@@ -227,6 +229,7 @@ pytest tests/ -v -k "gradient"
 | 2026-02-05 | Created `test_classifier.py` (33 tests) - SoftmaxMLP classifier |
 | 2026-02-05 | Created `test_config.py` (58 tests) - Configuration system |
 | 2026-02-05 | Created `test_training.py` (30 tests) - Training pipeline with synthetic data |
+| 2026-02-05 | Created `test_analysis.py` (43 tests) - Analysis utilities with mock model |
 | | |
 
 ## Bugs Found During Testing

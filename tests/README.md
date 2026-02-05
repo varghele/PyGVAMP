@@ -32,8 +32,9 @@ pytest tests/ -v --tb=short
 | `test_classifier.py` | 33 | SoftmaxMLP probability outputs, gradient flow, configurations |
 | `test_config.py` | 58 | Configuration defaults, presets, serialization, registry |
 | `test_training.py` | 30 | Training pipeline, checkpointing, early stopping, device placement |
+| `test_analysis.py` | 43 | Analysis utilities, transition matrices, attention maps |
 
-**Total: 259 passed, 1 skipped**
+**Total: 302 passed, 1 skipped**
 
 ## Test Coverage by Encoder
 
@@ -261,6 +262,68 @@ pytest tests/ -v --tb=short
 ### Optimizer Options (`TestOptimizerOptions`) - 2 tests
 - Custom optimizer
 - Different learning rates
+
+## Analysis Tests
+
+### State Assignment (`TestStateAssignment`) - 4 tests
+- Argmax gives state assignments
+- Clear states match highest probability
+- Values in valid range
+- Unique states count
+
+### Transition Matrix (`TestTransitionMatrix`) - 6 tests
+- Correct shape
+- Rows sum to 1
+- Values in [0, 1]
+- No-self has zero diagonal
+- Short trajectory returns identity
+- Lag frames calculation
+
+### State Edge Attention Maps (`TestStateEdgeAttentionMaps`) - 5 tests
+- Attention maps shape
+- State populations sum to 1
+- Populations non-negative
+- Maps non-negative
+- Saves files
+
+### Extract Residue Indices (`TestExtractResidueIndices`) - 6 tests
+- Returns tuple
+- Indices are list
+- Names are list
+- Same length
+- Names contain residue info
+- Empty selection raises error
+
+### Analyze VAMPNet Outputs (`TestAnalyzeVAMPNetOutputs`) - 9 tests
+- Returns tuple of four
+- Probs shape
+- Embeddings shape
+- Returns numpy by default
+- Returns tensors when requested
+- Creates output files
+- Edge attentions/indices are lists
+- Probs are valid distribution
+
+### Probability Properties (`TestProbabilityProperties`) - 4 tests
+- Non-negative
+- At most one
+- Sum to one
+- Clear state has high probability
+
+### Edge Cases (`TestEdgeCases`) - 4 tests
+- Single frame probabilities
+- Two-state system
+- Many states system
+- Missing attention handled
+
+### Numerical Stability (`TestNumericalStability`) - 3 tests
+- Very small probabilities
+- Equal probabilities
+- Deterministic results
+
+### Output Tests (`TestMetadataOutput`, `TestStateCountsOutput`) - 2 tests
+- Metadata file contains info
+- State counts file format
 
 ## Known Behaviors
 
