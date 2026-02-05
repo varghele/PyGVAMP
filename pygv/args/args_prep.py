@@ -21,6 +21,22 @@ def add_prep_args(parser: argparse.ArgumentParser):
                             help='Precompute all graphs (uses more memory but faster)')
     prep_group.add_argument('--max_precompute', type=int, default=None,
                             help='Maximum number of graphs to precompute (None for all)')
+
+    # State discovery arguments
+    discovery_group = parser.add_argument_group('State Discovery Options')
+    discovery_group.add_argument('--discover_states', action='store_true',
+                                  help='Run Graph2Vec + clustering for unsupervised state discovery')
+    discovery_group.add_argument('--g2v_embedding_dim', type=int, default=64,
+                                  help='Graph2Vec embedding dimension')
+    discovery_group.add_argument('--g2v_max_degree', type=int, default=2,
+                                  help='Graph2Vec WL iteration depth')
+    discovery_group.add_argument('--g2v_epochs', type=int, default=50,
+                                  help='Graph2Vec training epochs')
+    discovery_group.add_argument('--min_states', type=int, default=2,
+                                  help='Minimum number of states to test in clustering')
+    discovery_group.add_argument('--max_states', type=int, default=15,
+                                  help='Maximum number of states to test in clustering')
+
     return prep_group
 
 

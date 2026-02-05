@@ -13,6 +13,7 @@ import torch
 from torch_geometric.loader import DataLoader
 from datetime import datetime
 import json
+import mdtraj as md
 
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
 from pygv.utils.pipe_utils import find_trajectory_files
@@ -36,6 +37,8 @@ def setup_output_directory(args):
         'cache_dir': cache_dir,
         'config': os.path.join(run_dir, 'prep_config.json'),
         'stats': os.path.join(run_dir, 'dataset_stats.json'),
+        'topology_pdb': os.path.join(run_dir, 'topology.pdb'),
+        'state_discovery_dir': os.path.join(run_dir, 'state_discovery'),
     }
 
     return paths
@@ -52,9 +55,141 @@ def save_config(args, paths):
     print(f"Configuration saved to {paths['config']}")
 
 
+def save_topology_as_pdb(topology_file, selection, output_path):
+    """
+    Load topology and save as PDB file with selected atoms.
+
+    Parameters
+    ----------
+    topology_file : str
+        Path to input topology file (can be .pdb, .mae, .gro, etc.)
+    selection : str
+        MDTraj selection string (e.g., "name CA")
+    output_path : str
+        Path where the PDB file will be saved
+
+    Returns
+    -------
+    dict
+        Information about the saved topology
+    """
+    print(f"Loading topology from {topology_file}")
+
+    # Load topology - MDTraj can handle various formats
+    topology = md.load_topology(topology_file)
+
+    # Get selected atom indices
+    atom_indices = topology.select(selection)
+
+    if len(atom_indices) == 0:
+        raise ValueError(f"Selection '{selection}' returned no atoms!")
+
+    print(f"Selected {len(atom_indices)} atoms with selection: '{selection}'")
+
+    # Create a minimal structure with the topology
+    # We need coordinates to save as PDB, so create dummy coordinates at origin
+    # These will be replaced by actual coordinates during analysis
+    import numpy as np
+    n_atoms = topology.n_atoms
+    dummy_coords = np.zeros((1, n_atoms, 3))
+
+    # Create trajectory object with full topology
+    traj = md.Trajectory(dummy_coords, topology)
+
+    # Slice to selected atoms
+    traj_selected = traj.atom_slice(atom_indices)
+
+    # Save as PDB
+    traj_selected.save_pdb(output_path)
+
+    print(f"Topology saved as PDB: {output_path}")
+
+    # Collect topology information
+    topology_info = {
+        'input_file': topology_file,
+        'output_pdb': output_path,
+        'selection': selection,
+        'n_atoms_total': n_atoms,
+        'n_atoms_selected': len(atom_indices),
+        'atom_indices': atom_indices.tolist(),
+        'residues': []
+    }
+
+    # Get residue information for selected atoms
+    selected_topology = traj_selected.topology
+    for residue in selected_topology.residues:
+        topology_info['residues'].append({
+            'name': residue.name,
+            'index': residue.index,
+            'n_atoms': residue.n_atoms
+        })
+
+    return topology_info
+
+
+def run_state_discovery(dataset, args, paths):
+    """
+    Run Graph2Vec + clustering for unsupervised state discovery.
+
+    Parameters
+    ----------
+    dataset : VAMPNetDataset
+        The prepared dataset
+    args : Namespace
+        Command line arguments
+    paths : dict
+        Output paths dictionary
+
+    Returns
+    -------
+    dict
+        State discovery results including recommended n_states
+    """
+    from pygv.clustering.state_discovery import StateDiscovery
+
+    # Get frames dataset (not pairs)
+    frames_ds = dataset.get_frames_dataset(return_pairs=False)
+
+    # Create state discovery output directory
+    os.makedirs(paths['state_discovery_dir'], exist_ok=True)
+
+    # Run state discovery
+    discovery = StateDiscovery(
+        embedding_dim=args.g2v_embedding_dim,
+        max_degree=args.g2v_max_degree,
+        g2v_epochs=args.g2v_epochs,
+        max_k=args.max_states,
+        min_k=args.min_states,
+    )
+    discovery.fit(frames_ds)
+
+    # Generate visualizations
+    discovery.plot_results(paths['state_discovery_dir'])
+
+    # Get recommendation
+    recommended_n_states = discovery.get_recommended_n_states()
+
+    return {
+        'recommended_n_states': recommended_n_states,
+        'embeddings_shape': list(discovery.get_embeddings().shape),
+        'silhouette_scores': {str(k): float(v) for k, v in discovery.silhouette_scores.items()},
+        'best_silhouette_k': discovery.best_k,
+        'elbow_k': discovery.elbow_k,
+    }
+
+
 def create_and_analyze_dataset(args, paths):
     """Create and analyze the dataset"""
-    print(f"Looking for trajectory files in {args.traj_dir}")
+
+    # First, convert and save topology as PDB
+    print("\n=== TOPOLOGY CONVERSION ===")
+    topology_info = save_topology_as_pdb(
+        topology_file=args.top,
+        selection=args.selection,
+        output_path=paths['topology_pdb']
+    )
+
+    print(f"\nLooking for trajectory files in {args.traj_dir}")
 
     # Find trajectory files
     trajectory_files = find_trajectory_files(
@@ -89,6 +224,12 @@ def create_and_analyze_dataset(args, paths):
     stats = {
         'num_samples': len(dataset),
         'trajectories': [os.path.basename(f) for f in trajectory_files],
+        'topology': {
+            'input_file': topology_info['input_file'],
+            'output_pdb': topology_info['output_pdb'],
+            'n_atoms_selected': topology_info['n_atoms_selected'],
+            'n_residues': len(topology_info['residues']),
+        },
         'parameters': {
             'lag_time': args.lag_time,
             'n_neighbors': args.n_neighbors,
@@ -110,6 +251,13 @@ def create_and_analyze_dataset(args, paths):
             'node_feature_dim': x_t0.x.shape[1],
             'edge_feature_dim': x_t0.edge_attr.shape[1]
         }
+
+    # Run state discovery if enabled
+    if hasattr(args, 'discover_states') and args.discover_states:
+        print("\n=== STATE DISCOVERY ===")
+        state_discovery_results = run_state_discovery(dataset, args, paths)
+        stats['state_discovery'] = state_discovery_results
+        print(f"\nRecommended n_states: {state_discovery_results['recommended_n_states']}")
 
     # Save statistics
     with open(paths['stats'], 'w') as f:
@@ -190,6 +338,7 @@ def main():
 
     print(f"\nData preparation completed successfully!")
     print(f"Output directory: {paths['run_dir']}")
+    print(f"Topology PDB: {paths['topology_pdb']}")
     print(f"Cache directory: {paths['cache_dir']}")
 
 
