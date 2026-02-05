@@ -29,8 +29,9 @@ pytest tests/ -v --tb=short
 | `test_vamp_score.py` | 31 | VAMP score computation, gradients, math properties |
 | `test_vampnet_model.py` | 28 (+1 skip) | Full model integration, training, save/load |
 | `test_dataset.py` | 53 | VAMPNetDataset graph construction, caching, time-lagged pairs |
+| `test_classifier.py` | 33 | SoftmaxMLP probability outputs, gradient flow, configurations |
 
-**Total: 138 passed, 1 skipped**
+**Total: 171 passed, 1 skipped**
 
 ## Test Coverage by Encoder
 

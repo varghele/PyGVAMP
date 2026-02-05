@@ -12,51 +12,54 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 | `test_vamp_score.py` | 31 | ✅ Complete |
 | `test_vampnet_model.py` | 28 (+1 skipped) | ✅ Complete |
 | `test_dataset.py` | 53 | ✅ Complete |
-| `test_classifier.py` | - | ⬜ Not started |
+| `test_classifier.py` | 33 | ✅ Complete |
 | `test_config.py` | - | ⬜ Not started |
 | `test_training.py` | - | ⬜ Not started |
 | `test_analysis.py` | - | ⬜ Not started |
 | `test_pipeline_integration.py` | - | ⬜ Not started |
 | `test_ck_its.py` | - | ⬜ Not started |
 
-**Total tests: 138 passed, 1 skipped**
+**Total tests: 171 passed, 1 skipped**
 
 ---
 
 ## High Priority Tests
 
-### 1. `test_vampnet_model.py`
+### 1. `test_vampnet_model.py` ✅ COMPLETE
 
 **Component:** `pygv/vampnet/vampnet.py` (1184 lines)
 
-**Why important:** Tests the full model that ties encoders and classifiers together. This is the core component used in training.
-
-**Tests to implement:**
-- [ ] Full model forward pass (graph → softmax probabilities)
-- [ ] Gradient flow through entire model (encoder → classifier → output)
-- [ ] Different encoder types work with classifier (SchNet, ML3, Meta)
-- [ ] Output probabilities sum to 1 for each sample
-- [ ] Output probabilities are all non-negative
-- [ ] Training step works (forward + VAMP loss + backward)
-- [ ] Model handles batched graph inputs
-- [ ] Model produces consistent outputs with fixed seed
-- [ ] Attention weights are extractable (for analysis phase)
+**Tests implemented (28 tests + 1 skipped):**
+- [x] Full model forward pass (graph → softmax probabilities)
+- [x] Gradient flow through entire model (encoder → classifier → output)
+- [x] Different encoder types work with classifier (SchNet, Meta)
+- [x] Output probabilities sum to 1 for each sample
+- [x] Output probabilities are all non-negative
+- [x] Training step works (forward + VAMP loss + backward)
+- [x] Model handles batched graph inputs
+- [x] Model produces consistent outputs with fixed seed
+- [x] Attention weights are extractable (for analysis phase)
+- [x] Save/load model functionality
+- [x] Model configuration
 
 ---
 
-### 2. `test_classifier.py`
+### 2. `test_classifier.py` ✅ COMPLETE
 
 **Component:** `pygv/classifier/SoftmaxMLP.py`
 
-**Why important:** Ensures classifier outputs valid probability distributions for state assignment.
-
-**Tests to implement:**
-- [ ] Output shape is [batch_size, n_states]
-- [ ] Softmax outputs sum to 1 for each sample
-- [ ] All output values are in [0, 1]
-- [ ] Handles different n_states values (3, 5, 7, 10)
-- [ ] Gradient flow to input embeddings
-- [ ] Different hidden layer configurations work
+**Tests implemented (33 tests):**
+- [x] Output shape is [batch_size, n_states]
+- [x] Softmax outputs sum to 1 for each sample
+- [x] All output values are in [0, 1]
+- [x] Handles different n_states values (3, 5, 7, 10, 20)
+- [x] Gradient flow to input embeddings
+- [x] Different hidden layer configurations work (1-5 layers)
+- [x] Dropout behavior (train vs eval mode)
+- [x] Batch normalization support
+- [x] Weight initialization
+- [x] Training step integration
+- [x] Edge cases (binary classification, many classes)
 
 ---
 
@@ -175,17 +178,17 @@ This document tracks the unit tests to be implemented for the PyGVAMP pipeline.
 
 Some tests require test data:
 
-| Test | Data Needed |
-|------|-------------|
-| `test_dataset.py` | Small PDB + XTC files (or mock MDTraj objects) |
-| `test_training.py` | Pre-built small dataset or synthetic graphs |
-| `test_analysis.py` | Trained model checkpoint |
-| `test_pipeline_integration.py` | Small trajectory files |
+| Test | Data Needed | Status |
+|------|-------------|--------|
+| `test_dataset.py` | Mock MDTraj objects | ✅ Done |
+| `test_training.py` | Synthetic graphs | ⬜ Not started |
+| `test_analysis.py` | Model checkpoint | ⬜ Not started |
+| `test_pipeline_integration.py` | Trajectory files | ⬜ Not started |
 
 **Options:**
 1. Create synthetic test data in fixtures
 2. Use small real trajectory files in `testdata/`
-3. Mock MDTraj/file loading functions
+3. Mock MDTraj/file loading functions (used for test_dataset.py)
 
 ---
 
@@ -218,6 +221,7 @@ pytest tests/ -v -k "gradient"
 | 2026-01-16 | Created `test_vamp_score.py` (31 tests) |
 | 2026-01-16 | Created `test_vampnet_model.py` (28 tests + 1 skipped) |
 | 2026-02-05 | Created `test_dataset.py` (53 tests) - VAMPNetDataset with mocked MDTraj |
+| 2026-02-05 | Created `test_classifier.py` (33 tests) - SoftmaxMLP classifier |
 | | |
 
 ## Bugs Found During Testing
@@ -240,4 +244,4 @@ The following bugs were discovered while writing tests:
 
 ---
 
-*Last updated: 2026-01-16*
+*Last updated: 2026-02-05*
