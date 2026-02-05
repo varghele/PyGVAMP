@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Protein Cluster Visualization</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/arose/ngl@latest/dist/ngl.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        #main-container {
+            display: flex;
+            gap: 20px;
+        }
+        #scatter-plot {
+            width: 600px;
+            height: 500px;
+        }
+        #protein-viewer {
+            width: 400px;
+            height: 400px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        #hover-protein {
+            position: absolute;
+            width: 250px;
+            height: 250px;
+            border: 2px solid #333;
+            border-radius: 5px;
+            background: white;
+            display: none;
+            z-index: 1000;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        #info-panel {
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Interactive Protein State Clustering Visualization</h2>
+
+    <div id="main-container">
+        <div>
+            <div id="scatter-plot"></div>
+            <div id="info-panel">
+                <strong>Current State:</strong> <span id="current-state">None</span><br>
+                <strong>Cluster:</strong> <span id="current-cluster">-</span><br>
+                <strong>Time:</strong> <span id="current-time">-</span>
+            </div>
+        </div>
+        <div>
+            <h3>Main Protein View</h3>
+            <div id="protein-viewer"></div>
+            <br>
+            <label>Color Scheme:
+                <select id="color-scheme" onchange="updateColorScheme()">
+                    <option value="chainid">By Chain</option>
+                    <option value="secondary-structure">Secondary Structure</option>
+                    <option value="hydrophobicity">Hydrophobicity</option>
+                    <option value="custom">Custom (Charged Residues)</option>
+                </select>
+            </label>
+        </div>
+    </div>
+
+    <!-- Hover popup for protein preview -->
+    <div id="hover-protein"></div>
+
+    <script>
+        // Sample data - replace with your actual data
+        const proteinStates = [
+            {
+                x: 2.3, y: 4.5, z: 1.2,
+                cluster: 0,
+                time: 0,
+                pdbFile: 'state1.pdb',
+                label: 'Initial State',
+                pdbData: `ATOM      1  N   ALA A   1       1.458   0.000   0.000  1.00  0.00           N
+ATOM      2  CA  ALA A   1       0.000   0.000   0.000  1.00  0.00           C
+ATOM      3  C   ALA A   1      -0.551   1.427   0.000  1.00  0.00           C
+ATOM      4  O   ALA A   1      -1.766   1.625   0.000  1.00  0.00           O`
+            },
+            {
+                x: 3.1, y: 5.2, z: 1.5,
+                cluster: 0,
+                time: 10,
+                pdbFile: 'state2.pdb',
+                label: 'Intermediate 1',
+                pdbData: `ATOM      1  N   ALA A   1       1.558   0.100   0.100  1.00  0.00           N
+ATOM      2  CA  ALA A   1       0.100   0.100   0.100  1.00  0.00           C`
+            },
+            {
+                x: 5.8, y: 2.1, z: 3.2,
+                cluster: 1,
+                time: 20,
+                pdbFile: 'state3.pdb',
+                label: 'Transition State',
+                pdbData: `ATOM      1  N   ALA A   1       1.658   0.200   0.200  1.00  0.00           N`
+            },
+            {
+                x: 6.2, y: 1.8, z: 3.5,
+                cluster: 1,
+                time: 30,
+                pdbFile: 'state4.pdb',
+                label: 'Final State',
+                pdbData: `ATOM      1  N   ALA A   1       1.758   0.300   0.300  1.00  0.00           N`
+            }
+        ];
+
+        // Define connections between states (for trajectory lines)
+        const connections = [
+            [0, 1], [1, 2], [2, 3]  // Connect states in sequence
+        ];
+
+        // Initialize main protein viewer
+        let mainStage = new NGL.Stage("protein-viewer", {backgroundColor: "white"});
+        let mainComponent = null;
+
+        // Initialize hover protein viewer
+        let hoverStage = null;
+        let hoverComponent = null;
+
+        // Create scatter plot with Plotly
+        function createScatterPlot() {
+            // Prepare data for scatter plot
+            const scatterData = {
+                x: proteinStates.map(s => s.x),
+                y: proteinStates.map(s => s.y),
+                z: proteinStates.map(s => s.z),
+                mode: 'markers+text',
+                type: 'scatter3d',
+                text: proteinStates.map(s => s.label),
+                marker: {
+                    size: 12,
+                    color: proteinStates.map(s => s.cluster),
+                    colorscale: 'Viridis',
+                    showscale: true,
+                    colorbar: {
+                        title: 'Cluster'
+                    }
+                },
+                customdata: proteinStates.map((s, i) => i),
+                hovertemplate: '<b>%{text}</b><br>' +
+                               'Position: (%{x:.2f}, %{y:.2f}, %{z:.2f})<br>' +
+                               'Time: %{customdata}ms<br>' +
+                               '<extra></extra>'
+            };
+
+            // Create lines connecting states
+            const lineData = [];
+            connections.forEach(conn => {
+                lineData.push({
+                    x: [proteinStates[conn[0]].x, proteinStates[conn[1]].x],
+                    y: [proteinStates[conn[0]].y, proteinStates[conn[1]].y],
+                    z: [proteinStates[conn[0]].z, proteinStates[conn[1]].z],
+                    mode: 'lines',
+                    type: 'scatter3d',
+                    line: {
+                        color: 'rgba(125, 125, 125, 0.5)',
+                        width: 2
+                    },
+                    hoverinfo: 'skip'
+                });
+            });
+
+            const layout = {
+                title: 'Protein State Space',
+                scene: {
+                    xaxis: {title: 'PC1'},
+                    yaxis: {title: 'PC2'},
+                    zaxis: {title: 'PC3'}
+                },
+                hovermode: 'closest'
+            };
+
+            Plotly.newPlot('scatter-plot', [scatterData, ...lineData], layout);
+
+            // Add hover event handlers
+            document.getElementById('scatter-plot').on('plotly_hover', function(data) {
+                const pointIndex = data.points[0].customdata;
+                const state = proteinStates[pointIndex];
+
+                // Update info panel
+                document.getElementById('current-state').textContent = state.label;
+                document.getElementById('current-cluster').textContent = state.cluster;
+                document.getElementById('current-time').textContent = state.time + ' ms';
+
+                // Show protein preview on hover
+                showHoverProtein(state, data.event);
+            });
+
+            document.getElementById('scatter-plot').on('plotly_unhover', function() {
+                hideHoverProtein();
+            });
+
+            // Add click event to load protein in main viewer
+            document.getElementById('scatter-plot').on('plotly_click', function(data) {
+                const pointIndex = data.points[0].customdata;
+                loadProteinInMainViewer(proteinStates[pointIndex]);
+            });
+        }
+
+        // Show protein preview on hover
+        function showHoverProtein(state, event) {
+            const hoverDiv = document.getElementById('hover-protein');
+
+            // Position the hover div near the mouse
+            hoverDiv.style.left = (event.pageX + 10) + 'px';
+            hoverDiv.style.top = (event.pageY - 125) + 'px';
+            hoverDiv.style.display = 'block';
+
+            // Initialize hover stage if not exists
+            if (!hoverStage) {
+                hoverStage = new NGL.Stage("hover-protein", {
+                    backgroundColor: "white",
+                    quality: "medium"
+                });
+            }
+
+            // Clear previous structure
+            hoverStage.removeAllComponents();
+
+            // Load new structure
+            const blob = new Blob([state.pdbData], {type: 'text/plain'});
+            hoverStage.loadFile(blob, {ext: 'pdb'}).then(function(component) {
+                component.addRepresentation("cartoon", {
+                    color: "secondary-structure"
+                });
+                component.autoView();
+            });
+        }
+
+        function hideHoverProtein() {
+            document.getElementById('hover-protein').style.display = 'none';
+        }
+
+        // Load protein in main viewer
+        function loadProteinInMainViewer(state) {
+            mainStage.removeAllComponents();
+
+            const blob = new Blob([state.pdbData], {type: 'text/plain'});
+            mainStage.loadFile(blob, {ext: 'pdb'}).then(function(component) {
+                mainComponent = component;
+                updateColorScheme();
+                component.autoView();
+            });
+        }
+
+        // Update color scheme for main viewer
+        function updateColorScheme() {
+            if (!mainComponent) return;
+
+            const scheme = document.getElementById('color-scheme').value;
+            mainComponent.removeAllRepresentations();
+
+            if (scheme === 'custom') {
+                // Custom coloring for charged residues
+                NGL.ColormakerRegistry.addScheme(function() {
+                    this.atomColor = function(atom) {
+                        if (atom.resname === "ARG" || atom.resname === "LYS") {
+                            return 0x0000FF; // Blue for positive
+                        } else if (atom.resname === "ASP" || atom.resname === "GLU") {
+                            return 0xFF0000; // Red for negative
+                        } else if (atom.resname === "HIS") {
+                            return 0x00FFFF; // Cyan for histidine
+                        }
+                        return 0x808080; // Gray for others
+                    };
+                }, 'custom-charge');
+
+                mainComponent.addRepresentation("cartoon", {
+                    colorScheme: "custom-charge"
+                });
+            } else if (scheme === 'hydrophobicity') {
+                mainComponent.addRepresentation("cartoon", {
+                    colorScheme: "hydrophobicity",
+                    colorScale: "RdYlBu"
+                });
+            } else {
+                mainComponent.addRepresentation("cartoon", {
+                    colorScheme: scheme
+                });
+            }
+        }
+
+        // Initialize the visualization
+        createScatterPlot();
+
+        // Load first protein by default
+        if (proteinStates.length > 0) {
+            loadProteinInMainViewer(proteinStates[0]);
+        }
+    </script>
+</body>
+</html>
