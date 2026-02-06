@@ -32,10 +32,14 @@ def add_prep_args(parser: argparse.ArgumentParser):
                                   help='Graph2Vec WL iteration depth')
     discovery_group.add_argument('--g2v_epochs', type=int, default=50,
                                   help='Graph2Vec training epochs')
+    discovery_group.add_argument('--g2v_min_count', type=int, default=5,
+                                  help='Minimum subgraph frequency to be included in Graph2Vec vocabulary')
     discovery_group.add_argument('--min_states', type=int, default=2,
                                   help='Minimum number of states to test in clustering')
     discovery_group.add_argument('--max_states', type=int, default=15,
                                   help='Maximum number of states to test in clustering')
+    discovery_group.add_argument('--g2v_umap_dim', type=int, default=2,
+                                  help='UMAP dimensionality for clustering (2 for 2D, higher like 5 or 10 may improve clustering)')
 
     return prep_group
 

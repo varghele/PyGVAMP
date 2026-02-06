@@ -1,40 +1,48 @@
-# docs/requirements.txt
-# Minimal requirements for building documentation
-
-# Core documentation
-sphinx>=4.0
-sphinx-rtd-theme
-sphinx-autodoc-typehints
-myst-parser
-numpydoc
-
-# Core scientific packages (needed for autodoc)
+# Core scientific packages
 numpy
 scipy
 matplotlib
 pandas
 scikit-learn
 tqdm
+joblib
 
-# PyTorch (CPU version for docs)
+# PyTorch (CPU version — for GPU see README installation instructions)
 torch
 torchvision
 torchaudio
 
 # PyTorch Geometric (base package only)
 torch_geometric
-
-# MD analysis
-mdtraj
-
-# Other dependencies
-joblib
-gensim
-
-# Note: The following packages are excluded because they require
-# special installation or CUDA support not available on Read the Docs:
+# Note: The following packages require special installation or CUDA support:
 # - pyg_lib (requires special wheel installation)
 # - torch_scatter (requires compilation)
 # - torch_sparse (requires compilation)
 # - torch_cluster (requires compilation)
 # - torch_spline_conv (requires compilation)
+# See README for installation instructions.
+
+# MD analysis
+mdtraj
+
+# Graph embeddings
+gensim
+
+# YAML configuration
+pyyaml
+
+# Symbolic math (used in ML3 encoder)
+sympy
+
+# UMAP for state discovery visualization (optional but recommended)
+umap-learn
+
+# Testing
+pytest
+
+# Documentation (only needed for building docs)
+# sphinx>=4.0
+# sphinx-rtd-theme
+# sphinx-autodoc-typehints
+# myst-parser
+# numpydoc

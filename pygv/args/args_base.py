@@ -46,6 +46,11 @@ def add_graph_args(parser: argparse.ArgumentParser):
                              help='Dimension for node embeddings')
     graph_group.add_argument('--gaussian_expansion_dim', type=int, default=16,
                              help='Dimension for Gaussian expansion of edge distances')
+    graph_group.add_argument('--node_feature_type', type=str, default='onehot',
+                             choices=['onehot', 'aa_labels', 'aa_properties'],
+                             help='Node feature encoding: onehot (N×N identity), '
+                                  'aa_labels (integer amino acid type), '
+                                  'aa_properties (physicochemical properties)')
     return graph_group
 
 

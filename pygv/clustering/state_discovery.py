@@ -5,6 +5,9 @@ This module provides unsupervised state discovery using Graph2Vec embeddings
 and clustering analysis. It helps determine the optimal number of states
 for VAMPNet training by analyzing the natural clustering structure in
 molecular dynamics trajectory data.
+
+Clustering is performed on both raw Graph2Vec embeddings and UMAP-reduced
+embeddings, and the result with the better silhouette score is recommended.
 """
 
 import os
@@ -28,6 +31,10 @@ class StateDiscovery:
     fixed-dimensional embeddings, then performs clustering analysis
     to recommend the optimal number of states.
 
+    Clustering runs on both the raw high-dimensional embeddings and
+    UMAP-reduced embeddings. The result with the better silhouette
+    score is used for the final recommendation.
+
     Parameters
     ----------
     embedding_dim : int, default=64
@@ -36,6 +43,10 @@ class StateDiscovery:
         Maximum WL iteration depth for Graph2Vec
     g2v_epochs : int, default=50
         Number of training epochs for Graph2Vec
+    g2v_min_count : int, default=5
+        Minimum subgraph frequency to be included in Graph2Vec vocabulary
+    umap_dim : int, default=2
+        Dimensionality for UMAP reduction used in clustering
     min_k : int, default=2
         Minimum number of clusters to test
     max_k : int, default=15
@@ -49,6 +60,8 @@ class StateDiscovery:
         embedding_dim: int = 64,
         max_degree: int = 2,
         g2v_epochs: int = 50,
+        g2v_min_count: int = 5,
+        umap_dim: int = 2,
         min_k: int = 2,
         max_k: int = 15,
         random_state: int = 42,
@@ -56,17 +69,26 @@ class StateDiscovery:
         self.embedding_dim = embedding_dim
         self.max_degree = max_degree
         self.g2v_epochs = g2v_epochs
+        self.g2v_min_count = g2v_min_count
+        self.umap_dim = umap_dim
         self.min_k = min_k
         self.max_k = max_k
         self.random_state = random_state
 
         # Results storage
         self.embeddings = None
+        self.umap_embeddings = None
         self.inertias = {}
         self.silhouette_scores = {}
         self.cluster_labels = {}
+        self.umap_inertias = {}
+        self.umap_silhouette_scores = {}
+        self.umap_cluster_labels = {}
         self.best_k = None
         self.elbow_k = None
+        self.umap_best_k = None
+        self.umap_elbow_k = None
+        self.chosen_source = None  # 'raw' or 'umap'
         self.g2v_model = None
 
     def fit(self, frames_dataset) -> 'StateDiscovery':
@@ -94,7 +116,7 @@ class StateDiscovery:
             embedding_dim=self.embedding_dim,
             max_degree=self.max_degree,
             epochs=self.g2v_epochs,
-            min_count=1,  # Include all subgraphs
+            min_count=self.g2v_min_count,
             batch_size=64,
             num_workers=4,
         )
@@ -105,55 +127,97 @@ class StateDiscovery:
         self.embeddings = self.g2v_model.get_embeddings().numpy()
         print(f"Embeddings shape: {self.embeddings.shape}")
 
-        # Step 3: Run clustering analysis
-        print("\n--- Clustering Analysis ---")
-        self._run_clustering_analysis()
+        # Step 3: Clustering on raw embeddings
+        print("\n--- Clustering on raw embeddings ---")
+        self._run_clustering_analysis(
+            self.embeddings,
+            self.silhouette_scores,
+            self.inertias,
+            self.cluster_labels,
+            desc="Raw embeddings",
+        )
+        raw_best_k = max(self.silhouette_scores, key=self.silhouette_scores.get)
+        raw_best_score = self.silhouette_scores[raw_best_k]
+        self.elbow_k = self._find_elbow(self.inertias)
+        print(f"Raw: best k={raw_best_k} (silhouette={raw_best_score:.3f}), "
+              f"elbow k={self.elbow_k}")
 
-        # Step 4: Determine recommended k
-        self._determine_recommended_k()
+        # Step 4: UMAP reduction + clustering
+        umap_best_k = None
+        umap_best_score = -1.0
+        try:
+            import umap
+            print(f"\n--- UMAP reduction (dim={self.umap_dim}) + clustering ---")
+            reducer = umap.UMAP(
+                n_components=self.umap_dim,
+                random_state=self.random_state,
+                n_neighbors=min(15, len(self.embeddings) - 1),
+                min_dist=0.1,
+            )
+            self.umap_embeddings = reducer.fit_transform(self.embeddings)
+            print(f"UMAP embeddings shape: {self.umap_embeddings.shape}")
+
+            self._run_clustering_analysis(
+                self.umap_embeddings,
+                self.umap_silhouette_scores,
+                self.umap_inertias,
+                self.umap_cluster_labels,
+                desc="UMAP embeddings",
+            )
+            umap_best_k = max(self.umap_silhouette_scores, key=self.umap_silhouette_scores.get)
+            umap_best_score = self.umap_silhouette_scores[umap_best_k]
+            self.umap_elbow_k = self._find_elbow(self.umap_inertias)
+            print(f"UMAP: best k={umap_best_k} (silhouette={umap_best_score:.3f}), "
+                  f"elbow k={self.umap_elbow_k}")
+        except ImportError:
+            print("\n--- UMAP not installed, skipping UMAP clustering ---")
+            print("Install umap-learn for dual clustering: pip install umap-learn")
+
+        # Step 5: Pick the better result
+        self.umap_best_k = umap_best_k
+        if umap_best_score > raw_best_score:
+            self.best_k = umap_best_k
+            self.chosen_source = 'umap'
+            # Use UMAP cluster labels as the primary labels
+            self.cluster_labels = self.umap_cluster_labels
+            self.silhouette_scores = self.umap_silhouette_scores
+            self.inertias = self.umap_inertias
+            self.elbow_k = self.umap_elbow_k
+            print(f"\n>> UMAP clustering selected (silhouette {umap_best_score:.3f} > {raw_best_score:.3f})")
+        else:
+            self.best_k = raw_best_k
+            self.chosen_source = 'raw'
+            print(f"\n>> Raw embedding clustering selected (silhouette {raw_best_score:.3f} >= {umap_best_score:.3f})")
+
+        print(f"Recommended n_states: {self.best_k}")
 
         return self
 
-    def _run_clustering_analysis(self):
+    def _run_clustering_analysis(self, data, silhouette_dict, inertia_dict, labels_dict, desc=""):
         """Run KMeans for different k values and calculate metrics."""
         k_range = range(self.min_k, self.max_k + 1)
 
-        for k in tqdm(k_range, desc="Testing cluster sizes"):
+        for k in tqdm(k_range, desc=f"Testing cluster sizes ({desc})"):
             kmeans = KMeans(
                 n_clusters=k,
                 random_state=self.random_state,
                 n_init=10,
                 max_iter=300,
             )
-            labels = kmeans.fit_predict(self.embeddings)
+            labels = kmeans.fit_predict(data)
 
             # Store results
-            self.cluster_labels[k] = labels
-            self.inertias[k] = kmeans.inertia_
+            labels_dict[k] = labels
+            inertia_dict[k] = kmeans.inertia_
 
             # Calculate silhouette score (only valid for k >= 2)
             if k >= 2:
-                self.silhouette_scores[k] = silhouette_score(
-                    self.embeddings, labels
-                )
+                silhouette_dict[k] = silhouette_score(data, labels)
 
-    def _determine_recommended_k(self):
-        """Determine recommended number of clusters using silhouette and elbow methods."""
-        # Best silhouette score
-        self.best_k = max(self.silhouette_scores, key=self.silhouette_scores.get)
-
-        # Elbow method using second derivative
-        self.elbow_k = self._find_elbow()
-
-        print(f"\nBest silhouette score at k={self.best_k} "
-              f"(score={self.silhouette_scores[self.best_k]:.3f})")
-        print(f"Elbow detected at k={self.elbow_k}")
-        print(f"Recommended n_states: {self.best_k}")
-
-    def _find_elbow(self) -> int:
+    def _find_elbow(self, inertia_dict) -> int:
         """Find elbow point using second derivative method."""
-        k_values = sorted(self.inertias.keys())
-        inertia_values = [self.inertias[k] for k in k_values]
+        k_values = sorted(inertia_dict.keys())
+        inertia_values = [inertia_dict[k] for k in k_values]
 
         if len(k_values) < 3:
             return k_values[0]
@@ -219,6 +283,8 @@ class StateDiscovery:
 
         # Save embeddings
         np.save(os.path.join(save_dir, 'embeddings.npy'), self.embeddings)
+        if self.umap_embeddings is not None:
+            np.save(os.path.join(save_dir, 'umap_embeddings.npy'), self.umap_embeddings)
 
         # Save cluster labels for recommended k
         np.save(
@@ -266,8 +332,9 @@ class StateDiscovery:
             ax2.set_ylabel('Second Derivative', color='g', fontsize=10)
             ax2.tick_params(axis='y', labelcolor='g')
 
+        source_label = f" (clustering on {self.chosen_source} embeddings)" if self.chosen_source else ""
         ax1.legend(loc='upper right')
-        ax1.set_title('Elbow Method for Optimal k', fontsize=14)
+        ax1.set_title(f'Elbow Method for Optimal k{source_label}', fontsize=14)
         ax1.grid(True, alpha=0.3)
 
         plt.tight_layout()
@@ -295,8 +362,9 @@ class StateDiscovery:
         ax.scatter([self.best_k], [self.silhouette_scores[self.best_k]],
                   color='r', s=200, zorder=5, marker='*')
 
+        source_label = f" (clustering on {self.chosen_source} embeddings)" if self.chosen_source else ""
         ax.legend(loc='best')
-        ax.set_title('Silhouette Score vs Number of Clusters', fontsize=14)
+        ax.set_title(f'Silhouette Score vs Number of Clusters{source_label}', fontsize=14)
         ax.grid(True, alpha=0.3)
 
         # Set y-axis limits with some padding
@@ -364,20 +432,20 @@ class StateDiscovery:
         )
         print("  - tsne_embeddings.png")
 
-        # Try UMAP if available
+        # UMAP visualization (always 2D for plotting, separate from clustering UMAP)
         try:
             import umap
-            print("  Computing UMAP projection...")
+            print("  Computing UMAP projection (2D for visualization)...")
             reducer = umap.UMAP(
                 n_components=2,
                 random_state=self.random_state,
                 n_neighbors=min(15, len(self.embeddings) - 1),
                 min_dist=0.1,
             )
-            embeddings_umap = reducer.fit_transform(self.embeddings)
+            embeddings_umap_2d = reducer.fit_transform(self.embeddings)
 
             self._create_embedding_scatter(
-                embeddings_umap, labels,
+                embeddings_umap_2d, labels,
                 os.path.join(save_dir, 'umap_embeddings.png'),
                 title='UMAP Visualization of Graph Embeddings'
             )
@@ -568,7 +636,8 @@ class StateDiscovery:
 
         ax.set_xlabel('Component 1', fontsize=12)
         ax.set_ylabel('Component 2', fontsize=12)
-        ax.set_title(f'{title}\n(k={self.best_k}, silhouette={self.silhouette_scores[self.best_k]:.3f})',
+        source_label = f", source={self.chosen_source}" if self.chosen_source else ""
+        ax.set_title(f'{title}\n(k={self.best_k}, silhouette={self.silhouette_scores[self.best_k]:.3f}{source_label})',
                     fontsize=14)
         ax.legend(loc='best', fontsize=10)
         ax.grid(True, alpha=0.3)
@@ -587,7 +656,8 @@ class StateDiscovery:
 
         summary = {
             'recommended_n_states': int(self.best_k),
-            'selection_method': 'silhouette',
+            'selection_method': 'best_silhouette_across_raw_and_umap',
+            'chosen_source': self.chosen_source,
             'silhouette_scores': {str(k): float(v) for k, v in self.silhouette_scores.items()},
             'inertias': {str(k): float(v) for k, v in self.inertias.items()},
             'best_silhouette_score': float(self.silhouette_scores[self.best_k]),
@@ -598,6 +668,8 @@ class StateDiscovery:
                 'embedding_dim': self.embedding_dim,
                 'max_degree': self.max_degree,
                 'epochs': self.g2v_epochs,
+                'min_count': self.g2v_min_count,
+                'umap_dim': self.umap_dim,
             },
             'n_frames': len(self.embeddings),
             'embedding_shape': list(self.embeddings.shape),

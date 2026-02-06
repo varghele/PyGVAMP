@@ -158,6 +158,8 @@ def run_state_discovery(dataset, args, paths):
         embedding_dim=args.g2v_embedding_dim,
         max_degree=args.g2v_max_degree,
         g2v_epochs=args.g2v_epochs,
+        g2v_min_count=getattr(args, 'g2v_min_count', 5),
+        umap_dim=getattr(args, 'g2v_umap_dim', 2),
         max_k=args.max_states,
         min_k=args.min_states,
     )
@@ -204,6 +206,11 @@ def create_and_analyze_dataset(args, paths):
 
     print(f"\nCreating dataset with {len(trajectory_files)} trajectory files")
 
+    # Determine node feature encoding
+    node_feature_type = getattr(args, 'node_feature_type', 'onehot')
+    use_amino_acid_encoding = node_feature_type in ('aa_labels', 'aa_properties')
+    amino_acid_feature_type = 'properties' if node_feature_type == 'aa_properties' else 'labels'
+
     # Create dataset
     dataset = VAMPNetDataset(
         trajectory_files=trajectory_files,
@@ -215,7 +222,9 @@ def create_and_analyze_dataset(args, paths):
         selection=args.selection,
         stride=args.stride,
         cache_dir=paths['cache_dir'],
-        use_cache=args.use_cache
+        use_cache=args.use_cache,
+        use_amino_acid_encoding=use_amino_acid_encoding,
+        amino_acid_feature_type=amino_acid_feature_type,
     )
 
     print(f"Dataset created with {len(dataset)} samples")
@@ -318,11 +327,27 @@ def analyze_sample_batch(dataset, args):
     print("\nSample batch analysis complete")
 
 
-def main():
-    """Main function for data preparation pipeline"""
-    # Parse arguments
-    args = parse_prep_args()
+def run_preparation(args):
+    """
+    Run data preparation pipeline with a pre-built args namespace.
 
+    Called by the master pipeline orchestrator. Accepts an argparse.Namespace
+    (from PipelineOrchestrator._create_prep_args) and returns the path to
+    the preparation run directory.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Must contain: traj_dir, top, file_pattern, recursive, selection,
+        stride, lag_time, n_neighbors, node_embedding_dim,
+        gaussian_expansion_dim, output_dir, cache_dir, use_cache.
+        Optional: sample_batch, batch_size, discover_states, g2v_* params.
+
+    Returns
+    -------
+    str
+        Path to the preparation run directory containing outputs and cache.
+    """
     # Setup output directory
     paths = setup_output_directory(args)
 
@@ -333,13 +358,23 @@ def main():
     dataset = create_and_analyze_dataset(args, paths)
 
     # Analyze a sample batch if requested
-    if args.sample_batch and dataset:
+    if getattr(args, 'sample_batch', False) and dataset:
         analyze_sample_batch(dataset, args)
 
     print(f"\nData preparation completed successfully!")
     print(f"Output directory: {paths['run_dir']}")
     print(f"Topology PDB: {paths['topology_pdb']}")
     print(f"Cache directory: {paths['cache_dir']}")
+
+    return paths['run_dir']
+
+
+def main():
+    """Main function for data preparation pipeline"""
+    # Parse arguments
+    args = parse_prep_args()
+
+    run_preparation(args)
 
 
 if __name__ == "__main__":
