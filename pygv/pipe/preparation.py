@@ -159,7 +159,7 @@ def run_state_discovery(dataset, args, paths):
         max_degree=args.g2v_max_degree,
         g2v_epochs=args.g2v_epochs,
         g2v_min_count=getattr(args, 'g2v_min_count', 5),
-        umap_dim=getattr(args, 'g2v_umap_dim', 2),
+        umap_dims=getattr(args, 'g2v_umap_dim', [2]),
         max_k=args.max_states,
         min_k=args.min_states,
     )
@@ -173,6 +173,8 @@ def run_state_discovery(dataset, args, paths):
 
     return {
         'recommended_n_states': recommended_n_states,
+        'chosen_source': discovery.chosen_source,
+        'sweep_sources': list(discovery.sweep_results.keys()),
         'embeddings_shape': list(discovery.get_embeddings().shape),
         'silhouette_scores': {str(k): float(v) for k, v in discovery.silhouette_scores.items()},
         'best_silhouette_k': discovery.best_k,
