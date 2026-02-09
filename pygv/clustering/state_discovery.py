@@ -7,15 +7,26 @@ for VAMPNet training by analyzing the natural clustering structure in
 molecular dynamics trajectory data.
 
 Clustering is swept across multiple embedding sources (raw, UMAP at
-configurable dimensions, t-SNE at 2D and 3D), and the source with the
-best silhouette score is used for the final recommendation.
+configurable dimensions, t-SNE at 2D and 3D). For each source, four
+metrics are evaluated:
+- Silhouette score (KMeans)
+- Elbow method (KMeans inertia)
+- BIC (Gaussian Mixture Model)
+- AIC (Gaussian Mixture Model)
+
+The best embedding source is selected by silhouette score. The recommended
+number of states is the **maximum** k across all four metrics from the
+winning source, erring on the side of more states (since states can be
+merged post-training but cannot be split).
 """
 
 import os
 import json
+import warnings
 import numpy as np
-from typing import Optional, Dict, List
+from typing import Optional, List
 from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
 from sklearn.metrics import silhouette_score
 from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
@@ -37,7 +48,10 @@ class StateDiscovery:
     - UMAP-reduced embeddings at each dimension in ``umap_dims``
     - t-SNE-reduced embeddings at dimensions 2 and 3 (automatic)
 
-    The source with the best silhouette score is selected.
+    For each source, KMeans and GMM are fitted for every k in
+    ``[min_k, max_k]``. The best source is chosen by silhouette score.
+    The recommended k is ``max(silhouette_k, elbow_k, bic_k, aic_k)``
+    from the winning source — biasing toward more states.
 
     Parameters
     ----------
@@ -51,7 +65,6 @@ class StateDiscovery:
         Minimum subgraph frequency to be included in Graph2Vec vocabulary
     umap_dims : list of int, optional
         UMAP dimensionalities to sweep for clustering (default ``[2]``).
-        Each value triggers a separate UMAP reduction + KMeans sweep.
     min_k : int, default=2
         Minimum number of clusters to test
     max_k : int, default=15
@@ -59,6 +72,9 @@ class StateDiscovery:
     random_state : int, default=42
         Random seed for reproducibility
     """
+
+    # Use diagonal covariance for GMM when dimensionality exceeds this
+    _GMM_FULL_COV_THRESHOLD = 50
 
     def __init__(
         self,
@@ -85,17 +101,21 @@ class StateDiscovery:
         self.g2v_model = None
 
         # Per-source sweep results:
-        #   source_name -> {silhouette_scores, inertias, cluster_labels,
-        #                   best_k, best_score, elbow_k, data}
+        #   source_name -> {silhouette_scores, inertias, bic_scores,
+        #                   aic_scores, cluster_labels, silhouette_k,
+        #                   elbow_k, bic_k, aic_k, best_score, data}
         self.sweep_results = {}
 
         # Primary results (set to the winning source after sweep)
         self.silhouette_scores = {}
         self.inertias = {}
+        self.bic_scores = {}
+        self.aic_scores = {}
         self.cluster_labels = {}
         self.best_k = None
         self.elbow_k = None
         self.chosen_source = None
+        self.metric_recommendations = {}
 
     def fit(self, frames_dataset) -> 'StateDiscovery':
         """
@@ -155,7 +175,7 @@ class StateDiscovery:
             except ImportError:
                 print("  UMAP not installed, skipping UMAP sweep.")
                 print("  Install umap-learn: pip install umap-learn")
-                break  # no point trying other dims
+                break
 
         # t-SNE sweep (always 2D and 3D)
         for dim in (2, 3):
@@ -169,16 +189,18 @@ class StateDiscovery:
             reduced = tsne.fit_transform(self.embeddings)
             self._cluster_and_evaluate(reduced, f'tsne_{dim}')
 
-        # Pick winner
+        # Pick winner and recommend k
         self._select_best_source()
 
         return self
 
     def _cluster_and_evaluate(self, data, source_name):
-        """Run KMeans clustering on *data* and store results under *source_name*."""
+        """Run KMeans + GMM clustering on *data* and store results."""
         result = {
             'silhouette_scores': {},
             'inertias': {},
+            'bic_scores': {},
+            'aic_scores': {},
             'cluster_labels': {},
             'data': data,
         }
@@ -187,58 +209,94 @@ class StateDiscovery:
             data,
             result['silhouette_scores'],
             result['inertias'],
+            result['bic_scores'],
+            result['aic_scores'],
             result['cluster_labels'],
             desc=source_name,
         )
 
+        # Best k per metric
         if result['silhouette_scores']:
-            result['best_k'] = max(result['silhouette_scores'],
-                                   key=result['silhouette_scores'].get)
-            result['best_score'] = result['silhouette_scores'][result['best_k']]
+            result['silhouette_k'] = max(
+                result['silhouette_scores'],
+                key=result['silhouette_scores'].get,
+            )
+            result['best_score'] = result['silhouette_scores'][
+                result['silhouette_k']]
         else:
-            result['best_k'] = self.min_k
+            result['silhouette_k'] = self.min_k
             result['best_score'] = -1.0
 
         result['elbow_k'] = self._find_elbow(result['inertias'])
+        result['bic_k'] = min(result['bic_scores'],
+                              key=result['bic_scores'].get)
+        result['aic_k'] = min(result['aic_scores'],
+                              key=result['aic_scores'].get)
+
+        # For source comparison, best_k is the silhouette-optimal k
+        result['best_k'] = result['silhouette_k']
 
         self.sweep_results[source_name] = result
-        print(f"    {source_name}: best k={result['best_k']} "
-              f"(silhouette={result['best_score']:.3f}), "
-              f"elbow k={result['elbow_k']}")
+        print(f"    {source_name}: silhouette_k={result['silhouette_k']} "
+              f"(score={result['best_score']:.3f}), "
+              f"elbow_k={result['elbow_k']}, "
+              f"bic_k={result['bic_k']}, aic_k={result['aic_k']}")
 
     def _select_best_source(self):
-        """Select the sweep source with the highest best silhouette score."""
-        best_source = None
-        best_score = -1.0
+        """Select the best source by silhouette, recommend k via max across metrics."""
+        # Pick source with best silhouette score
+        best_source = max(
+            self.sweep_results,
+            key=lambda s: self.sweep_results[s]['best_score'],
+        )
 
-        for source_name, result in self.sweep_results.items():
-            if result['best_score'] > best_score:
-                best_score = result['best_score']
-                best_source = source_name
+        winner = self.sweep_results[best_source]
+
+        # k recommendation: max across all metrics (err toward more states)
+        self.metric_recommendations = {
+            'silhouette': winner['silhouette_k'],
+            'elbow': winner['elbow_k'],
+            'bic': winner['bic_k'],
+            'aic': winner['aic_k'],
+        }
+        recommended_k = max(self.metric_recommendations.values())
 
         # Set primary results to the winner
-        winner = self.sweep_results[best_source]
         self.silhouette_scores = winner['silhouette_scores']
         self.inertias = winner['inertias']
+        self.bic_scores = winner['bic_scores']
+        self.aic_scores = winner['aic_scores']
         self.cluster_labels = winner['cluster_labels']
-        self.best_k = winner['best_k']
+        self.best_k = recommended_k
         self.elbow_k = winner['elbow_k']
         self.chosen_source = best_source
 
         # Print sweep summary
         print(f"\n--- Sweep Summary ---")
         for source_name, result in self.sweep_results.items():
-            marker = "  << SELECTED" if source_name == best_source else ""
-            print(f"  {source_name}: k={result['best_k']}, "
-                  f"silhouette={result['best_score']:.3f}{marker}")
-        print(f"\nRecommended n_states: {self.best_k}")
+            marker = "  << BEST SOURCE" if source_name == best_source else ""
+            print(f"  {source_name}: silhouette_k={result['silhouette_k']} "
+                  f"({result['best_score']:.3f}), "
+                  f"elbow={result['elbow_k']}, "
+                  f"bic={result['bic_k']}, "
+                  f"aic={result['aic_k']}{marker}")
+
+        print(f"\n--- Metric Recommendations (source={best_source}) ---")
+        for metric, k in self.metric_recommendations.items():
+            print(f"  {metric}: k={k}")
+        print(f"\n  >> Recommended n_states: {self.best_k} "
+              f"(max across metrics)")
 
     def _run_clustering_analysis(self, data, silhouette_dict, inertia_dict,
-                                 labels_dict, desc=""):
-        """Run KMeans for different k values and calculate metrics."""
+                                 bic_dict, aic_dict, labels_dict, desc=""):
+        """Run KMeans and GMM for different k values."""
         k_range = range(self.min_k, self.max_k + 1)
+        n_features = data.shape[1]
+        cov_type = ('diag' if n_features > self._GMM_FULL_COV_THRESHOLD
+                    else 'full')
 
-        for k in tqdm(k_range, desc=f"Testing cluster sizes ({desc})"):
+        for k in tqdm(k_range, desc=f"KMeans + GMM ({desc})"):
+            # KMeans
             kmeans = KMeans(
                 n_clusters=k,
                 random_state=self.random_state,
@@ -252,6 +310,20 @@ class StateDiscovery:
 
             if k >= 2:
                 silhouette_dict[k] = silhouette_score(data, labels)
+
+            # GMM for BIC / AIC
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                gmm = GaussianMixture(
+                    n_components=k,
+                    covariance_type=cov_type,
+                    random_state=self.random_state,
+                    n_init=3,
+                    max_iter=200,
+                )
+                gmm.fit(data)
+            bic_dict[k] = gmm.bic(data)
+            aic_dict[k] = gmm.aic(data)
 
     def _find_elbow(self, inertia_dict) -> int:
         """Find elbow point using second derivative method."""
@@ -278,7 +350,7 @@ class StateDiscovery:
         return self.embeddings
 
     def get_recommended_n_states(self) -> int:
-        """Return recommended number of states based on silhouette score."""
+        """Return recommended number of states (max across metrics)."""
         if self.best_k is None:
             raise ValueError("Model has not been fitted yet. Call fit() first.")
         return self.best_k
@@ -339,6 +411,8 @@ class StateDiscovery:
         # Generate plots
         self._plot_elbow(save_dir)
         self._plot_silhouette(save_dir)
+        self._plot_bic_aic(save_dir)
+        self._plot_metric_recommendations(save_dir)
         self._plot_cluster_sizes(save_dir)
         self._plot_sweep_comparison(save_dir)
         self._plot_embeddings_2d(save_dir)
@@ -397,10 +471,11 @@ class StateDiscovery:
         ax.set_xlabel('Number of Clusters (k)', fontsize=12)
         ax.set_ylabel('Silhouette Score', fontsize=12)
 
-        ax.axvline(x=self.best_k, color='r', linestyle='--', linewidth=2,
-                    label=f'Best k={self.best_k} '
-                          f'(score={self.silhouette_scores[self.best_k]:.3f})')
-        ax.scatter([self.best_k], [self.silhouette_scores[self.best_k]],
+        sil_k = self.metric_recommendations['silhouette']
+        ax.axvline(x=sil_k, color='r', linestyle='--', linewidth=2,
+                    label=f'Best k={sil_k} '
+                          f'(score={self.silhouette_scores[sil_k]:.3f})')
+        ax.scatter([sil_k], [self.silhouette_scores[sil_k]],
                    color='r', s=200, zorder=5, marker='*')
 
         ax.legend(loc='best')
@@ -418,6 +493,86 @@ class StateDiscovery:
         plt.savefig(os.path.join(save_dir, 'silhouette_plot.png'), dpi=150)
         plt.close()
         print("  - silhouette_plot.png")
+
+    def _plot_bic_aic(self, save_dir: str):
+        """Generate BIC and AIC vs k plot for the winning source."""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+        k_values = sorted(self.bic_scores.keys())
+        bic_values = [self.bic_scores[k] for k in k_values]
+        aic_values = [self.aic_scores[k] for k in k_values]
+
+        bic_k = self.metric_recommendations['bic']
+        aic_k = self.metric_recommendations['aic']
+
+        # BIC
+        ax1.plot(k_values, bic_values, 'b-o', linewidth=2, markersize=8)
+        ax1.axvline(x=bic_k, color='r', linestyle='--', linewidth=2,
+                     label=f'Best k={bic_k}')
+        ax1.scatter([bic_k], [self.bic_scores[bic_k]],
+                    color='r', s=200, zorder=5, marker='*')
+        ax1.set_xlabel('Number of Clusters (k)', fontsize=12)
+        ax1.set_ylabel('BIC (lower is better)', fontsize=12)
+        ax1.set_title(f'Bayesian Information Criterion\n'
+                      f'(source={self.chosen_source})', fontsize=14)
+        ax1.legend(loc='best')
+        ax1.grid(True, alpha=0.3)
+
+        # AIC
+        ax2.plot(k_values, aic_values, 'g-o', linewidth=2, markersize=8)
+        ax2.axvline(x=aic_k, color='r', linestyle='--', linewidth=2,
+                     label=f'Best k={aic_k}')
+        ax2.scatter([aic_k], [self.aic_scores[aic_k]],
+                    color='r', s=200, zorder=5, marker='*')
+        ax2.set_xlabel('Number of Clusters (k)', fontsize=12)
+        ax2.set_ylabel('AIC (lower is better)', fontsize=12)
+        ax2.set_title(f'Akaike Information Criterion\n'
+                      f'(source={self.chosen_source})', fontsize=14)
+        ax2.legend(loc='best')
+        ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 'bic_aic_plot.png'), dpi=150)
+        plt.close()
+        print("  - bic_aic_plot.png")
+
+    def _plot_metric_recommendations(self, save_dir: str):
+        """Bar chart showing the recommended k from each metric."""
+        metrics = list(self.metric_recommendations.keys())
+        k_values = [self.metric_recommendations[m] for m in metrics]
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        bar_colors = ['#2196F3'] * len(metrics)
+        bars = ax.bar(range(len(metrics)), k_values, color=bar_colors)
+
+        # Add value labels on bars
+        for i, k in enumerate(k_values):
+            ax.text(i, k + 0.1, str(k), ha='center', va='bottom',
+                    fontsize=14, fontweight='bold')
+
+        # Horizontal line at the recommended k
+        ax.axhline(y=self.best_k, color='#4CAF50', linestyle='--',
+                   linewidth=3,
+                   label=f'Recommended: k={self.best_k} (max)')
+
+        ax.set_xticks(range(len(metrics)))
+        ax.set_xticklabels([m.upper() for m in metrics], fontsize=12)
+        ax.set_ylabel('Recommended k', fontsize=12)
+        ax.set_title(
+            f'Per-Metric Recommendations (source={self.chosen_source})\n'
+            f'Final recommendation = max across metrics (err toward more states)',
+            fontsize=13,
+        )
+        ax.legend(loc='best', fontsize=12)
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_ylim(0, max(k_values) + 1.5)
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_dir, 'metric_recommendations.png'),
+                    dpi=150)
+        plt.close()
+        print("  - metric_recommendations.png")
 
     def _plot_cluster_sizes(self, save_dir: str):
         """Generate cluster size distribution plot."""
@@ -455,13 +610,13 @@ class StateDiscovery:
         """Bar chart comparing the best silhouette score of every sweep source."""
         sources = list(self.sweep_results.keys())
         best_scores = [self.sweep_results[s]['best_score'] for s in sources]
-        best_ks = [self.sweep_results[s]['best_k'] for s in sources]
+        best_ks = [self.sweep_results[s]['silhouette_k'] for s in sources]
 
         fig, ax = plt.subplots(figsize=(max(8, len(sources) * 1.5), 6))
 
         bar_colors = ['#4CAF50' if s == self.chosen_source else '#2196F3'
                       for s in sources]
-        bars = ax.bar(range(len(sources)), best_scores, color=bar_colors)
+        ax.bar(range(len(sources)), best_scores, color=bar_colors)
 
         for i, (score, k) in enumerate(zip(best_scores, best_ks)):
             ax.text(i, score + 0.005, f'k={k}\n{score:.3f}',
@@ -657,8 +812,6 @@ class StateDiscovery:
         ax1.legend(loc='upper right')
         ax1.grid(True, alpha=0.3, axis='x')
 
-        frame_colors = np.array([color_map[l] for l in labels])  # noqa: F841
-
         ax2.imshow([labels], aspect='auto', cmap=plt.cm.tab10,
                    extent=[0, len(labels), 0, 1],
                    vmin=0, vmax=len(unique_labels) - 1)
@@ -702,7 +855,6 @@ class StateDiscovery:
         ax.set_ylabel('Component 2', fontsize=12)
         ax.set_title(
             f'{title}\n(k={self.best_k}, '
-            f'silhouette={self.silhouette_scores[self.best_k]:.3f}, '
             f'source={self.chosen_source})',
             fontsize=14,
         )
@@ -724,22 +876,32 @@ class StateDiscovery:
         sweep_details = {}
         for source_name, result in self.sweep_results.items():
             sweep_details[source_name] = {
-                'best_k': int(result['best_k']),
-                'best_score': float(result['best_score']),
+                'silhouette_k': int(result['silhouette_k']),
+                'best_silhouette': float(result['best_score']),
                 'elbow_k': int(result['elbow_k']),
+                'bic_k': int(result['bic_k']),
+                'aic_k': int(result['aic_k']),
                 'silhouette_scores': {
                     str(k): float(v)
                     for k, v in result['silhouette_scores'].items()
+                },
+                'bic_scores': {
+                    str(k): float(v)
+                    for k, v in result['bic_scores'].items()
+                },
+                'aic_scores': {
+                    str(k): float(v)
+                    for k, v in result['aic_scores'].items()
                 },
             }
 
         summary = {
             'recommended_n_states': int(self.best_k),
-            'selection_method': 'best_silhouette_across_sweep',
+            'selection_method': 'max_across_metrics',
             'chosen_source': self.chosen_source,
-            'best_silhouette_score': float(
-                self.silhouette_scores[self.best_k]),
-            'best_silhouette_k': int(self.best_k),
+            'metric_recommendations': {
+                k: int(v) for k, v in self.metric_recommendations.items()
+            },
             'elbow_k': int(self.elbow_k),
             'cluster_sizes': cluster_sizes,
             'sweep_sources': list(self.sweep_results.keys()),
