@@ -712,11 +712,21 @@ class StateDiscovery:
         frame_indices = np.arange(n_frames)
 
         print("  Computing t-SNE 2D for temporal visualization...")
-        embeddings_2d = self._get_2d_projection('tsne')
+        tsne_2d = self._get_2d_projection('tsne')
 
-        self._plot_temporal_2d(embeddings_2d, frame_indices, save_dir)
-        self._plot_temporal_3d(embeddings_2d, frame_indices, labels, save_dir)
+        self._plot_temporal_2d(tsne_2d, frame_indices, save_dir)
+        self._plot_temporal_3d(tsne_2d, frame_indices, labels, save_dir,
+                               method_name='t-SNE', filename='tsne_temporal_3d.png')
         self._plot_state_timeline(labels, frame_indices, save_dir)
+
+        # UMAP 3D temporal plot
+        print("  Computing UMAP 2D for temporal visualization...")
+        umap_2d = self._get_2d_projection('umap')
+        if umap_2d is not None:
+            self._plot_temporal_3d(umap_2d, frame_indices, labels, save_dir,
+                                   method_name='UMAP', filename='umap_temporal_3d.png')
+        else:
+            print("  - umap_temporal_3d.png (skipped - umap-learn not installed)")
 
     def _plot_temporal_2d(self, embeddings_2d: np.ndarray,
                           frame_indices: np.ndarray, save_dir: str):
@@ -755,7 +765,8 @@ class StateDiscovery:
 
     def _plot_temporal_3d(self, embeddings_2d: np.ndarray,
                           frame_indices: np.ndarray, labels: np.ndarray,
-                          save_dir: str):
+                          save_dir: str, method_name: str = 't-SNE',
+                          filename: str = 'tsne_temporal_3d.png'):
         """Create 3D scatter plot with frame index as z-axis."""
         from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
@@ -776,17 +787,17 @@ class StateDiscovery:
         ax.plot(embeddings_2d[:, 0], embeddings_2d[:, 1], frame_indices,
                 'k-', alpha=0.15, linewidth=0.5)
 
-        ax.set_xlabel('t-SNE Component 1', fontsize=10)
-        ax.set_ylabel('t-SNE Component 2', fontsize=10)
+        ax.set_xlabel(f'{method_name} Component 1', fontsize=10)
+        ax.set_ylabel(f'{method_name} Component 2', fontsize=10)
         ax.set_zlabel('Frame Index (Time)', fontsize=10)
-        ax.set_title('3D Temporal Evolution\n(z-axis = frame index)',
-                     fontsize=14)
+        ax.set_title(f'3D Temporal Evolution ({method_name})\n'
+                     f'(z-axis = frame index)', fontsize=14)
         ax.legend(loc='best')
 
         plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, 'tsne_temporal_3d.png'), dpi=150)
+        plt.savefig(os.path.join(save_dir, filename), dpi=150)
         plt.close()
-        print("  - tsne_temporal_3d.png")
+        print(f"  - {filename}")
 
     def _plot_state_timeline(self, labels: np.ndarray,
                              frame_indices: np.ndarray, save_dir: str):
