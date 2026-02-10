@@ -345,6 +345,18 @@ def run_training(args):
     # Create dataset and loader
     dataset, train_dataset, train_loader, test_dataset, test_loader = create_dataset_and_loader(args,test_split=args.val_split)
 
+    # Auto-infer feature dimensions from the actual dataset
+    sample_t0, _ = dataset[0]
+    inferred_node_dim = sample_t0.x.shape[1]
+    inferred_edge_dim = sample_t0.edge_attr.shape[1]
+
+    if args.node_dim != inferred_node_dim:
+        print(f"Auto-inferred node_dim={inferred_node_dim} from dataset (was {args.node_dim})")
+        args.node_dim = inferred_node_dim
+    if args.edge_dim != inferred_edge_dim:
+        print(f"Auto-inferred edge_dim={inferred_edge_dim} from dataset (was {args.edge_dim})")
+        args.edge_dim = inferred_edge_dim
+
     # Infer num atoms for later embedding
     args.embedding_in_dim = dataset.n_atoms
 

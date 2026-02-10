@@ -38,7 +38,7 @@ def add_schnet_args(parser: argparse.ArgumentParser):
     schnet_group.add_argument('--activation', type=str, default='tanh',
                               choices=['relu', 'tanh', 'leaky_relu', 'elu', 'gelu', 'silu'],
                               help='Activation function')
-    schnet_group.add_argument('--use_attention', action='store_true',
+    schnet_group.add_argument('--use_attention', action='store_true', default=True,
                               help='Use attention mechanism in message passing')
     return schnet_group
 

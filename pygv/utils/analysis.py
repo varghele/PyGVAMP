@@ -158,6 +158,10 @@ def analyze_vampnet_outputs(
             # Get edge attention using get_attention
             _, batch_attentions = model.get_attention(batch, device=device)
 
+            # Normalize empty attention list to None
+            if isinstance(batch_attentions, list) and len(batch_attentions) == 0:
+                batch_attentions = None
+
             # Extract only the last layer's attention (most important)
             if batch_attentions is not None:
                 if isinstance(batch_attentions, list) and len(batch_attentions) > 0:
@@ -167,7 +171,7 @@ def analyze_vampnet_outputs(
                     if not return_tensors:
                         last_layer_attention = last_layer_attention.cpu().numpy()
                 else:
-                    # Single attention output
+                    # Single attention output (tensor)
                     last_layer_attention = batch_attentions
                     if not return_tensors:
                         last_layer_attention = last_layer_attention.cpu().numpy()
