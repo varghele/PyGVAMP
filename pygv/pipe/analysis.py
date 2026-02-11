@@ -284,14 +284,17 @@ def run_analysis(args=None):
         prob_threshold=0.0  # Only consider frames with probability ≥ 0.0
     )
 
-    # Generate visualization
-    visualize_state_ensemble(
-        state_structures=state_structures,
-        save_dir=paths['analysis_dir'],
-        protein_name=args.protein_name,
-        image_size=(800, 600)
-    )
-    print("Representative state structures generated")
+    # Generate PyMOL visualizations (optional — requires PyMOL)
+    try:
+        visualize_state_ensemble(
+            state_structures=state_structures,
+            save_dir=paths['analysis_dir'],
+            protein_name=args.protein_name,
+            image_size=(800, 600)
+        )
+        print("Representative state structures generated")
+    except Exception as e:
+        print(f"Warning: PyMOL visualization skipped: {e}")
 
     # Generate state ensembles with attention values
     save_attention_colored_structures(
@@ -303,14 +306,17 @@ def run_analysis(args=None):
         residue_names=residue_names
     )
 
-    # Visualize attention ensembles
-    visualize_attention_ensemble(
-        state_structures=state_structures,
-        state_attention_maps=state_attention_maps,
-        save_dir=paths['analysis_dir'],
-        protein_name=args.protein_name,
-    )
-    print("Attention-colored visualizations generated")
+    # Visualize attention ensembles (optional — requires PyMOL)
+    try:
+        visualize_attention_ensemble(
+            state_structures=state_structures,
+            state_attention_maps=state_attention_maps,
+            save_dir=paths['analysis_dir'],
+            protein_name=args.protein_name,
+        )
+        print("Attention-colored visualizations generated")
+    except Exception as e:
+        print(f"Warning: PyMOL attention visualization skipped: {e}")
 
     lag_frames = int(args.lag_time/inferred_timestep)/args.stride
 
@@ -324,6 +330,28 @@ def run_analysis(args=None):
         timestep=inferred_timestep
     )
     print("network of states plotted ")
+
+    # Generate interactive HTML report (pygviz)
+    from pygv.utils.interactive_report import generate_interactive_report
+    print("Generating interactive HTML report...")
+    try:
+        report_path = generate_interactive_report(
+            probs=probs,
+            embeddings=embeddings,
+            edge_attentions=attentions,
+            edge_indices=edge_indices,
+            topology_file=args.top,
+            save_dir=paths['analysis_dir'],
+            protein_name=args.protein_name,
+            lag_time=args.lag_time,
+            stride=args.stride,
+            timestep=inferred_timestep,
+            n_nodes=len(residue_indices),
+        )
+        if report_path:
+            print(f"Interactive report saved to: {report_path}")
+    except Exception as e:
+        print(f"Warning: Could not generate interactive report: {e}")
 
     """plot_state_attention_maps(attention_maps=state_attention_maps,
                               states_order=,

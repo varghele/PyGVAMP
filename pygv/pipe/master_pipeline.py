@@ -76,9 +76,13 @@ class PipelineOrchestrator:
 
     def run_preparation_phase(self, dirs):
         """
-        Run data preparation phase
+        Run data preparation phase.
 
-        Returns dataset hash for caching
+        Returns
+        -------
+        tuple
+            (dataset_path, recommended_n_states) where recommended_n_states
+            is an int if state discovery ran, or None otherwise.
         """
         print("\n" + "=" * 60)
         print("PHASE 1: DATA PREPARATION")
@@ -90,7 +94,7 @@ class PipelineOrchestrator:
 
         if cached_dataset and self.config.cache:
             print(f"Found cached dataset: {cached_dataset}")
-            return cached_dataset
+            return cached_dataset, None
 
         # Calculate optimal stride based on hurry mode
         if self.config.hurry:
@@ -102,11 +106,23 @@ class PipelineOrchestrator:
         prep_args = self._create_prep_args(dirs)
         dataset_path = run_preparation(prep_args)
 
+        # Read back recommended n_states from state discovery if it ran
+        recommended_n_states = None
+        if self.config.discover_states:
+            stats_path = os.path.join(dataset_path, 'dataset_stats.json')
+            if os.path.isfile(stats_path):
+                with open(stats_path) as f:
+                    stats = json.load(f)
+                if 'state_discovery' in stats:
+                    recommended_n_states = stats['state_discovery'].get('recommended_n_states')
+                    if recommended_n_states is not None:
+                        print(f"State discovery recommended n_states = {recommended_n_states}")
+
         # Cache dataset if requested
         if self.config.cache:
             self.cache_manager.cache_dataset(dataset_path, dataset_hash)
 
-        return dataset_path
+        return dataset_path, recommended_n_states
 
     def run_training_phase(self, dirs, dataset_path):
         """
@@ -165,10 +181,6 @@ class PipelineOrchestrator:
                 except Exception as e:
                     print(f"Training failed: {str(e)}")
                     continue
-
-        # Clean up dataset if not caching
-        if not self.config.cache and dataset_path:
-            self._cleanup_dataset(dataset_path)
 
         return trained_models
 
@@ -281,6 +293,17 @@ class PipelineOrchestrator:
         args.cache_dir = str(dirs['cache']) if self.config.cache else None
         args.use_cache = self.config.cache
 
+        # State discovery
+        args.discover_states = self.config.discover_states
+        args.g2v_embedding_dim = self.config.g2v_embedding_dim
+        args.g2v_max_degree = self.config.g2v_max_degree
+        args.g2v_epochs = self.config.g2v_epochs
+        args.g2v_min_count = self.config.g2v_min_count
+        args.g2v_umap_dim = self.config.g2v_umap_dim or [2, 3, 5, 6, 7]
+        args.min_states = self.config.min_states
+        args.max_states = self.config.max_states
+        args.batch_size = self.config.batch_size
+
         return args
 
     def _create_train_args(self, dirs, dataset_path, lag_time, n_states, exp_dir):
@@ -319,6 +342,7 @@ class PipelineOrchestrator:
         args.protein_name = self.config.protein_name
         args.batch_size = self.config.batch_size
         args.cpu = self.config.cpu
+        args.cache_dir = str(dirs['cache']) if self.config.cache else None
 
         # Get lag_time from model path
         import re
@@ -358,7 +382,12 @@ class PipelineOrchestrator:
         dirs = self.setup_experiment_directory()
 
         # Phase 1: Preparation
-        dataset_path = self.run_preparation_phase(dirs)
+        dataset_path, recommended_n_states = self.run_preparation_phase(dirs)
+
+        # Use discovered n_states if no explicit list was provided
+        if recommended_n_states is not None and not hasattr(self.config, '_n_states_from_cli'):
+            print(f"Using discovered n_states = {recommended_n_states}")
+            self.config.n_states_list = [recommended_n_states]
 
         # Phase 2: Training
         trained_models = self.run_training_phase(dirs, dataset_path)
@@ -414,11 +443,39 @@ def main():
     config.traj_dir = args.traj_dir
     config.top = args.top
     config.lag_times = args.lag_times
-    config.n_states_list = args.n_states
     config.cache = args.cache
     config.hurry = args.hurry
     config.output_dir = args.output_dir
     config.protein_name = args.protein_name
+    config.cpu = args.cpu
+
+    # n_states: if explicitly provided, use it and skip discovery for state count
+    if args.n_states is not None:
+        config.n_states_list = args.n_states
+        config._n_states_from_cli = True
+    else:
+        # Will be determined by state discovery; fall back to config default
+        config.n_states_list = [config.n_states]
+
+    # State discovery: on by default, disabled with --no_discover_states
+    if args.no_discover_states:
+        config.discover_states = False
+    if args.min_states is not None:
+        config.min_states = args.min_states
+    if args.max_states is not None:
+        config.max_states = args.max_states
+
+    # Override training parameters only if explicitly provided
+    if args.epochs is not None:
+        config.epochs = args.epochs
+    if args.clip_grad is not None:
+        config.clip_grad = args.clip_grad
+    if args.stride is not None:
+        config.stride = args.stride
+    if args.selection is not None:
+        config.selection = args.selection
+    if args.no_continuous:
+        config.continuous = False
 
     # Create orchestrator and run pipeline
     orchestrator = PipelineOrchestrator(config)

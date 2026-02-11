@@ -287,13 +287,13 @@ class TestPipelineArgs:
         assert args.lag_times == [10.0]
 
     def test_parse_args_default_n_states(self):
-        """parse_pipeline_args has default n_states."""
+        """parse_pipeline_args defaults n_states to None (auto-discover)."""
         from pygv.pipe.args import parse_pipeline_args
 
         with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb']):
             args = parse_pipeline_args()
 
-        assert args.n_states == [5]
+        assert args.n_states is None
 
     def test_parse_args_default_output_dir(self):
         """parse_pipeline_args has default output_dir."""

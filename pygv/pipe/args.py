@@ -36,8 +36,32 @@ Examples:
     # Lag times and states
     parser.add_argument('--lag_times', type=float, nargs='+', default=[10.0],
                         help='Lag times in nanoseconds (can specify multiple)')
-    parser.add_argument('--n_states', type=int, nargs='+', default=[5],
-                        help='Number of states (can specify multiple)')
+    parser.add_argument('--n_states', type=int, nargs='+', default=None,
+                        help='Number of states (can specify multiple). '
+                             'If omitted, determined automatically via state discovery')
+
+    # State discovery
+    parser.add_argument('--no_discover_states', action='store_true',
+                        help='Disable automatic state discovery (requires --n_states)')
+    parser.add_argument('--min_states', type=int, default=None,
+                        help='Minimum number of states to test in discovery (default: 2)')
+    parser.add_argument('--max_states', type=int, default=None,
+                        help='Maximum number of states to test in discovery (default: 10)')
+
+    # Training overrides
+    parser.add_argument('--epochs', type=int, default=None,
+                        help='Number of training epochs (overrides preset)')
+    parser.add_argument('--clip_grad', type=float, default=None,
+                        help='Gradient clipping max norm (default: disabled)')
+    parser.add_argument('--stride', type=int, default=None,
+                        help='Frame stride for trajectory loading (overrides preset)')
+    parser.add_argument('--selection', type=str, default=None,
+                        help='MDTraj atom selection string (overrides preset)')
+    parser.add_argument('--cpu', action='store_true',
+                        help='Force CPU usage even if CUDA is available')
+    parser.add_argument('--no_continuous', action='store_true',
+                        help='Treat each trajectory file as independent '
+                             '(time-lagged pairs will not cross file boundaries)')
 
     # Pipeline control
     parser.add_argument('--cache', action='store_true',

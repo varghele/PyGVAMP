@@ -562,7 +562,7 @@ class VAMPNet(nn.Module):
         """
         # Load saved dictionary
         try:
-            checkpoint = torch.load(filepath, map_location=map_location)
+            checkpoint = torch.load(filepath, map_location=map_location, weights_only=False)
         except Exception as e:
             raise IOError(f"Error loading model from {filepath}: {str(e)}")
 
@@ -694,7 +694,7 @@ class VAMPNet(nn.Module):
         """
         try:
             # Load the complete model
-            model = torch.load(filepath, map_location=map_location)
+            model = torch.load(filepath, map_location=map_location, weights_only=False)
             print(f"Complete model loaded from {filepath}")
             return model
         except Exception as e:

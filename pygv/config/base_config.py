@@ -32,6 +32,7 @@ class BaseConfig:
     lr: float = 0.001
     weight_decay: float = 0.0001
     val_split: float = 0.2
+    clip_grad: Optional[float] = None
 
     # Output and caching
     output_dir: str = "./output"
@@ -50,6 +51,16 @@ class BaseConfig:
     # Analysis
     protein_name: str = "protein"
     max_tau: Optional[int] = None
+
+    # State discovery
+    discover_states: bool = True
+    g2v_embedding_dim: int = 512
+    g2v_max_degree: int = 3
+    g2v_epochs: int = 50
+    g2v_min_count: int = 10
+    g2v_umap_dim: Optional[list] = None  # defaults to [2,3,5,6,7,10] in StateDiscovery
+    min_states: int = 2
+    max_states: int = 10
 
     # Hardware
     cpu: bool = False
