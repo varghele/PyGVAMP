@@ -331,27 +331,26 @@ def run_analysis(args=None):
     )
     print("network of states plotted ")
 
-    # Generate interactive HTML report (pygviz)
-    from pygv.utils.interactive_report import generate_interactive_report
-    print("Generating interactive HTML report...")
-    try:
-        report_path = generate_interactive_report(
-            probs=probs,
-            embeddings=embeddings,
-            edge_attentions=attentions,
-            edge_indices=edge_indices,
-            topology_file=args.top,
-            save_dir=paths['analysis_dir'],
-            protein_name=args.protein_name,
-            lag_time=args.lag_time,
-            stride=args.stride,
-            timestep=inferred_timestep,
-            n_nodes=len(residue_indices),
-        )
-        if report_path:
-            print(f"Interactive report saved to: {report_path}")
-    except Exception as e:
-        print(f"Warning: Could not generate interactive report: {e}")
+    # Generate merged interactive report from all analysis subdirectories
+    # analysis_dir is e.g. exp_root/analysis/lag1ns_9states/ → experiment_dir is exp_root/
+    experiment_dir = os.path.dirname(os.path.dirname(paths['analysis_dir']))
+    analysis_parent = os.path.join(experiment_dir, 'analysis')
+    if os.path.isdir(analysis_parent):
+        from pygv.utils.interactive_report import generate_merged_interactive_report
+        print("Generating merged interactive report...")
+        try:
+            report_path = generate_merged_interactive_report(
+                experiment_dir=experiment_dir,
+                topology_file=args.top,
+                protein_name=args.protein_name,
+                max_frames=5000,
+                stride=args.stride,
+                timestep=inferred_timestep,
+            )
+            if report_path:
+                print(f"Merged interactive report: {report_path}")
+        except Exception as e:
+            print(f"Warning: Could not generate merged interactive report: {e}")
 
     """plot_state_attention_maps(attention_maps=state_attention_maps,
                               states_order=,
@@ -359,8 +358,6 @@ def run_analysis(args=None):
                               state_populations=state_populations,
                               save_path=,
                               n_atoms=)"""
-
-
 
 
     # Run the trajectory analysis

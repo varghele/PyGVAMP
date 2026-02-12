@@ -17,6 +17,7 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 # Import CacheManager
 from pygv.pipe.caching import CacheManager
@@ -157,11 +158,16 @@ class PipelineOrchestrator:
                 exp_dir = dirs['training'] / exp_name
                 exp_dir.mkdir(exist_ok=True)
 
-                # Check if model already exists
-                model_path = exp_dir / 'best_model.pt'
-                if model_path.exists():
+                # Check if model already exists (in timestamped subdirs or direct)
+                existing = sorted(exp_dir.glob('*/models/best_model.pt'))
+                if existing:
+                    model_path = existing[-1]  # latest run
                     print(f"Model already exists: {model_path}")
                     trained_models[exp_name] = str(model_path)
+                    continue
+                if (exp_dir / 'best_model.pt').exists():
+                    print(f"Model already exists: {exp_dir / 'best_model.pt'}")
+                    trained_models[exp_name] = str(exp_dir / 'best_model.pt')
                     continue
 
                 # Create training args
@@ -355,6 +361,57 @@ class PipelineOrchestrator:
 
         return args
 
+    def _discover_trained_models(self, dirs) -> dict:
+        """Scan training directory for existing trained models."""
+        trained_models = {}
+        training_dir = dirs['training']
+        if not training_dir.exists():
+            return trained_models
+        for exp_dir in sorted(training_dir.iterdir()):
+            if not exp_dir.is_dir():
+                continue
+            # Find best_model.pt inside timestamped subdirs
+            candidates = sorted(exp_dir.glob('*/models/best_model.pt'))
+            if candidates:
+                # Use the latest (last sorted) timestamped run
+                trained_models[exp_dir.name] = str(candidates[-1])
+            # Also check direct path (orchestrator's own layout)
+            elif (exp_dir / 'best_model.pt').exists():
+                trained_models[exp_dir.name] = str(exp_dir / 'best_model.pt')
+        return trained_models
+
+    def _discover_dataset_path(self, dirs) -> Optional[str]:
+        """Find existing dataset in preparation directory."""
+        prep_dir = dirs['preparation']
+        if not prep_dir.exists():
+            return None
+        # Preparation creates timestamped subdirs with dataset files
+        candidates = sorted(prep_dir.iterdir())
+        for c in reversed(candidates):  # latest first
+            if c.is_dir() and (c / 'dataset_stats.json').exists():
+                return str(c)
+        # Fallback: the prep dir itself if it contains data
+        if (prep_dir / 'dataset_stats.json').exists():
+            return str(prep_dir)
+        return None
+
+    def resume_experiment_directory(self, experiment_dir: str) -> dict:
+        """Resume from an existing experiment directory."""
+        self.experiment_dir = Path(experiment_dir)
+        dirs = {
+            'root': self.experiment_dir,
+            'preparation': self.experiment_dir / 'preparation',
+            'training': self.experiment_dir / 'training',
+            'analysis': self.experiment_dir / 'analysis',
+            'cache': self.experiment_dir / 'cache' if self.config.cache else None,
+            'logs': self.experiment_dir / 'logs',
+        }
+        for name, path in dirs.items():
+            if path is not None:
+                path.mkdir(parents=True, exist_ok=True)
+        print(f"Resuming experiment: {self.experiment_dir}")
+        return dirs
+
     def _cleanup_dataset(self, dataset_path):
         """Remove dataset files if not caching"""
         print(f"Cleaning up dataset: {dataset_path}")
@@ -367,8 +424,9 @@ class PipelineOrchestrator:
         except Exception as e:
             print(f"Warning: Could not clean up dataset: {str(e)}")
 
-    def run_complete_pipeline(self):
-        """Run the complete pipeline"""
+    def run_complete_pipeline(self, skip_preparation=False, skip_training=False,
+                              only_analysis=False, resume=None):
+        """Run the complete pipeline with optional phase skipping and resume support."""
         print("=" * 60)
         print("STARTING PYGVAMP PIPELINE")
         print("=" * 60)
@@ -378,22 +436,45 @@ class PipelineOrchestrator:
         print(f"Cache: {self.config.cache}")
         print(f"Hurry mode: {self.config.hurry}")
 
-        # Setup experiment directory
-        dirs = self.setup_experiment_directory()
+        # Setup dirs: resume existing or create new
+        if resume:
+            dirs = self.resume_experiment_directory(resume)
+        else:
+            dirs = self.setup_experiment_directory()
+
+        dataset_path = None
+        trained_models = {}
 
         # Phase 1: Preparation
-        dataset_path, recommended_n_states = self.run_preparation_phase(dirs)
-
-        # Use discovered n_states if no explicit list was provided
-        if recommended_n_states is not None and not hasattr(self.config, '_n_states_from_cli'):
-            print(f"Using discovered n_states = {recommended_n_states}")
-            self.config.n_states_list = [recommended_n_states]
+        if not skip_preparation and not only_analysis:
+            dataset_path, recommended_n_states = self.run_preparation_phase(dirs)
+            # Use discovered n_states if no explicit list was provided
+            if recommended_n_states is not None and not hasattr(self.config, '_n_states_from_cli'):
+                print(f"Using discovered n_states = {recommended_n_states}")
+                self.config.n_states_list = [recommended_n_states]
+        else:
+            print("Skipping preparation phase.")
+            dataset_path = self._discover_dataset_path(dirs)
 
         # Phase 2: Training
-        trained_models = self.run_training_phase(dirs, dataset_path)
+        if not skip_training and not only_analysis:
+            if dataset_path is None:
+                print("Error: No dataset found. Run preparation first or provide --cache.")
+                return None
+            trained_models = self.run_training_phase(dirs, dataset_path)
+        else:
+            print("Skipping training phase.")
+
+        # Discover all trained models (merges with any just-trained ones)
+        discovered = self._discover_trained_models(dirs)
+        trained_models = {**discovered, **trained_models}  # just-trained wins on conflict
 
         # Phase 3: Analysis
-        analysis_results = self.run_analysis_phase(dirs, trained_models)
+        if trained_models:
+            analysis_results = self.run_analysis_phase(dirs, trained_models)
+        else:
+            print("No trained models found. Run training first.")
+            analysis_results = {}
 
         # Save summary
         self._save_pipeline_summary(dirs, trained_models, analysis_results)
@@ -479,7 +560,12 @@ def main():
 
     # Create orchestrator and run pipeline
     orchestrator = PipelineOrchestrator(config)
-    results = orchestrator.run_complete_pipeline()
+    results = orchestrator.run_complete_pipeline(
+        skip_preparation=args.skip_preparation,
+        skip_training=args.skip_training,
+        only_analysis=args.only_analysis,
+        resume=args.resume,
+    )
 
     return results
 

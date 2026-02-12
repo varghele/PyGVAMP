@@ -7,8 +7,9 @@ viewer with attention coloring, transition matrix heatmap, and state legend.
 """
 
 import os
+import re
 import numpy as np
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 
 def reduce_embeddings_to_2d(embeddings: np.ndarray,
@@ -234,6 +235,253 @@ def generate_interactive_report(
     os.makedirs(save_dir, exist_ok=True)
     output_path = os.path.join(save_dir, f"{protein_name}_interactive_report.html")
 
+    viz.generate(
+        output_path=output_path,
+        title=f"{protein_name} — Interactive VAMPNet Analysis",
+    )
+
+    return output_path
+
+
+def subsample_frames(
+        probs: np.ndarray,
+        embeddings: np.ndarray,
+        edge_attentions: list,
+        edge_indices: list,
+        max_frames: int = 5000,
+        random_state: int = 42,
+) -> Tuple[np.ndarray, np.ndarray, list, list]:
+    """
+    Stratified subsampling by state assignment to preserve state distribution.
+
+    Parameters
+    ----------
+    probs : np.ndarray
+        State probabilities of shape (n_frames, n_states).
+    embeddings : np.ndarray
+        Embeddings of shape (n_frames, embedding_dim).
+    edge_attentions : list
+        Per-frame edge attention arrays (length n_frames).
+    edge_indices : list
+        Per-frame edge index arrays (length n_frames).
+    max_frames : int
+        Maximum number of frames to keep.
+    random_state : int
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    tuple
+        (probs, embeddings, edge_attentions, edge_indices) subsampled.
+    """
+    n_frames = len(probs)
+    if n_frames <= max_frames:
+        return probs, embeddings, edge_attentions, edge_indices
+
+    rng = np.random.RandomState(random_state)
+    state_assignments = np.argmax(probs, axis=1)
+    unique_states = np.unique(state_assignments)
+
+    selected_indices = []
+    for state in unique_states:
+        state_mask = np.where(state_assignments == state)[0]
+        # Proportional allocation
+        n_sample = max(1, int(round(len(state_mask) / n_frames * max_frames)))
+        n_sample = min(n_sample, len(state_mask))
+        chosen = rng.choice(state_mask, size=n_sample, replace=False)
+        selected_indices.append(chosen)
+
+    selected_indices = np.sort(np.concatenate(selected_indices))
+
+    # Trim to max_frames if rounding caused overshoot
+    if len(selected_indices) > max_frames:
+        selected_indices = rng.choice(selected_indices, size=max_frames, replace=False)
+        selected_indices = np.sort(selected_indices)
+
+    sub_probs = probs[selected_indices]
+    sub_embeddings = embeddings[selected_indices]
+    sub_attentions = [edge_attentions[i] for i in selected_indices]
+    sub_indices = [edge_indices[i] for i in selected_indices]
+
+    return sub_probs, sub_embeddings, sub_attentions, sub_indices
+
+
+def _load_analysis_artifacts(analysis_dir: str) -> Tuple[
+    Optional[np.ndarray], Optional[np.ndarray], list, list
+]:
+    """
+    Load saved analysis artifacts from an analysis subdirectory.
+
+    Returns
+    -------
+    tuple
+        (probs, embeddings, edge_attentions, edge_indices) or Nones on failure.
+    """
+    probs_path = os.path.join(analysis_dir, 'transformed_traj.npz')
+    emb_path = os.path.join(analysis_dir, 'embeddings.npz')
+
+    if not os.path.isfile(probs_path) or not os.path.isfile(emb_path):
+        return None, None, [], []
+
+    probs_data = np.load(probs_path)
+    probs = probs_data[probs_data.files[0]]
+
+    emb_data = np.load(emb_path)
+    embeddings = emb_data[emb_data.files[0]]
+
+    # Load edge attentions
+    att_dir = os.path.join(analysis_dir, 'edge_attentions')
+    idx_dir = os.path.join(analysis_dir, 'edge_indices')
+
+    n_frames = len(probs)
+    edge_attentions = [None] * n_frames
+    edge_indices = [None] * n_frames
+
+    if os.path.isdir(att_dir):
+        for fname in sorted(os.listdir(att_dir)):
+            if fname.startswith('attention_') and fname.endswith('.npy'):
+                frame_num = int(fname.replace('attention_', '').replace('.npy', ''))
+                if frame_num < n_frames:
+                    edge_attentions[frame_num] = np.load(os.path.join(att_dir, fname))
+
+    if os.path.isdir(idx_dir):
+        for fname in sorted(os.listdir(idx_dir)):
+            if fname.startswith('edge_indices_') and fname.endswith('.npy'):
+                frame_num = int(fname.replace('edge_indices_', '').replace('.npy', ''))
+                if frame_num < n_frames:
+                    edge_indices[frame_num] = np.load(os.path.join(idx_dir, fname))
+
+    return probs, embeddings, edge_attentions, edge_indices
+
+
+def generate_merged_interactive_report(
+        experiment_dir: str,
+        topology_file: str,
+        protein_name: str = "protein",
+        max_frames: int = 5000,
+        stride: int = 1,
+        timestep: float = 0.001,
+) -> Optional[str]:
+    """
+    Generate a single interactive HTML report combining all lag times.
+
+    Scans the experiment's analysis/ subdirectories, loads saved artifacts,
+    subsamples frames, and produces one merged HTML with a timescale per lag time.
+
+    Parameters
+    ----------
+    experiment_dir : str
+        Root experiment directory (contains analysis/ subdirectory).
+    topology_file : str
+        Path to PDB/topology file for protein structure.
+    protein_name : str
+        Name of the protein (used in filename and title).
+    max_frames : int
+        Maximum frames per lag time (stratified subsampling).
+    stride : int
+        Stride used during frame extraction.
+    timestep : float
+        Trajectory timestep in nanoseconds.
+
+    Returns
+    -------
+    str or None
+        Path to the generated HTML file, or None if generation failed.
+    """
+    try:
+        from pygviz.md_visualizer import MDTrajectoryVisualizer
+    except ImportError:
+        print("  pygviz not available — skipping merged interactive report.")
+        return None
+
+    from pygv.utils.analysis import calculate_transition_matrices
+
+    analysis_root = os.path.join(experiment_dir, 'analysis')
+    if not os.path.isdir(analysis_root):
+        print(f"  No analysis directory found at {analysis_root}")
+        return None
+
+    # Discover analysis subdirectories matching lag<X>ns_<Y>states pattern
+    lag_pattern = re.compile(r'lag(\d+(?:\.\d+)?)ns_(\d+)states')
+    subdirs = []
+    for name in sorted(os.listdir(analysis_root)):
+        match = lag_pattern.match(name)
+        if match and os.path.isdir(os.path.join(analysis_root, name)):
+            lag_time = float(match.group(1))
+            n_states = int(match.group(2))
+            subdirs.append((lag_time, n_states, os.path.join(analysis_root, name)))
+
+    if not subdirs:
+        print("  No analysis subdirectories found matching lag*ns_*states pattern.")
+        return None
+
+    viz = MDTrajectoryVisualizer()
+    timescales_added = 0
+
+    for lag_time, n_states, subdir in subdirs:
+        print(f"  Loading artifacts from {os.path.basename(subdir)}...")
+        probs, embeddings, edge_attentions, edge_indices = _load_analysis_artifacts(subdir)
+
+        if probs is None or embeddings is None:
+            print(f"    Skipping — missing artifacts.")
+            continue
+
+        # Subsample frames
+        probs, embeddings, edge_attentions, edge_indices = subsample_frames(
+            probs, embeddings, edge_attentions, edge_indices,
+            max_frames=max_frames,
+        )
+
+        # Infer n_nodes from edge indices
+        n_nodes = None
+        for idx in edge_indices:
+            if idx is not None:
+                n_nodes = int(np.max(idx)) + 1
+                break
+        if n_nodes is None:
+            print(f"    Skipping — could not infer n_nodes.")
+            continue
+
+        # Reduce embeddings to 2D
+        embeddings_2d = reduce_embeddings_to_2d(embeddings)
+
+        # State assignments and frame indices
+        state_assignments = np.argmax(probs, axis=1).astype(np.int32)
+        frame_indices = np.arange(len(probs), dtype=np.int32)
+
+        # Transition matrix
+        transition_matrix, _ = calculate_transition_matrices(
+            probs=probs,
+            lag_time=lag_time,
+            stride=stride,
+            timestep=timestep,
+        )
+
+        # Aggregate edge attention to residue-level
+        attention_values = aggregate_edge_attention_to_residue(
+            edge_attentions=edge_attentions,
+            edge_indices=edge_indices,
+            n_nodes=n_nodes,
+        )
+
+        viz.add_timescale(
+            lagtime=int(lag_time),
+            embeddings=embeddings_2d,
+            frame_indices=frame_indices,
+            state_assignments=state_assignments,
+            transition_matrix=transition_matrix,
+            attention_values=attention_values,
+        )
+        timescales_added += 1
+        print(f"    Added timescale: lag={lag_time}ns, {len(probs)} frames (subsampled).")
+
+    if timescales_added == 0:
+        print("  No timescales could be added — skipping report generation.")
+        return None
+
+    viz.set_protein_structure(pdb_path=topology_file)
+
+    output_path = os.path.join(experiment_dir, f"{protein_name}_interactive_report.html")
     viz.generate(
         output_path=output_path,
         title=f"{protein_name} — Interactive VAMPNet Analysis",

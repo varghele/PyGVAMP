@@ -5,8 +5,11 @@ Tests cover:
 - reduce_embeddings_to_2d: shape, UMAP/t-SNE paths, edge cases
 - aggregate_edge_attention_to_residue: shape, None handling, correctness
 - generate_interactive_report: pygviz missing guard, orchestration
+- subsample_frames: shape, distribution preservation, passthrough
+- generate_merged_interactive_report: mock experiment dir, merged HTML
 """
 
+import os
 import pytest
 import numpy as np
 from unittest.mock import patch, MagicMock
@@ -247,3 +250,189 @@ class TestGenerateInteractiveReport:
             n_nodes=None,
         )
         assert result is None
+
+
+# ============================================================================
+# Tests for subsample_frames
+# ============================================================================
+
+class TestSubsampleFrames:
+
+    def test_passthrough_when_below_max(self, sample_probs, sample_embeddings_2d, sample_edge_data):
+        from pygv.utils.interactive_report import subsample_frames
+        att, idx, _ = sample_edge_data
+        # 50 frames, max_frames=100 → no subsampling
+        sub_p, sub_e, sub_a, sub_i = subsample_frames(
+            sample_probs, sample_embeddings_2d, att, idx, max_frames=100,
+        )
+        np.testing.assert_array_equal(sub_p, sample_probs)
+        np.testing.assert_array_equal(sub_e, sample_embeddings_2d)
+        assert len(sub_a) == 50
+        assert len(sub_i) == 50
+
+    def test_subsamples_to_max_frames(self, sample_edge_data):
+        from pygv.utils.interactive_report import subsample_frames
+        n_frames = 200
+        n_states = 4
+        raw = np.random.rand(n_frames, n_states).astype(np.float32)
+        probs = raw / raw.sum(axis=1, keepdims=True)
+        embeddings = np.random.randn(n_frames, 8).astype(np.float32)
+        att = [np.random.rand(10).astype(np.float32) for _ in range(n_frames)]
+        idx = [np.random.randint(0, 5, size=(2, 10)) for _ in range(n_frames)]
+
+        max_frames = 50
+        sub_p, sub_e, sub_a, sub_i = subsample_frames(
+            probs, embeddings, att, idx, max_frames=max_frames,
+        )
+        assert len(sub_p) <= max_frames
+        assert len(sub_e) <= max_frames
+        assert len(sub_a) <= max_frames
+        assert len(sub_i) <= max_frames
+
+    def test_preserves_state_distribution(self):
+        from pygv.utils.interactive_report import subsample_frames
+        n_frames = 1000
+        # Create 3 states with known proportions: 50%, 30%, 20%
+        probs = np.zeros((n_frames, 3), dtype=np.float32)
+        probs[:500, 0] = 1.0   # State 0: 50%
+        probs[500:800, 1] = 1.0  # State 1: 30%
+        probs[800:, 2] = 1.0   # State 2: 20%
+        embeddings = np.random.randn(n_frames, 4).astype(np.float32)
+        att = [None] * n_frames
+        idx = [None] * n_frames
+
+        max_frames = 100
+        sub_p, sub_e, sub_a, sub_i = subsample_frames(
+            probs, embeddings, att, idx, max_frames=max_frames,
+        )
+        sub_states = np.argmax(sub_p, axis=1)
+        counts = np.bincount(sub_states, minlength=3)
+        total = counts.sum()
+        # Check proportions are approximately preserved (within 10%)
+        assert abs(counts[0] / total - 0.5) < 0.1
+        assert abs(counts[1] / total - 0.3) < 0.1
+        assert abs(counts[2] / total - 0.2) < 0.1
+
+    def test_output_shapes_consistent(self):
+        from pygv.utils.interactive_report import subsample_frames
+        n_frames = 100
+        probs = np.random.rand(n_frames, 5).astype(np.float32)
+        probs /= probs.sum(axis=1, keepdims=True)
+        embeddings = np.random.randn(n_frames, 8).astype(np.float32)
+        att = [np.random.rand(10).astype(np.float32) for _ in range(n_frames)]
+        idx = [np.random.randint(0, 5, size=(2, 10)) for _ in range(n_frames)]
+
+        sub_p, sub_e, sub_a, sub_i = subsample_frames(
+            probs, embeddings, att, idx, max_frames=30,
+        )
+        assert sub_p.shape[0] == sub_e.shape[0]
+        assert len(sub_a) == sub_p.shape[0]
+        assert len(sub_i) == sub_p.shape[0]
+        assert sub_p.shape[1] == 5
+        assert sub_e.shape[1] == 8
+
+
+# ============================================================================
+# Tests for generate_merged_interactive_report
+# ============================================================================
+
+class TestGenerateMergedInteractiveReport:
+
+    def _create_mock_experiment(self, tmp_path, lag_times, n_states, n_frames=50,
+                                 n_nodes=10, embedding_dim=8):
+        """Create a mock experiment directory with saved artifacts."""
+        analysis_dir = tmp_path / 'analysis'
+        for lag in lag_times:
+            subdir = analysis_dir / f'lag{lag}ns_{n_states}states'
+            subdir.mkdir(parents=True)
+
+            # Create probs and embeddings
+            raw = np.random.rand(n_frames, n_states).astype(np.float32)
+            probs = raw / raw.sum(axis=1, keepdims=True)
+            embeddings = np.random.randn(n_frames, embedding_dim).astype(np.float32)
+            np.savez(str(subdir / 'transformed_traj.npz'), probs)
+            np.savez(str(subdir / 'embeddings.npz'), embeddings)
+
+            # Create edge attentions and indices
+            att_dir = subdir / 'edge_attentions'
+            idx_dir = subdir / 'edge_indices'
+            att_dir.mkdir()
+            idx_dir.mkdir()
+            for i in range(n_frames):
+                sources = np.random.randint(0, n_nodes, size=20)
+                targets = np.random.randint(0, n_nodes, size=20)
+                edge_idx = np.stack([sources, targets], axis=0)
+                edge_att = np.random.rand(20).astype(np.float32)
+                np.save(str(att_dir / f'attention_{i:05d}.npy'), edge_att)
+                np.save(str(idx_dir / f'edge_indices_{i:05d}.npy'), edge_idx)
+
+        return str(tmp_path)
+
+    def test_returns_none_when_pygviz_missing(self, tmp_path):
+        from pygv.utils.interactive_report import generate_merged_interactive_report
+        exp_dir = self._create_mock_experiment(tmp_path, [1, 5], 3)
+        with patch.dict('sys.modules', {'pygviz': None, 'pygviz.md_visualizer': None}):
+            result = generate_merged_interactive_report(
+                experiment_dir=exp_dir,
+                topology_file="dummy.pdb",
+            )
+            assert result is None
+
+    def test_returns_none_when_no_analysis_dir(self, tmp_path):
+        from pygv.utils.interactive_report import generate_merged_interactive_report
+        # Empty dir, no analysis/
+        result = generate_merged_interactive_report(
+            experiment_dir=str(tmp_path),
+            topology_file="dummy.pdb",
+        )
+        # Should return None (pygviz may or may not be available, but no analysis dir)
+        assert result is None
+
+    def test_produces_single_html_with_multiple_timescales(self, tmp_path):
+        from pygv.utils.interactive_report import generate_merged_interactive_report
+
+        exp_dir = self._create_mock_experiment(tmp_path, [1, 5], 3)
+
+        mock_viz_instance = MagicMock()
+        mock_viz_class = MagicMock(return_value=mock_viz_instance)
+
+        with patch('pygv.utils.interactive_report.reduce_embeddings_to_2d',
+                    side_effect=lambda e, **kw: e[:, :2] if e.shape[1] >= 2 else e):
+            with patch('pygviz.md_visualizer.MDTrajectoryVisualizer', mock_viz_class):
+                result = generate_merged_interactive_report(
+                    experiment_dir=exp_dir,
+                    topology_file="dummy.pdb",
+                    protein_name="test_protein",
+                    max_frames=5000,
+                )
+
+        assert result is not None
+        assert result.endswith("test_protein_interactive_report.html")
+        # Should have add_timescale called once per lag time
+        assert mock_viz_instance.add_timescale.call_count == 2
+        mock_viz_instance.set_protein_structure.assert_called_once()
+        mock_viz_instance.generate.assert_called_once()
+
+    def test_subsamples_when_frames_exceed_max(self, tmp_path):
+        from pygv.utils.interactive_report import generate_merged_interactive_report
+
+        # 200 frames, max_frames=50
+        exp_dir = self._create_mock_experiment(tmp_path, [1], 3, n_frames=200)
+
+        mock_viz_instance = MagicMock()
+        mock_viz_class = MagicMock(return_value=mock_viz_instance)
+
+        with patch('pygv.utils.interactive_report.reduce_embeddings_to_2d',
+                    side_effect=lambda e, **kw: e[:, :2] if e.shape[1] >= 2 else e):
+            with patch('pygviz.md_visualizer.MDTrajectoryVisualizer', mock_viz_class):
+                result = generate_merged_interactive_report(
+                    experiment_dir=exp_dir,
+                    topology_file="dummy.pdb",
+                    max_frames=50,
+                )
+
+        assert result is not None
+        # Check that add_timescale was called with subsampled data (<=50 frames)
+        call_args = mock_viz_instance.add_timescale.call_args
+        embeddings_arg = call_args[1]['embeddings'] if 'embeddings' in call_args[1] else call_args[0][1]
+        assert len(embeddings_arg) <= 50

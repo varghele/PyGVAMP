@@ -304,15 +304,21 @@ function updateTransitionMatrix(timescale) {
                 })
                 .on('mouseout', hideTooltip);
 
-            // Add text if cell is large enough
-            if (cellSize > 30 && value > 0.01) {
+            // Add probability text in every cell
+            if (value > 0.001) {
+                const fontSize = Math.max(8, Math.min(12, cellSize * 0.35));
+                const maxVal = d3.max(matrix.flat());
+                const normalizedValue = maxVal > 0 ? value / maxVal : 0;
                 g.append('text')
                     .attr('class', 'matrix-value')
                     .attr('x', j * cellSize + cellSize / 2)
                     .attr('y', i * cellSize + cellSize / 2)
                     .attr('text-anchor', 'middle')
                     .attr('dominant-baseline', 'middle')
-                    .text(value.toFixed(2));
+                    .attr('fill', normalizedValue > 0.55 ? '#fff' : '#000')
+                    .style('font-size', `${fontSize}px`)
+                    .style('pointer-events', 'none')
+                    .text(value < 0.1 ? value.toFixed(2) : value.toFixed(1));
             }
         }
     }
