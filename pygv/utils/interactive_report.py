@@ -8,6 +8,7 @@ viewer with attention coloring, transition matrix heatmap, and state legend.
 
 import os
 import re
+import glob
 import numpy as np
 from typing import Optional, List, Tuple
 
@@ -464,6 +465,27 @@ def generate_merged_interactive_report(
             n_nodes=n_nodes,
         )
 
+        # Load pre-computed state structure PDBs (attention-colored)
+        state_structures = {}
+        for state_idx in range(n_states):
+            state_num = state_idx + 1
+            att_dir = os.path.join(subdir, f'state_{state_num}_attention')
+            avg_pdb = os.path.join(
+                att_dir,
+                f'{protein_name}_state_{state_num}_average_attention.pdb')
+            rep_pdbs = sorted(glob.glob(os.path.join(
+                att_dir,
+                f'{protein_name}_state_{state_num}_rank_*_attention.pdb')))
+
+            entry = {'average': None, 'representatives': []}
+            if os.path.isfile(avg_pdb):
+                with open(avg_pdb) as f:
+                    entry['average'] = f.read()
+            for pdb_path in rep_pdbs[:10]:
+                with open(pdb_path) as f:
+                    entry['representatives'].append(f.read())
+            state_structures[state_idx] = entry
+
         viz.add_timescale(
             lagtime=int(lag_time),
             embeddings=embeddings_2d,
@@ -471,9 +493,11 @@ def generate_merged_interactive_report(
             state_assignments=state_assignments,
             transition_matrix=transition_matrix,
             attention_values=attention_values,
+            state_structures=state_structures,
         )
         timescales_added += 1
-        print(f"    Added timescale: lag={lag_time}ns, {len(probs)} frames (subsampled).")
+        n_loaded = sum(1 for s in state_structures.values() if s['average'])
+        print(f"    Added timescale: lag={lag_time}ns, {len(probs)} frames (subsampled), {n_loaded}/{n_states} state structures.")
 
     if timescales_added == 0:
         print("  No timescales could be added — skipping report generation.")

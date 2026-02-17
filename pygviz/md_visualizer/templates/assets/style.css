@@ -45,11 +45,12 @@ body {
     height: 100vh;
     display: grid;
     grid-template-columns: 300px 1fr 400px;
-    grid-template-rows: 60px 1fr 300px;
+    grid-template-rows: 60px 1fr 300px 250px;
     grid-template-areas:
-        "header header header"
+        "header  header    header"
         "sidebar embedding protein"
-        "sidebar embedding matrix";
+        "sidebar embedding matrix"
+        "sidebar states    states";
     gap: 0;
 }
 
@@ -261,6 +262,69 @@ body {
     overflow: auto;
 }
 
+#state-details {
+    grid-area: states;
+    background-color: var(--bg-secondary);
+    border-top: 1px solid var(--border-color);
+    padding: 15px;
+    overflow: auto;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#state-selector {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+}
+
+.state-chip {
+    padding: 6px 14px;
+    border-radius: 16px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    transition: all 0.2s ease;
+    opacity: 0.7;
+}
+
+.state-chip:hover {
+    opacity: 1;
+    transform: scale(1.05);
+}
+
+.state-chip.active {
+    opacity: 1;
+    border-color: #fff;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.3);
+}
+
+#state-transitions {
+    flex: 1;
+    min-height: 0;
+}
+
+#state-transitions svg {
+    display: block;
+}
+
+.transition-bar-label {
+    font-size: 11px;
+    fill: var(--text-primary);
+    font-weight: 500;
+}
+
+.transition-bar-value {
+    font-size: 10px;
+    fill: var(--text-secondary);
+    font-weight: 600;
+}
+
 /* Viewer labels */
 .viewer-label {
     position: absolute;
@@ -463,11 +527,12 @@ body {
 @media (max-width: 1200px) {
     #app {
         grid-template-columns: 250px 1fr 300px;
-        grid-template-rows: 60px 1fr 250px;
+        grid-template-rows: 60px 1fr 250px 200px;
         grid-template-areas:
-            "header header header"
+            "header  header    header"
             "sidebar embedding protein"
-            "sidebar embedding matrix";
+            "sidebar embedding matrix"
+            "sidebar states    states";
     }
 
     #header h1 {

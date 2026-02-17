@@ -5,6 +5,7 @@
 const state = {
     currentTimescaleIndex: 0,
     selectedFrameIndex: null,
+    selectedState: null,
     hoveredFrameIndex: null,
     showAttention: true,
     camera: {
@@ -28,6 +29,9 @@ let proteinViewer;
 // D3.js matrix
 let matrixSvg;
 
+// D3.js state transitions
+let transitionsSvg;
+
 // Initialize visualization
 function init() {
     console.log('Initializing MD Trajectory Visualization...');
@@ -43,6 +47,7 @@ function init() {
     initEmbeddingViewer();
     initProteinViewer();
     initTransitionMatrix();
+    initStateDetails();
     initEventListeners();
 
     // Load first timescale
@@ -206,7 +211,10 @@ function loadTimescale(index) {
     // Update state legend
     updateStateLegend(ts);
 
-    // Reset selection
+    // Update state details panel
+    updateStateDetails(ts);
+
+    // Reset frame selection (keep state selection across timescale switches)
     state.selectedFrameIndex = null;
     updateProteinViewer();
 }
@@ -386,15 +394,19 @@ function updateStateLegend(timescale) {
 
 // Update protein viewer with attention
 function updateProteinViewer() {
-    if (!VISUALIZATION_DATA.protein_structure || !proteinViewer) return;
+    if (!proteinViewer) return;
 
     const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const representation = VISUALIZATION_DATA.config.protein.representation;
 
+    // Priority 1: Single-frame attention coloring
     if (state.selectedFrameIndex !== null && state.showAttention) {
-        // Get attention values for selected frame
-        const attention = ts.attention_normalized[state.selectedFrameIndex];
+        proteinViewer.removeAllModels();
+        if (VISUALIZATION_DATA.protein_structure) {
+            proteinViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
+        }
 
-        // Color by attention
+        const attention = ts.attention_normalized[state.selectedFrameIndex];
         const colorScale = d3.scaleLinear()
             .domain([0, 1])
             .range([
@@ -403,23 +415,56 @@ function updateProteinViewer() {
             ]);
 
         proteinViewer.setStyle({}, {});
-
-        // Color each residue by attention
         attention.forEach((value, residueIndex) => {
             const color = colorScale(value);
-            const representation = VISUALIZATION_DATA.config.protein.representation;
-
             proteinViewer.setStyle(
                 { resi: residueIndex + 1 },
                 { [representation]: { color: color } }
             );
         });
-    } else {
-        // Default coloring
-        const representation = VISUALIZATION_DATA.config.protein.representation;
-        proteinViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
+
+        proteinViewer.zoomTo();
+        proteinViewer.render();
+        return;
     }
 
+    // Priority 2: State structure view (average + representatives)
+    if (state.selectedState !== null && ts.state_structures) {
+        const stateData = ts.state_structures[state.selectedState];
+        if (stateData && stateData.average) {
+            proteinViewer.removeAllModels();
+
+            // Average structure — color by B-factor (blue→white→red)
+            proteinViewer.addModel(stateData.average, 'pdb');
+            proteinViewer.setStyle({model: 0}, {
+                [representation]: {
+                    colorscheme: {prop: 'b', gradient: 'rwb', min: 0, max: 90}
+                }
+            });
+
+            // Representative structures — low opacity grey
+            if (stateData.representatives) {
+                stateData.representatives.forEach((pdb, i) => {
+                    proteinViewer.addModel(pdb, 'pdb');
+                    proteinViewer.setStyle({model: i + 1}, {
+                        [representation]: {opacity: 0.3, color: 'grey'}
+                    });
+                });
+            }
+
+            proteinViewer.zoomTo();
+            proteinViewer.render();
+            return;
+        }
+    }
+
+    // Priority 3: Default spectrum coloring
+    proteinViewer.removeAllModels();
+    if (VISUALIZATION_DATA.protein_structure) {
+        proteinViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
+        proteinViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
+        proteinViewer.zoomTo();
+    }
     proteinViewer.render();
 }
 
@@ -461,9 +506,13 @@ function onEmbeddingMouseMove(event) {
 function onEmbeddingClick(event) {
     if (state.hoveredFrameIndex !== null) {
         state.selectedFrameIndex = state.hoveredFrameIndex;
+        state.selectedState = null;
 
         // Update marker
         updateSelectionMarker();
+
+        // Update state chip highlights
+        document.querySelectorAll('.state-chip').forEach(c => c.classList.remove('active'));
 
         // Update protein viewer
         updateProteinViewer();
@@ -522,6 +571,149 @@ function hideTooltip() {
     if (tooltip) {
         tooltip.classList.remove('visible');
     }
+}
+
+// Initialize state details panel
+function initStateDetails() {
+    const container = document.getElementById('state-transitions');
+    if (!container) return;
+
+    transitionsSvg = d3.select('#state-transitions')
+        .append('svg')
+        .attr('width', '100%')
+        .attr('height', '100%');
+}
+
+// Update state details (selector chips + transitions)
+function updateStateDetails(timescale) {
+    const selectorContainer = document.getElementById('state-selector');
+    if (!selectorContainer) return;
+
+    const stateColors = VISUALIZATION_DATA.config.colors.states;
+    selectorContainer.innerHTML = '';
+
+    for (let i = 0; i < timescale.n_states; i++) {
+        const chip = document.createElement('span');
+        chip.className = 'state-chip';
+        if (state.selectedState === i) chip.classList.add('active');
+        chip.style.backgroundColor = stateColors[i % stateColors.length];
+        chip.textContent = `S${i}`;
+        chip.addEventListener('click', () => selectState(i));
+        selectorContainer.appendChild(chip);
+    }
+
+    // Clamp selectedState if new timescale has fewer states
+    if (state.selectedState !== null && state.selectedState >= timescale.n_states) {
+        state.selectedState = null;
+    }
+
+    updateStateTransitions();
+}
+
+// Select/deselect a state
+function selectState(stateIndex) {
+    if (state.selectedState === stateIndex) {
+        // Toggle off
+        state.selectedState = null;
+    } else {
+        state.selectedState = stateIndex;
+    }
+
+    // Deselect frame when selecting a state
+    state.selectedFrameIndex = null;
+    if (selectedMarker) {
+        embeddingScene.remove(selectedMarker);
+        selectedMarker = null;
+    }
+
+    // Update chip highlights
+    document.querySelectorAll('.state-chip').forEach((chip, i) => {
+        chip.classList.toggle('active', i === state.selectedState);
+    });
+
+    updateStateTransitions();
+    updateProteinViewer();
+}
+
+// Update state transition bar chart
+function updateStateTransitions() {
+    if (!transitionsSvg) return;
+    transitionsSvg.selectAll('*').remove();
+
+    if (state.selectedState === null) return;
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const row = ts.transition_matrix[state.selectedState];
+    if (!row) return;
+
+    const stateColors = VISUALIZATION_DATA.config.colors.states;
+
+    // Build data sorted descending by probability
+    const data = row.map((prob, i) => ({ state: i, prob: prob }))
+        .sort((a, b) => b.prob - a.prob);
+
+    const container = document.getElementById('state-transitions');
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    transitionsSvg
+        .attr('width', width)
+        .attr('height', height);
+
+    const margin = { top: 25, right: 50, bottom: 5, left: 35 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+    const barHeight = Math.min(22, innerH / data.length - 2);
+
+    const g = transitionsSvg.append('g')
+        .attr('transform', `translate(${margin.left}, ${margin.top})`);
+
+    // Title
+    transitionsSvg.append('text')
+        .attr('x', width / 2)
+        .attr('y', 16)
+        .attr('text-anchor', 'middle')
+        .attr('class', 'transition-bar-label')
+        .style('font-size', '13px')
+        .style('font-weight', '600')
+        .text(`Transitions from S${state.selectedState}`);
+
+    const xScale = d3.scaleLinear()
+        .domain([0, d3.max(data, d => d.prob) || 1])
+        .range([0, innerW]);
+
+    // Bars
+    data.forEach((d, i) => {
+        const y = i * (barHeight + 2);
+
+        // Label
+        g.append('text')
+            .attr('class', 'transition-bar-label')
+            .attr('x', -5)
+            .attr('y', y + barHeight / 2)
+            .attr('text-anchor', 'end')
+            .attr('dominant-baseline', 'middle')
+            .text(`S${d.state}`);
+
+        // Bar
+        g.append('rect')
+            .attr('x', 0)
+            .attr('y', y)
+            .attr('width', xScale(d.prob))
+            .attr('height', barHeight)
+            .attr('fill', stateColors[d.state % stateColors.length])
+            .attr('rx', 3)
+            .attr('ry', 3)
+            .attr('opacity', 0.85);
+
+        // Value label
+        g.append('text')
+            .attr('class', 'transition-bar-value')
+            .attr('x', xScale(d.prob) + 4)
+            .attr('y', y + barHeight / 2)
+            .attr('dominant-baseline', 'middle')
+            .text(d.prob.toFixed(3));
+    });
 }
 
 // Window resize handler

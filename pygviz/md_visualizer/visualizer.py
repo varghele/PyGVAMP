@@ -109,7 +109,8 @@ class MDTrajectoryVisualizer:
         state_assignments: np.ndarray,
         transition_matrix: np.ndarray,
         attention_values: np.ndarray,
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        state_structures: Optional[Dict] = None
     ):
         """
         Add data for one timescale/lagtime.
@@ -167,7 +168,8 @@ class MDTrajectoryVisualizer:
             'n_states': n_states,
             'n_frames': n_frames,
             'n_residues': attention_values.shape[1],
-            'metadata': metadata or {}
+            'metadata': metadata or {},
+            'state_structures': state_structures or {}
         }
 
         self.timescales_data.append(timescale_data)
@@ -273,7 +275,8 @@ class MDTrajectoryVisualizer:
                 'n_states': ts_data['n_states'],
                 'n_frames': ts_data['n_frames'],
                 'n_residues': ts_data['n_residues'],
-                'metadata': ts_data['metadata']
+                'metadata': ts_data['metadata'],
+                'state_structures': ts_data['state_structures']
             })
 
         return DataProcessor.prepare_json_data(export_data)
