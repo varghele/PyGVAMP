@@ -13,6 +13,7 @@ from pygv.args.args_anly import parse_anly_args, parse_config
 import os
 import sys
 import torch
+import numpy as np
 import mdtraj as md
 
 from pygv.utils.analysis import (calculate_state_edge_attention_maps, generate_state_structures,
@@ -170,6 +171,22 @@ def run_analysis(args=None):
     """
     Main function to run the analysis pipeline.
 
+    Pipeline flow:
+    1.  Load model, create dataset
+    2.  Inference → probs, embeddings, attentions, edge_indices
+    3.  Plot transition matrix (original)
+    4.  Run state diagnostics → StateReductionReport
+    5.  If merge recommended: merge states, validate, use merged probs downstream
+    6.  Save diagnostic report (JSON + plots)
+    7.  Calculate attention maps (using final probs)
+    8.  Plot attention maps
+    9.  Generate state structures
+    10. PyMOL visualizations
+    11. State network plot
+    12. ITS analysis
+    13. CK test
+    14. Interactive report
+
     Parameters
     ----------
     args : argparse.Namespace, optional
@@ -183,7 +200,6 @@ def run_analysis(args=None):
     paths = get_model_and_traj_directory(args)
 
     # Load the model and get device
-    # Determine device
     if args.cpu is True:
         device = torch.device("cpu")
     else:
@@ -205,86 +221,177 @@ def run_analysis(args=None):
         classifier = model.classifier_module if hasattr(model, 'classifier_module') else model.classifier
         print(f"Classifier type: {type(classifier).__name__}")
 
-    # Create dataset and loader for analysis
+    # ---- Step 1-2: Create dataset, run inference ----
     dataset, loader = create_dataset_and_loader(args)
 
-    # Get state transition probabilities, graph embeddings and attention scores
-    probs, embeddings, attentions, edge_indices = analyze_vampnet_outputs(model=model,
-                                                            data_loader=loader,
-                                                            save_folder=paths['analysis_dir'],
-                                                            batch_size=args.batch_size if hasattr(args, 'batch_size') else 32,
-                                                            device=device,
-                                                            return_tensors=False
-                                                            )
+    probs, embeddings, attentions, edge_indices = analyze_vampnet_outputs(
+        model=model,
+        data_loader=loader,
+        save_folder=paths['analysis_dir'],
+        batch_size=args.batch_size if hasattr(args, 'batch_size') else 32,
+        device=device,
+        return_tensors=False
+    )
 
-    inferred_timestep = dataset._infer_timestep()/1000 # Timestep in nanoseconds
+    inferred_timestep = dataset._infer_timestep() / 1000  # Timestep in nanoseconds
 
-    # Calculate and plot the state transition matrices
-    plot_transition_probabilities(probs=probs,
-                                  save_dir=paths['analysis_dir'],
-                                  protein_name=args.protein_name,
-                                  lag_time=args.lag_time,
-                                  stride=args.stride,
-                                  timestep=inferred_timestep)
+    # ---- Step 3: Plot original transition matrix ----
+    from pygv.utils.analysis import calculate_transition_matrices
+    original_transition_matrix, _ = calculate_transition_matrices(
+        probs=probs,
+        lag_time=args.lag_time,
+        stride=args.stride,
+        timestep=inferred_timestep,
+    )
 
-    # Get residue index list for sparse selections
-    # Load the topology
+    plot_transition_probabilities(
+        probs=probs,
+        save_dir=paths['analysis_dir'],
+        protein_name=args.protein_name,
+        lag_time=args.lag_time,
+        stride=args.stride,
+        timestep=inferred_timestep
+    )
+
+    # ---- Step 4-6: State diagnostics and merging ----
+    auto_merge = getattr(args, 'auto_merge', True)
+    population_threshold = getattr(args, 'population_threshold', 0.02)
+    jsd_threshold = getattr(args, 'jsd_threshold', 0.05)
+    merge_validation = getattr(args, 'merge_validation', True)
+    vamp2_drop_threshold = getattr(args, 'vamp2_drop_threshold', 0.10)
+
+    # Always run diagnostics (even if merging is disabled)
+    from pygv.utils.state_diagnostics import recommend_state_reduction
+    from pygv.utils.state_merging import merge_and_validate, save_merge_report
+    from pygv.utils.plotting import (plot_eigenvalue_spectrum, plot_jsd_heatmap,
+                                      plot_diagnostic_summary)
+
+    print("\n" + "=" * 60)
+    print("STATE QUALITY DIAGNOSTICS")
+    print("=" * 60)
+
+    diagnostic_report = recommend_state_reduction(
+        transition_matrix=original_transition_matrix,
+        probs=probs,
+        population_threshold=population_threshold,
+        jsd_threshold=jsd_threshold,
+    )
+    print(diagnostic_report.summary())
+
+    # Decide whether to merge
+    final_probs = probs
+    merge_result = None
+
+    if auto_merge and diagnostic_report.recommendation == "merge" and diagnostic_report.merge_groups:
+        print(f"\nAttempting to merge {diagnostic_report.original_n_states} → "
+              f"{diagnostic_report.effective_n_states} states...")
+
+        merge_result = merge_and_validate(
+            probs=probs,
+            merge_groups=diagnostic_report.merge_groups,
+            lag_time=args.lag_time,
+            stride=args.stride,
+            timestep=inferred_timestep,
+            vamp2_drop_threshold=vamp2_drop_threshold,
+            validate=merge_validation,
+        )
+        print(merge_result.summary())
+
+        if merge_result.validation_passed:
+            print("Merge validation PASSED — using merged states for downstream analysis.")
+            final_probs = merge_result.merged_probs
+        else:
+            print("Merge validation FAILED — keeping original states.")
+            merge_result = None
+    elif diagnostic_report.recommendation == "retrain":
+        print(f"\nRecommendation: RETRAIN with ~{diagnostic_report.effective_n_states} states "
+              f"(large reduction from {diagnostic_report.original_n_states}).")
+    else:
+        print("\nNo state merging needed.")
+
+    # Save diagnostic report
+    report_path = save_merge_report(
+        report=diagnostic_report,
+        merge_result=merge_result,
+        save_dir=paths['analysis_dir'],
+        protein_name=args.protein_name,
+    )
+    print(f"Diagnostic report saved to: {report_path}")
+
+    # Plot diagnostics
+    try:
+        plot_eigenvalue_spectrum(
+            eigenvalues=diagnostic_report.eigenvalues,
+            gap_ratios=diagnostic_report.gap_ratios,
+            suggested_n_states=diagnostic_report.eigenvalue_gap_suggestion,
+            save_dir=paths['analysis_dir'],
+            protein_name=args.protein_name,
+        )
+        plot_jsd_heatmap(
+            jsd_matrix=diagnostic_report.jsd_matrix,
+            merge_groups=diagnostic_report.merge_groups,
+            save_dir=paths['analysis_dir'],
+            protein_name=args.protein_name,
+        )
+        plot_diagnostic_summary(
+            diagnostic_report=diagnostic_report,
+            original_transition_matrix=original_transition_matrix,
+            merge_result=merge_result,
+            save_dir=paths['analysis_dir'],
+            protein_name=args.protein_name,
+        )
+        print("Diagnostic plots saved.")
+    except Exception as e:
+        print(f"Warning: Could not generate diagnostic plots: {e}")
+
+    # ---- Step 7-8: Attention maps (using final_probs) ----
     topology = md.load(args.top).topology
-    residue_indices, residue_names = extract_residue_indices_from_selection(selection_string=args.selection,
-                                                                            topology=topology)
+    residue_indices, residue_names = extract_residue_indices_from_selection(
+        selection_string=args.selection,
+        topology=topology
+    )
 
-    # Calculate attention maps
     state_attention_maps, state_populations = calculate_state_edge_attention_maps(
         edge_attentions=attentions,
         edge_indices=edge_indices,
-        probs=probs,
+        probs=final_probs,
         save_dir=paths['analysis_dir'],
         protein_name=args.protein_name,
     )
 
-    # Plot attention maps
     plot_state_edge_attention_maps(
         state_attention_maps=state_attention_maps,
         state_populations=state_populations,
         save_dir=paths['analysis_dir'],
         protein_name=args.protein_name,
-        threshold=0.001,  # Optional: hide low attention values
+        threshold=0.001,
         residue_indices=residue_indices
     )
 
-    # Create residue-level attention plot
     plot_state_attention_weights(
         state_attention_maps=state_attention_maps,
         topology_file=args.top,
         save_dir=paths['analysis_dir'],
         protein_name=args.protein_name,
-        plot_sum_direction="target",  # Show attention TO residues
+        plot_sum_direction="target",
         atom_selection=args.selection,
     )
-
-    # Or to get all perspectives at once
-    # TODO: REMOVE THAT PART; IT IS UNNECESSARY TO HAVE BOTH DIRECTIONS
-    #plot_all_residue_attention_directions(
-    #    state_attention_maps=state_attention_maps,
-    #    topology_file=args.top,
-    #    save_dir=paths['analysis_dir'],
-    #    protein_name=args.protein_name,
-    #)
     print("Attention analysis complete")
 
+    # ---- Step 9: Generate state structures ----
     print("Generating state structures")
     state_structures = generate_state_structures(
         traj_folder=args.traj_dir,
         topology_file=args.top,
-        probs=probs,  # The state probabilities array from your analysis
+        probs=final_probs,
         save_dir=paths['analysis_dir'],
         protein_name=args.protein_name,
         stride=args.stride,
-        n_structures=10,  # Generate 10 representative structures per state
-        prob_threshold=0.0  # Only consider frames with probability ≥ 0.0
+        n_structures=10,
+        prob_threshold=0.0
     )
 
-    # Generate PyMOL visualizations (optional — requires PyMOL)
+    # ---- Step 10: PyMOL visualizations (optional) ----
     try:
         visualize_state_ensemble(
             state_structures=state_structures,
@@ -296,7 +403,6 @@ def run_analysis(args=None):
     except Exception as e:
         print(f"Warning: PyMOL visualization skipped: {e}")
 
-    # Generate state ensembles with attention values
     save_attention_colored_structures(
         state_structures=state_structures,
         state_attention_maps=state_attention_maps,
@@ -306,7 +412,6 @@ def run_analysis(args=None):
         residue_names=residue_names
     )
 
-    # Visualize attention ensembles (optional — requires PyMOL)
     try:
         visualize_attention_ensemble(
             state_structures=state_structures,
@@ -318,10 +423,9 @@ def run_analysis(args=None):
     except Exception as e:
         print(f"Warning: PyMOL attention visualization skipped: {e}")
 
-    lag_frames = int(args.lag_time/inferred_timestep)/args.stride
-
+    # ---- Step 11: State network plot ----
     plot_state_network(
-        probs=probs,
+        probs=final_probs,
         state_structures=state_structures,
         save_dir=paths['analysis_dir'],
         protein_name=args.protein_name,
@@ -329,15 +433,51 @@ def run_analysis(args=None):
         stride=args.stride,
         timestep=inferred_timestep
     )
-    print("network of states plotted ")
+    print("State network plotted")
 
-    # Generate merged interactive report from all analysis subdirectories
-    # analysis_dir is e.g. exp_root/analysis/lag1ns_9states/ → experiment_dir is exp_root/
+    # ---- Step 12: ITS analysis ----
+    try:
+        from pygv.utils.its import analyze_implied_timescales
+        # Generate lag times: 10 points from timestep*stride to 5*lag_time
+        effective_timestep = inferred_timestep * args.stride
+        max_lag = min(5 * args.lag_time, (len(final_probs) * effective_timestep) / 3)
+        its_lag_times = np.linspace(effective_timestep, max_lag, 10).tolist()
+
+        print("\nRunning implied timescales analysis...")
+        analyze_implied_timescales(
+            probs=final_probs,
+            save_dir=paths['analysis_dir'],
+            protein_name=args.protein_name,
+            lag_times_ns=its_lag_times,
+            stride=args.stride,
+            timestep=inferred_timestep,
+        )
+    except Exception as e:
+        print(f"Warning: ITS analysis failed: {e}")
+
+    # ---- Step 13: Chapman-Kolmogorov test ----
+    try:
+        from pygv.utils.ck import run_ck_analysis
+        ck_lag_times = [args.lag_time * m for m in [0.5, 1.0, 2.0] if args.lag_time * m > 0]
+
+        print("\nRunning Chapman-Kolmogorov test...")
+        run_ck_analysis(
+            probs=final_probs,
+            save_dir=paths['analysis_dir'],
+            protein_name=args.protein_name,
+            lag_times_ns=ck_lag_times,
+            stride=args.stride,
+            timestep=inferred_timestep,
+        )
+    except Exception as e:
+        print(f"Warning: CK test failed: {e}")
+
+    # ---- Step 14: Interactive report ----
     experiment_dir = os.path.dirname(os.path.dirname(paths['analysis_dir']))
     analysis_parent = os.path.join(experiment_dir, 'analysis')
     if os.path.isdir(analysis_parent):
         from pygv.utils.interactive_report import generate_merged_interactive_report
-        print("Generating merged interactive report...")
+        print("\nGenerating merged interactive report...")
         try:
             report_path = generate_merged_interactive_report(
                 experiment_dir=experiment_dir,
@@ -352,16 +492,19 @@ def run_analysis(args=None):
         except Exception as e:
             print(f"Warning: Could not generate merged interactive report: {e}")
 
-    """plot_state_attention_maps(attention_maps=state_attention_maps,
-                              states_order=,
-                              n_states=args.n_states,
-                              state_populations=state_populations,
-                              save_path=,
-                              n_atoms=)"""
-
-
-    # Run the trajectory analysis
-    results = analyze_trajectories(model, paths, args)
+    # Build results dict
+    results = {
+        "model": model,
+        "paths": paths,
+        "args": args,
+        "probs": final_probs,
+        "original_probs": probs,
+        "embeddings": embeddings,
+        "diagnostic_report": diagnostic_report,
+        "merge_result": merge_result,
+        "state_attention_maps": state_attention_maps,
+        "state_populations": state_populations,
+    }
 
     print(f"\nResults saved to: {paths['analysis_dir']}")
 

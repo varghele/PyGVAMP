@@ -9,8 +9,10 @@ viewer with attention coloring, transition matrix heatmap, and state legend.
 import os
 import re
 import glob
+import json
+import base64
 import numpy as np
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict
 
 
 def reduce_embeddings_to_2d(embeddings: np.ndarray,
@@ -355,6 +357,73 @@ def _load_analysis_artifacts(analysis_dir: str) -> Tuple[
     return probs, embeddings, edge_attentions, edge_indices
 
 
+def _image_to_base64(path: str) -> Optional[str]:
+    """Read an image file and return a base64-encoded data URI string."""
+    if not os.path.isfile(path):
+        return None
+    with open(path, 'rb') as f:
+        data = f.read()
+    encoded = base64.b64encode(data).decode('ascii')
+    ext = os.path.splitext(path)[1].lower()
+    mime = 'image/png' if ext == '.png' else 'image/jpeg'
+    return f"data:{mime};base64,{encoded}"
+
+
+def _load_diagnostic_data(
+    analysis_subdir: str,
+    protein_name: str,
+) -> Dict:
+    """
+    Load diagnostic report JSON and diagnostic plot images as base64.
+
+    Parameters
+    ----------
+    analysis_subdir : str
+        Path to the analysis subdirectory (e.g., analysis/lag10ns_5states/).
+    protein_name : str
+        Protein name used in filenames.
+
+    Returns
+    -------
+    dict
+        Diagnostic metadata with keys: 'report', 'plots'.
+        Empty dict if no diagnostics are found.
+    """
+    # Load JSON report
+    json_path = os.path.join(analysis_subdir, f"{protein_name}_state_diagnostics.json")
+    if not os.path.isfile(json_path):
+        return {}
+
+    with open(json_path) as f:
+        report_data = json.load(f)
+
+    # Load diagnostic plots as base64
+    plots = {}
+    plot_files = {
+        'diagnostic_summary': f"{protein_name}_diagnostic_summary.png",
+        'eigenvalue_spectrum': f"{protein_name}_eigenvalue_spectrum.png",
+        'jsd_heatmap': f"{protein_name}_jsd_heatmap.png",
+        'implied_timescales': f"{protein_name}_implied_timescales.png",
+    }
+    for key, filename in plot_files.items():
+        img = _image_to_base64(os.path.join(analysis_subdir, filename))
+        if img:
+            plots[key] = img
+
+    # CK test plot lives in ck_analysis subfolder
+    ck_dir = os.path.join(analysis_subdir, 'ck_analysis')
+    if os.path.isdir(ck_dir):
+        ck_img = _image_to_base64(
+            os.path.join(ck_dir, f"{protein_name}_ck_test_comparison.png"))
+        if ck_img:
+            plots['ck_test'] = ck_img
+
+    return {
+        'report': report_data,
+        'plots': plots,
+    }
+
+
 def generate_merged_interactive_report(
         experiment_dir: str,
         topology_file: str,
@@ -486,6 +555,12 @@ def generate_merged_interactive_report(
                     entry['representatives'].append(f.read())
             state_structures[state_idx] = entry
 
+        # Load diagnostic data if available
+        diagnostics = _load_diagnostic_data(subdir, protein_name)
+        metadata = {}
+        if diagnostics:
+            metadata['diagnostics'] = diagnostics
+
         viz.add_timescale(
             lagtime=int(lag_time),
             embeddings=embeddings_2d,
@@ -494,10 +569,13 @@ def generate_merged_interactive_report(
             transition_matrix=transition_matrix,
             attention_values=attention_values,
             state_structures=state_structures,
+            metadata=metadata,
         )
         timescales_added += 1
         n_loaded = sum(1 for s in state_structures.values() if s['average'])
-        print(f"    Added timescale: lag={lag_time}ns, {len(probs)} frames (subsampled), {n_loaded}/{n_states} state structures.")
+        n_diag_plots = len(diagnostics.get('plots', {}))
+        diag_info = f", {n_diag_plots} diagnostic plots" if n_diag_plots else ""
+        print(f"    Added timescale: lag={lag_time}ns, {len(probs)} frames (subsampled), {n_loaded}/{n_states} state structures{diag_info}.")
 
     if timescales_added == 0:
         print("  No timescales could be added — skipping report generation.")

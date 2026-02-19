@@ -62,6 +62,13 @@ class BaseConfig:
     min_states: int = 2
     max_states: int = 10
 
+    # State merging / diagnostics
+    auto_merge: bool = True                    # Enable automatic state merging in analysis
+    population_threshold: float = 0.02         # Min state population (fraction) to keep
+    jsd_threshold: float = 0.05                # Max JSD for states to be considered redundant
+    merge_validation: bool = True              # Validate merged model via VAMP-2 comparison
+    vamp2_drop_threshold: float = 0.10         # Max acceptable relative VAMP-2 drop after merge
+
     # Hardware
     cpu: bool = False
 

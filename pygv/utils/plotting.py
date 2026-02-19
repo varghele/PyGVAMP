@@ -2131,3 +2131,301 @@ def plot_state_evolution_newrec(probs: List[np.ndarray],
             print(f"Saved state evolution plot to: {plot_path}")
 
     return None
+
+
+# ============================================================================
+# State diagnostic plots (eigenvalue gap, JSD heatmap, summary)
+# ============================================================================
+
+def plot_eigenvalue_spectrum(
+    eigenvalues,
+    gap_ratios,
+    suggested_n_states,
+    save_dir,
+    protein_name="protein",
+    figsize=(10, 5),
+):
+    """
+    Plot Koopman eigenvalue magnitudes with the spectral gap highlighted.
+
+    Parameters
+    ----------
+    eigenvalues : np.ndarray
+        Eigenvalue magnitudes sorted descending.
+    gap_ratios : np.ndarray
+        Gap ratios between consecutive eigenvalues.
+    suggested_n_states : int
+        Number of states suggested by the largest spectral gap.
+    save_dir : str
+        Directory to save the plot.
+    protein_name : str
+        Protein name for titles and filenames.
+    figsize : tuple
+        Figure size.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    eigenvalues = np.abs(eigenvalues)
+    n = len(eigenvalues)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+
+    # Left: eigenvalue magnitudes
+    colors = ['#4ECDC4'] * n
+    # Highlight the gap: eigenvalues before the gap in one color, after in another
+    gap_idx = suggested_n_states  # eigenvalues[0..gap_idx-1] are "slow"
+    for i in range(min(gap_idx, n)):
+        colors[i] = '#45B7D1'
+    for i in range(gap_idx, n):
+        colors[i] = '#FF6B6B'
+
+    ax1.bar(range(n), eigenvalues, color=colors, edgecolor='black', linewidth=0.5)
+    ax1.axvline(x=gap_idx - 0.5, color='red', linestyle='--', linewidth=2,
+                label=f'Gap → {suggested_n_states} states')
+    ax1.set_xlabel('Eigenvalue index', fontsize=12)
+    ax1.set_ylabel('|λ|', fontsize=12)
+    ax1.set_title(f'Koopman Eigenvalues — {protein_name}', fontsize=14)
+    ax1.set_xticks(range(n))
+    ax1.legend(fontsize=10)
+    ax1.grid(axis='y', alpha=0.3)
+
+    # Right: gap ratios
+    if len(gap_ratios) > 0:
+        ax2.bar(range(len(gap_ratios)), gap_ratios, color='#FFA07A',
+                edgecolor='black', linewidth=0.5)
+        if len(gap_ratios) > 1:
+            # Highlight the chosen gap
+            best_gap_pos = suggested_n_states - 1
+            if 0 <= best_gap_pos < len(gap_ratios):
+                ax2.bar(best_gap_pos, gap_ratios[best_gap_pos], color='#FF6B6B',
+                        edgecolor='black', linewidth=0.5)
+        ax2.set_xlabel('Gap index (between λ_i and λ_{i+1})', fontsize=12)
+        ax2.set_ylabel('|λ_i| / |λ_{i+1}|', fontsize=12)
+        ax2.set_title('Spectral Gap Ratios', fontsize=14)
+        ax2.set_xticks(range(len(gap_ratios)))
+        ax2.grid(axis='y', alpha=0.3)
+
+    plt.tight_layout()
+    plot_path = os.path.join(save_dir, f"{protein_name}_eigenvalue_spectrum.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved eigenvalue spectrum to: {plot_path}")
+
+
+def plot_jsd_heatmap(
+    jsd_matrix,
+    merge_groups=None,
+    save_dir=".",
+    protein_name="protein",
+    figsize=(7, 6),
+):
+    """
+    Plot a heatmap of pairwise Jensen-Shannon divergence between state transition rows.
+
+    Parameters
+    ----------
+    jsd_matrix : np.ndarray
+        Pairwise JSD matrix of shape (n_states, n_states).
+    merge_groups : list of set of int, optional
+        Groups of states that are merge candidates. Highlighted with boxes.
+    save_dir : str
+        Directory to save the plot.
+    protein_name : str
+        Protein name for titles and filenames.
+    figsize : tuple
+        Figure size.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+    n = jsd_matrix.shape[0]
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    im = ax.imshow(jsd_matrix, cmap='YlOrRd', aspect='equal', vmin=0)
+    plt.colorbar(im, ax=ax, label='Jensen-Shannon Divergence')
+
+    # State labels
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels([f'S{i}' for i in range(n)])
+    ax.set_yticklabels([f'S{i}' for i in range(n)])
+    ax.set_xlabel('State')
+    ax.set_ylabel('State')
+    ax.set_title(f'Transition Row Similarity — {protein_name}', fontsize=14)
+
+    # Add JSD values as text
+    for i in range(n):
+        for j in range(n):
+            val = jsd_matrix[i, j]
+            color = 'white' if val > 0.3 else 'black'
+            ax.text(j, i, f'{val:.3f}', ha='center', va='center',
+                    fontsize=max(6, min(10, 60 // n)), color=color)
+
+    # Highlight merge groups with rectangles
+    if merge_groups:
+        from matplotlib.patches import Rectangle
+        for group in merge_groups:
+            idxs = sorted(group)
+            min_idx, max_idx = idxs[0], idxs[-1]
+            rect = Rectangle((min_idx - 0.5, min_idx - 0.5),
+                              max_idx - min_idx + 1, max_idx - min_idx + 1,
+                              linewidth=3, edgecolor='lime', facecolor='none',
+                              linestyle='--')
+            ax.add_patch(rect)
+
+    plt.tight_layout()
+    plot_path = os.path.join(save_dir, f"{protein_name}_jsd_heatmap.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved JSD heatmap to: {plot_path}")
+
+
+def plot_diagnostic_summary(
+    diagnostic_report,
+    original_transition_matrix,
+    merge_result=None,
+    save_dir=".",
+    protein_name="protein",
+    figsize=(14, 10),
+):
+    """
+    Combined diagnostic summary plot with four panels.
+
+    Top-left:     Eigenvalue spectrum with gap
+    Top-right:    State populations (bar chart with threshold line)
+    Bottom-left:  JSD similarity heatmap
+    Bottom-right: Before/after transition matrices (if merge performed)
+
+    Parameters
+    ----------
+    diagnostic_report : StateReductionReport
+        Output from recommend_state_reduction().
+    original_transition_matrix : np.ndarray
+        Original transition matrix.
+    merge_result : MergeResult, optional
+        Output from merge_and_validate(), if merging was performed.
+    save_dir : str
+        Directory to save the plot.
+    protein_name : str
+        Protein name for titles and filenames.
+    figsize : tuple
+        Figure size.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
+
+    eigenvalues = np.abs(diagnostic_report.eigenvalues)
+    n_states = diagnostic_report.original_n_states
+
+    # --- Top-left: Eigenvalue spectrum ---
+    ax = axes[0, 0]
+    ax.bar(range(len(eigenvalues)), eigenvalues, color='#45B7D1',
+           edgecolor='black', linewidth=0.5)
+    gap_idx = diagnostic_report.eigenvalue_gap_suggestion
+    ax.axvline(x=gap_idx - 0.5, color='red', linestyle='--', linewidth=2)
+    ax.set_xlabel('Index')
+    ax.set_ylabel('|λ|')
+    ax.set_title(f'Eigenvalues (gap → {gap_idx} states)')
+    ax.set_xticks(range(len(eigenvalues)))
+    ax.grid(axis='y', alpha=0.3)
+
+    # --- Top-right: State populations ---
+    ax = axes[0, 1]
+    populations = diagnostic_report.populations
+    colors_pop = ['#FF6B6B' if i in diagnostic_report.underpopulated_states else '#4ECDC4'
+                  for i in range(n_states)]
+    ax.bar(range(n_states), populations, color=colors_pop,
+           edgecolor='black', linewidth=0.5)
+    threshold = getattr(diagnostic_report, '_pop_threshold',
+                        0.02)  # fallback
+    ax.axhline(y=threshold, color='red', linestyle='--', linewidth=1.5,
+               label=f'Threshold ({threshold:.0%})')
+    ax.set_xlabel('State')
+    ax.set_ylabel('Population')
+    ax.set_title('State Populations')
+    ax.set_xticks(range(n_states))
+    ax.set_xticklabels([f'S{i}' for i in range(n_states)])
+    ax.legend(fontsize=9)
+    ax.grid(axis='y', alpha=0.3)
+
+    # --- Bottom-left: JSD heatmap ---
+    ax = axes[1, 0]
+    if diagnostic_report.jsd_matrix is not None:
+        im = ax.imshow(diagnostic_report.jsd_matrix, cmap='YlOrRd', aspect='equal', vmin=0)
+        plt.colorbar(im, ax=ax, label='JSD')
+        ax.set_xticks(range(n_states))
+        ax.set_yticks(range(n_states))
+        ax.set_xticklabels([f'S{i}' for i in range(n_states)])
+        ax.set_yticklabels([f'S{i}' for i in range(n_states)])
+    ax.set_title('Transition Row Similarity (JSD)')
+
+    # --- Bottom-right: Transition matrices (before/after or just original) ---
+    ax = axes[1, 1]
+    if merge_result is not None and merge_result.validation_passed:
+        # Show merged transition matrix
+        from pygv.utils.state_merging import recompute_transition_matrix
+        # We need lag_time/stride/timestep — extract from the merged result or plot original
+        merged_tm = None
+        try:
+            merged_assignments = np.argmax(merge_result.merged_probs, axis=1)
+            n_merged = merge_result.merged_n_states
+            # Simple transition counting for display
+            counts = np.zeros((n_merged, n_merged))
+            for t in range(len(merged_assignments) - 1):
+                counts[merged_assignments[t], merged_assignments[t + 1]] += 1
+            row_sums = counts.sum(axis=1, keepdims=True)
+            row_sums[row_sums == 0] = 1
+            merged_tm = counts / row_sums
+        except Exception:
+            pass
+
+        if merged_tm is not None:
+            im2 = ax.imshow(merged_tm, cmap='Blues', aspect='equal', vmin=0, vmax=1)
+            plt.colorbar(im2, ax=ax, label='Probability')
+            n_m = merged_tm.shape[0]
+            ax.set_xticks(range(n_m))
+            ax.set_yticks(range(n_m))
+            ax.set_xticklabels([f'S{i}' for i in range(n_m)])
+            ax.set_yticklabels([f'S{i}' for i in range(n_m)])
+            # Add values
+            for i in range(n_m):
+                for j in range(n_m):
+                    v = merged_tm[i, j]
+                    color = 'white' if v > 0.55 else 'black'
+                    ax.text(j, i, f'{v:.2f}', ha='center', va='center',
+                            fontsize=max(7, min(11, 50 // n_m)), color=color)
+            ax.set_title(f'Merged Transition Matrix ({n_m} states)')
+        else:
+            ax.text(0.5, 0.5, 'Merge data\nnot available', ha='center', va='center',
+                    transform=ax.transAxes, fontsize=14)
+            ax.set_title('Merged Transition Matrix')
+    else:
+        # Show original
+        im2 = ax.imshow(original_transition_matrix, cmap='Blues', aspect='equal', vmin=0, vmax=1)
+        plt.colorbar(im2, ax=ax, label='Probability')
+        ax.set_xticks(range(n_states))
+        ax.set_yticks(range(n_states))
+        ax.set_xticklabels([f'S{i}' for i in range(n_states)])
+        ax.set_yticklabels([f'S{i}' for i in range(n_states)])
+        for i in range(n_states):
+            for j in range(n_states):
+                v = original_transition_matrix[i, j]
+                color = 'white' if v > 0.55 else 'black'
+                ax.text(j, i, f'{v:.2f}', ha='center', va='center',
+                        fontsize=max(7, min(11, 50 // n_states)), color=color)
+        title = 'Original Transition Matrix'
+        if diagnostic_report.recommendation == 'retrain':
+            title += ' (retrain recommended)'
+        ax.set_title(title)
+
+    # Overall title
+    recommendation_text = f"Recommendation: {diagnostic_report.recommendation.upper()}"
+    if merge_result and merge_result.validation_passed:
+        recommendation_text += f" ({diagnostic_report.original_n_states}→{merge_result.merged_n_states})"
+    fig.suptitle(f'State Diagnostics — {protein_name}\n{recommendation_text}',
+                 fontsize=16, fontweight='bold')
+
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    plot_path = os.path.join(save_dir, f"{protein_name}_diagnostic_summary.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved diagnostic summary to: {plot_path}")

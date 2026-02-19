@@ -99,6 +99,17 @@
                 </div>
             </div>
 
+            <!-- Diagnostics button (shown only when data is available) -->
+            <div class="control-section" id="diagnostics-section" style="display: none;">
+                <h3>Diagnostics</h3>
+                <button class="diagnostics-btn" id="open-diagnostics" onclick="openDiagnostics()">
+                    <span id="diag-btn-icon">&#x1F4CA;</span>
+                    <span>View Diagnostics</span>
+                    <span class="diag-badge" id="diag-recommendation-badge"></span>
+                </button>
+                <div id="diag-quick-info" class="diag-quick-info"></div>
+            </div>
+
             <!-- Instructions -->
             <div class="control-section">
                 <h3>Instructions</h3>
@@ -140,6 +151,47 @@
             <div class="viewer-label">State Details</div>
             <div id="state-selector"></div>
             <div id="state-transitions"></div>
+        </div>
+
+        <!-- Diagnostics modal (hidden by default) -->
+        <div id="diagnostics-modal" class="modal-overlay" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 id="diagnostics-title">State Diagnostics</h2>
+                    <button class="modal-close" onclick="closeDiagnostics()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <!-- Recommendation banner -->
+                    <div id="diagnostics-banner" class="diagnostics-banner"></div>
+
+                    <!-- Tab bar -->
+                    <div class="diag-tabs">
+                        <button class="diag-tab active" data-tab="summary">Summary</button>
+                        <button class="diag-tab" data-tab="eigenvalues">Eigenvalues</button>
+                        <button class="diag-tab" data-tab="jsd">JSD Heatmap</button>
+                        <button class="diag-tab" data-tab="its">ITS</button>
+                        <button class="diag-tab" data-tab="ck">CK Test</button>
+                    </div>
+
+                    <!-- Tab content -->
+                    <div class="diag-tab-content active" id="tab-summary">
+                        <img id="diag-img-summary" class="diag-plot" alt="Diagnostic Summary" />
+                        <div id="diag-report-details" class="diag-details"></div>
+                    </div>
+                    <div class="diag-tab-content" id="tab-eigenvalues">
+                        <img id="diag-img-eigenvalues" class="diag-plot" alt="Eigenvalue Spectrum" />
+                    </div>
+                    <div class="diag-tab-content" id="tab-jsd">
+                        <img id="diag-img-jsd" class="diag-plot" alt="JSD Heatmap" />
+                    </div>
+                    <div class="diag-tab-content" id="tab-its">
+                        <img id="diag-img-its" class="diag-plot" alt="Implied Timescales" />
+                    </div>
+                    <div class="diag-tab-content" id="tab-ck">
+                        <img id="diag-img-ck" class="diag-plot" alt="Chapman-Kolmogorov Test" />
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

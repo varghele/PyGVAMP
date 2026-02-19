@@ -350,6 +350,13 @@ class PipelineOrchestrator:
         args.cpu = self.config.cpu
         args.cache_dir = str(dirs['cache']) if self.config.cache else None
 
+        # State merging parameters
+        args.auto_merge = self.config.auto_merge
+        args.population_threshold = self.config.population_threshold
+        args.jsd_threshold = self.config.jsd_threshold
+        args.merge_validation = self.config.merge_validation
+        args.vamp2_drop_threshold = self.config.vamp2_drop_threshold
+
         # Get lag_time from model path
         import re
         match = re.search(r'lag(\d+)ns', str(model_path))
@@ -557,6 +564,16 @@ def main():
         config.selection = args.selection
     if args.no_continuous:
         config.continuous = False
+
+    # State merging overrides
+    if args.no_auto_merge:
+        config.auto_merge = False
+    if args.force_retrain:
+        config.auto_merge = False
+    if args.population_threshold is not None:
+        config.population_threshold = args.population_threshold
+    if args.jsd_threshold is not None:
+        config.jsd_threshold = args.jsd_threshold
 
     # Create orchestrator and run pipeline
     orchestrator = PipelineOrchestrator(config)

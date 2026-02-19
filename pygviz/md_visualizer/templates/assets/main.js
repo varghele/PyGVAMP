@@ -48,6 +48,7 @@ function init() {
     initProteinViewer();
     initTransitionMatrix();
     initStateDetails();
+    initDiagnosticsPanel();
     initEventListeners();
 
     // Load first timescale
@@ -213,6 +214,9 @@ function loadTimescale(index) {
 
     // Update state details panel
     updateStateDetails(ts);
+
+    // Update diagnostics panel
+    updateDiagnosticsPanel(ts);
 
     // Reset frame selection (keep state selection across timescale switches)
     state.selectedFrameIndex = null;
@@ -772,6 +776,194 @@ function initEventListeners() {
             state.camera.rotation = e.target.checked;
         });
     }
+}
+
+// =============================================
+// Diagnostics panel
+// =============================================
+
+function initDiagnosticsPanel() {
+    // Check if any timescale has diagnostic data
+    const hasDiagnostics = VISUALIZATION_DATA.timescales.some(
+        ts => ts.metadata && ts.metadata.diagnostics
+    );
+
+    const section = document.getElementById('diagnostics-section');
+    if (section) {
+        section.style.display = hasDiagnostics ? 'block' : 'none';
+    }
+
+    // Wire up tab clicks
+    document.querySelectorAll('.diag-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.diag-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.diag-tab-content').forEach(c => c.classList.remove('active'));
+            tab.classList.add('active');
+            const target = document.getElementById('tab-' + tab.dataset.tab);
+            if (target) target.classList.add('active');
+        });
+    });
+
+    // Close on backdrop click
+    const modal = document.getElementById('diagnostics-modal');
+    if (modal) {
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeDiagnostics();
+        });
+    }
+
+    // Close on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeDiagnostics();
+    });
+}
+
+function updateDiagnosticsPanel(timescale) {
+    const section = document.getElementById('diagnostics-section');
+    const diag = timescale.metadata && timescale.metadata.diagnostics;
+
+    if (!diag || !diag.report) {
+        if (section) section.style.display = 'none';
+        return;
+    }
+
+    if (section) section.style.display = 'block';
+    const report = diag.report.diagnostics || {};
+
+    // Update sidebar badge
+    const badge = document.getElementById('diag-recommendation-badge');
+    if (badge) {
+        const rec = report.recommendation || 'keep';
+        badge.textContent = rec;
+        badge.className = 'diag-badge ' + rec;
+    }
+
+    // Quick info in sidebar
+    const quickInfo = document.getElementById('diag-quick-info');
+    if (quickInfo) {
+        const lines = [];
+        lines.push(`Effective states: ${report.effective_n_states || '?'} / ${report.original_n_states || '?'}`);
+        lines.push(`Confidence: ${report.confidence || '?'}`);
+        if (report.underpopulated_states && report.underpopulated_states.length > 0) {
+            lines.push(`Underpopulated: S${report.underpopulated_states.join(', S')}`);
+        }
+        if (report.merge_groups && report.merge_groups.length > 0) {
+            const groups = report.merge_groups.map(g => '{' + g.join(',') + '}').join(' ');
+            lines.push(`Merge groups: ${groups}`);
+        }
+        quickInfo.innerHTML = lines.join('<br/>');
+    }
+}
+
+function openDiagnostics() {
+    const modal = document.getElementById('diagnostics-modal');
+    if (!modal) return;
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const diag = ts.metadata && ts.metadata.diagnostics;
+    if (!diag) return;
+
+    const report = diag.report ? diag.report.diagnostics : {};
+    const merge = diag.report ? diag.report.merge : null;
+    const plots = diag.plots || {};
+
+    // Update title
+    const title = document.getElementById('diagnostics-title');
+    if (title) title.textContent = `State Diagnostics — Lagtime ${ts.lagtime}`;
+
+    // Recommendation banner
+    const banner = document.getElementById('diagnostics-banner');
+    if (banner) {
+        const rec = report.recommendation || 'keep';
+        banner.className = 'diagnostics-banner ' + rec;
+        let bannerText = '';
+        if (rec === 'keep') {
+            bannerText = `All ${report.original_n_states} states are well-separated. No merging needed.`;
+        } else if (rec === 'merge') {
+            bannerText = `Recommend merging: ${report.original_n_states} → ${report.effective_n_states} states.`;
+            if (merge) {
+                bannerText += ` VAMP-2 drop: ${(merge.vamp2_drop * 100).toFixed(1)}%`;
+                bannerText += merge.validation_passed ? ' (passed)' : ' (FAILED)';
+            }
+        } else if (rec === 'retrain') {
+            bannerText = `Large reduction detected (${report.original_n_states} → ${report.effective_n_states}). Retraining recommended.`;
+        }
+        banner.textContent = bannerText;
+    }
+
+    // Set plot images and show/hide tabs based on availability
+    const plotMap = {
+        'summary': 'diagnostic_summary',
+        'eigenvalues': 'eigenvalue_spectrum',
+        'jsd': 'jsd_heatmap',
+        'its': 'implied_timescales',
+        'ck': 'ck_test',
+    };
+
+    for (const [tabId, plotKey] of Object.entries(plotMap)) {
+        const img = document.getElementById(`diag-img-${tabId}`);
+        const tab = document.querySelector(`.diag-tab[data-tab="${tabId}"]`);
+        if (plots[plotKey]) {
+            if (img) { img.src = plots[plotKey]; img.style.display = 'block'; }
+            if (tab) tab.classList.remove('hidden');
+        } else {
+            if (img) img.style.display = 'none';
+            if (tab) tab.classList.add('hidden');
+        }
+    }
+
+    // Populate report details table in summary tab
+    const details = document.getElementById('diag-report-details');
+    if (details && report) {
+        let html = '<table>';
+        html += `<tr><th>Metric</th><th>Value</th></tr>`;
+        html += `<tr><td>Original states</td><td>${report.original_n_states || '?'}</td></tr>`;
+        html += `<tr><td>Effective states</td><td>${report.effective_n_states || '?'}</td></tr>`;
+        html += `<tr><td>Eigenvalue gap suggestion</td><td>${report.eigenvalue_gap_suggestion || '?'}</td></tr>`;
+        html += `<tr><td>Confidence</td><td>${report.confidence || '?'}</td></tr>`;
+        html += `<tr><td>Recommendation</td><td>${report.recommendation || '?'}</td></tr>`;
+        if (report.populations) {
+            html += `<tr><td>Populations</td><td>${report.populations.map(p => p.toFixed(3)).join(', ')}</td></tr>`;
+        }
+        if (report.underpopulated_states && report.underpopulated_states.length > 0) {
+            html += `<tr><td>Underpopulated</td><td>S${report.underpopulated_states.join(', S')}</td></tr>`;
+        }
+        if (report.merge_groups && report.merge_groups.length > 0) {
+            const groups = report.merge_groups.map(g => '{S' + g.join(', S') + '}').join(', ');
+            html += `<tr><td>Merge groups</td><td>${groups}</td></tr>`;
+        }
+        if (merge) {
+            html += `<tr><td>VAMP-2 original</td><td>${merge.vamp2_original ? merge.vamp2_original.toFixed(4) : '—'}</td></tr>`;
+            html += `<tr><td>VAMP-2 merged</td><td>${merge.vamp2_merged ? merge.vamp2_merged.toFixed(4) : '—'}</td></tr>`;
+            html += `<tr><td>VAMP-2 drop</td><td>${merge.vamp2_drop ? (merge.vamp2_drop * 100).toFixed(1) + '%' : '—'}</td></tr>`;
+            html += `<tr><td>Validation</td><td>${merge.validation_passed ? 'PASSED' : 'FAILED'}</td></tr>`;
+            if (merge.state_mapping) {
+                const mapping = Object.entries(merge.state_mapping)
+                    .map(([k, v]) => `S${k} ← {${v.join(',')}}`)
+                    .join(', ');
+                html += `<tr><td>State mapping</td><td>${mapping}</td></tr>`;
+            }
+        }
+        html += '</table>';
+        details.innerHTML = html;
+    }
+
+    // Activate first available tab
+    const firstVisibleTab = document.querySelector('.diag-tab:not(.hidden)');
+    if (firstVisibleTab) {
+        document.querySelectorAll('.diag-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.diag-tab-content').forEach(c => c.classList.remove('active'));
+        firstVisibleTab.classList.add('active');
+        const tabContent = document.getElementById('tab-' + firstVisibleTab.dataset.tab);
+        if (tabContent) tabContent.classList.add('active');
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closeDiagnostics() {
+    const modal = document.getElementById('diagnostics-modal');
+    if (modal) modal.style.display = 'none';
 }
 
 // Start initialization when DOM is ready

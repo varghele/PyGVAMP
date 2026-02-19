@@ -320,10 +320,18 @@ class StateDiscovery:
                     random_state=self.random_state,
                     n_init=3,
                     max_iter=200,
+                    reg_covar=1e-4,
                 )
-                gmm.fit(data)
-            bic_dict[k] = gmm.bic(data)
-            aic_dict[k] = gmm.aic(data)
+                try:
+                    gmm.fit(data)
+                    bic_dict[k] = gmm.bic(data)
+                    aic_dict[k] = gmm.aic(data)
+                except ValueError:
+                    # Covariance collapse — too many components for the data.
+                    # Sentinel value ensures this k is never selected (BIC/AIC
+                    # are minimised, so inf is always worse).
+                    bic_dict[k] = float('inf')
+                    aic_dict[k] = float('inf')
 
     def _find_elbow(self, inertia_dict) -> int:
         """Find elbow point using second derivative method."""
@@ -498,19 +506,24 @@ class StateDiscovery:
         """Generate BIC and AIC vs k plot for the winning source."""
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
-        k_values = sorted(self.bic_scores.keys())
-        bic_values = [self.bic_scores[k] for k in k_values]
-        aic_values = [self.aic_scores[k] for k in k_values]
+        # Filter out inf sentinel values (GMM failures) for plotting
+        bic_k_values = sorted(k for k, v in self.bic_scores.items()
+                              if np.isfinite(v))
+        aic_k_values = sorted(k for k, v in self.aic_scores.items()
+                              if np.isfinite(v))
+        bic_values = [self.bic_scores[k] for k in bic_k_values]
+        aic_values = [self.aic_scores[k] for k in aic_k_values]
 
         bic_k = self.metric_recommendations['bic']
         aic_k = self.metric_recommendations['aic']
 
         # BIC
-        ax1.plot(k_values, bic_values, 'b-o', linewidth=2, markersize=8)
-        ax1.axvline(x=bic_k, color='r', linestyle='--', linewidth=2,
-                     label=f'Best k={bic_k}')
-        ax1.scatter([bic_k], [self.bic_scores[bic_k]],
-                    color='r', s=200, zorder=5, marker='*')
+        ax1.plot(bic_k_values, bic_values, 'b-o', linewidth=2, markersize=8)
+        if np.isfinite(self.bic_scores.get(bic_k, float('inf'))):
+            ax1.axvline(x=bic_k, color='r', linestyle='--', linewidth=2,
+                         label=f'Best k={bic_k}')
+            ax1.scatter([bic_k], [self.bic_scores[bic_k]],
+                        color='r', s=200, zorder=5, marker='*')
         ax1.set_xlabel('Number of Clusters (k)', fontsize=12)
         ax1.set_ylabel('BIC (lower is better)', fontsize=12)
         ax1.set_title(f'Bayesian Information Criterion\n'
@@ -519,11 +532,12 @@ class StateDiscovery:
         ax1.grid(True, alpha=0.3)
 
         # AIC
-        ax2.plot(k_values, aic_values, 'g-o', linewidth=2, markersize=8)
-        ax2.axvline(x=aic_k, color='r', linestyle='--', linewidth=2,
-                     label=f'Best k={aic_k}')
-        ax2.scatter([aic_k], [self.aic_scores[aic_k]],
-                    color='r', s=200, zorder=5, marker='*')
+        ax2.plot(aic_k_values, aic_values, 'g-o', linewidth=2, markersize=8)
+        if np.isfinite(self.aic_scores.get(aic_k, float('inf'))):
+            ax2.axvline(x=aic_k, color='r', linestyle='--', linewidth=2,
+                         label=f'Best k={aic_k}')
+            ax2.scatter([aic_k], [self.aic_scores[aic_k]],
+                        color='r', s=200, zorder=5, marker='*')
         ax2.set_xlabel('Number of Clusters (k)', fontsize=12)
         ax2.set_ylabel('AIC (lower is better)', fontsize=12)
         ax2.set_title(f'Akaike Information Criterion\n'
@@ -897,11 +911,11 @@ class StateDiscovery:
                     for k, v in result['silhouette_scores'].items()
                 },
                 'bic_scores': {
-                    str(k): float(v)
+                    str(k): None if np.isinf(v) else float(v)
                     for k, v in result['bic_scores'].items()
                 },
                 'aic_scores': {
-                    str(k): float(v)
+                    str(k): None if np.isinf(v) else float(v)
                     for k, v in result['aic_scores'].items()
                 },
             }
