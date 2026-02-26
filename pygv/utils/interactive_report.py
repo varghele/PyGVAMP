@@ -179,9 +179,9 @@ def generate_interactive_report(
         Path to the generated HTML file, or None if pygviz is not available.
     """
     try:
-        from pygviz.md_visualizer import MDTrajectoryVisualizer
+        from pygv.visualization import MDTrajectoryVisualizer
     except ImportError:
-        print("  pygviz not available — skipping interactive report.")
+        print("  pygv.visualization not available — skipping interactive report.")
         return None
 
     from pygv.utils.analysis import calculate_transition_matrices
@@ -459,9 +459,9 @@ def generate_merged_interactive_report(
         Path to the generated HTML file, or None if generation failed.
     """
     try:
-        from pygviz.md_visualizer import MDTrajectoryVisualizer
+        from pygv.visualization import MDTrajectoryVisualizer
     except ImportError:
-        print("  pygviz not available — skipping merged interactive report.")
+        print("  pygv.visualization not available — skipping merged interactive report.")
         return None
 
     from pygv.utils.analysis import calculate_transition_matrices

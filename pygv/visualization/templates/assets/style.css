@@ -604,7 +604,6 @@ canvas {
 }
 
 .diag-badge.keep { background: #2ecc71; color: #fff; }
-.diag-badge.merge { background: #f39c12; color: #fff; }
 .diag-badge.retrain { background: #e74c3c; color: #fff; }
 
 .diag-quick-info {
@@ -688,13 +687,6 @@ canvas {
     background: rgba(46, 204, 113, 0.15);
     border: 1px solid #2ecc71;
     color: #2ecc71;
-}
-
-.diagnostics-banner.merge {
-    display: block;
-    background: rgba(243, 156, 18, 0.15);
-    border: 1px solid #f39c12;
-    color: #f39c12;
 }
 
 .diagnostics-banner.retrain {

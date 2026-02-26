@@ -8,7 +8,7 @@ dynamics trajectories, combining:
 - Transition matrices and state information
 
 Example usage:
-    >>> from md_visualizer import MDTrajectoryVisualizer
+    >>> from pygv.visualization import MDTrajectoryVisualizer
     >>> pygviz = MDTrajectoryVisualizer()
     >>> pygviz.add_timescale(
     ...     lagtime=10,

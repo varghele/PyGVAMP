@@ -173,7 +173,7 @@ class TestGenerateInteractiveReport:
     def test_returns_none_when_pygviz_missing(self, sample_probs, sample_embeddings_2d, sample_edge_data, tmp_path):
         from pygv.utils.interactive_report import generate_interactive_report
         att, idx, n_nodes = sample_edge_data
-        with patch.dict('sys.modules', {'pygviz': None, 'pygviz.md_visualizer': None}):
+        with patch.dict('sys.modules', {'pygv.visualization': None}):
             result = generate_interactive_report(
                 probs=sample_probs,
                 embeddings=sample_embeddings_2d,
@@ -194,7 +194,7 @@ class TestGenerateInteractiveReport:
         mock_viz_class = MagicMock(return_value=mock_viz_instance)
 
         with patch('pygv.utils.interactive_report.reduce_embeddings_to_2d', return_value=sample_embeddings_2d):
-            with patch('pygviz.md_visualizer.MDTrajectoryVisualizer', mock_viz_class):
+            with patch('pygv.visualization.MDTrajectoryVisualizer', mock_viz_class):
                 result = generate_interactive_report(
                     probs=sample_probs,
                     embeddings=sample_embeddings_2d,
@@ -221,7 +221,7 @@ class TestGenerateInteractiveReport:
         mock_viz_class = MagicMock(return_value=mock_viz_instance)
 
         with patch('pygv.utils.interactive_report.reduce_embeddings_to_2d', return_value=sample_embeddings_2d):
-            with patch('pygviz.md_visualizer.MDTrajectoryVisualizer', mock_viz_class):
+            with patch('pygv.visualization.MDTrajectoryVisualizer', mock_viz_class):
                 result = generate_interactive_report(
                     probs=sample_probs,
                     embeddings=sample_embeddings_2d,
@@ -371,7 +371,7 @@ class TestGenerateMergedInteractiveReport:
     def test_returns_none_when_pygviz_missing(self, tmp_path):
         from pygv.utils.interactive_report import generate_merged_interactive_report
         exp_dir = self._create_mock_experiment(tmp_path, [1, 5], 3)
-        with patch.dict('sys.modules', {'pygviz': None, 'pygviz.md_visualizer': None}):
+        with patch.dict('sys.modules', {'pygv.visualization': None}):
             result = generate_merged_interactive_report(
                 experiment_dir=exp_dir,
                 topology_file="dummy.pdb",
@@ -398,7 +398,7 @@ class TestGenerateMergedInteractiveReport:
 
         with patch('pygv.utils.interactive_report.reduce_embeddings_to_2d',
                     side_effect=lambda e, **kw: e[:, :2] if e.shape[1] >= 2 else e):
-            with patch('pygviz.md_visualizer.MDTrajectoryVisualizer', mock_viz_class):
+            with patch('pygv.visualization.MDTrajectoryVisualizer', mock_viz_class):
                 result = generate_merged_interactive_report(
                     experiment_dir=exp_dir,
                     topology_file="dummy.pdb",
@@ -424,7 +424,7 @@ class TestGenerateMergedInteractiveReport:
 
         with patch('pygv.utils.interactive_report.reduce_embeddings_to_2d',
                     side_effect=lambda e, **kw: e[:, :2] if e.shape[1] >= 2 else e):
-            with patch('pygviz.md_visualizer.MDTrajectoryVisualizer', mock_viz_class):
+            with patch('pygv.visualization.MDTrajectoryVisualizer', mock_viz_class):
                 result = generate_merged_interactive_report(
                     experiment_dir=exp_dir,
                     topology_file="dummy.pdb",

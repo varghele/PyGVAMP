@@ -10,10 +10,7 @@ import os
 import numpy as np
 from pathlib import Path
 
-# Add parent directory to path so we can import md_visualizer
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from md_visualizer import MDTrajectoryVisualizer
+from pygv.visualization import MDTrajectoryVisualizer
 
 
 def generate_mock_embeddings(n_frames, n_states, seed=42):

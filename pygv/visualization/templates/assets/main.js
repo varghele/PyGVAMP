@@ -849,7 +849,7 @@ function updateDiagnosticsPanel(timescale) {
         }
         if (report.merge_groups && report.merge_groups.length > 0) {
             const groups = report.merge_groups.map(g => '{' + g.join(',') + '}').join(' ');
-            lines.push(`Merge groups: ${groups}`);
+            lines.push(`Redundant groups: ${groups}`);
         }
         quickInfo.innerHTML = lines.join('<br/>');
     }
@@ -864,7 +864,6 @@ function openDiagnostics() {
     if (!diag) return;
 
     const report = diag.report ? diag.report.diagnostics : {};
-    const merge = diag.report ? diag.report.merge : null;
     const plots = diag.plots || {};
 
     // Update title
@@ -878,15 +877,9 @@ function openDiagnostics() {
         banner.className = 'diagnostics-banner ' + rec;
         let bannerText = '';
         if (rec === 'keep') {
-            bannerText = `All ${report.original_n_states} states are well-separated. No merging needed.`;
-        } else if (rec === 'merge') {
-            bannerText = `Recommend merging: ${report.original_n_states} → ${report.effective_n_states} states.`;
-            if (merge) {
-                bannerText += ` VAMP-2 drop: ${(merge.vamp2_drop * 100).toFixed(1)}%`;
-                bannerText += merge.validation_passed ? ' (passed)' : ' (FAILED)';
-            }
+            bannerText = `All ${report.original_n_states} states are well-separated. No reduction needed.`;
         } else if (rec === 'retrain') {
-            bannerText = `Large reduction detected (${report.original_n_states} → ${report.effective_n_states}). Retraining recommended.`;
+            bannerText = `State reduction detected (${report.original_n_states} → ${report.effective_n_states}). Retraining recommended.`;
         }
         banner.textContent = bannerText;
     }
@@ -930,19 +923,7 @@ function openDiagnostics() {
         }
         if (report.merge_groups && report.merge_groups.length > 0) {
             const groups = report.merge_groups.map(g => '{S' + g.join(', S') + '}').join(', ');
-            html += `<tr><td>Merge groups</td><td>${groups}</td></tr>`;
-        }
-        if (merge) {
-            html += `<tr><td>VAMP-2 original</td><td>${merge.vamp2_original ? merge.vamp2_original.toFixed(4) : '—'}</td></tr>`;
-            html += `<tr><td>VAMP-2 merged</td><td>${merge.vamp2_merged ? merge.vamp2_merged.toFixed(4) : '—'}</td></tr>`;
-            html += `<tr><td>VAMP-2 drop</td><td>${merge.vamp2_drop ? (merge.vamp2_drop * 100).toFixed(1) + '%' : '—'}</td></tr>`;
-            html += `<tr><td>Validation</td><td>${merge.validation_passed ? 'PASSED' : 'FAILED'}</td></tr>`;
-            if (merge.state_mapping) {
-                const mapping = Object.entries(merge.state_mapping)
-                    .map(([k, v]) => `S${k} ← {${v.join(',')}}`)
-                    .join(', ');
-                html += `<tr><td>State mapping</td><td>${mapping}</td></tr>`;
-            }
+            html += `<tr><td>Redundant groups</td><td>${groups}</td></tr>`;
         }
         html += '</table>';
         details.innerHTML = html;
