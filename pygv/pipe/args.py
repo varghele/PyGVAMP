@@ -63,15 +63,11 @@ Examples:
                         help='Treat each trajectory file as independent '
                              '(time-lagged pairs will not cross file boundaries)')
 
-    # State merging
-    parser.add_argument('--no_auto_merge', action='store_true',
-                        help='Disable automatic state merging in analysis')
+    # State diagnostics
     parser.add_argument('--population_threshold', type=float, default=None,
                         help='Min state population fraction (default: 0.02)')
     parser.add_argument('--jsd_threshold', type=float, default=None,
                         help='JSD threshold for redundancy detection (default: 0.05)')
-    parser.add_argument('--force_retrain', action='store_true',
-                        help='Always recommend retraining instead of merging')
 
     # Pipeline control
     parser.add_argument('--cache', action='store_true',

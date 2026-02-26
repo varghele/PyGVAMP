@@ -289,10 +289,10 @@ class TestRecommendation:
 
         assert report.original_n_states == 3
         assert report.effective_n_states >= 2
-        assert report.recommendation in ("keep", "merge")  # No dramatic reduction expected
+        assert report.recommendation in ("keep", "retrain")
 
-    def test_merge_for_redundant_system(self, redundant_5state_system):
-        """System with redundant states should suggest merging."""
+    def test_retrain_for_redundant_system(self, redundant_5state_system):
+        """System with redundant states should suggest retraining."""
         from pygv.utils.state_diagnostics import recommend_state_reduction
 
         T, probs = redundant_5state_system
@@ -300,8 +300,7 @@ class TestRecommendation:
 
         assert report.original_n_states == 5
         assert report.effective_n_states <= 5
-        # Should have at least one merge group
-        assert report.recommendation in ("merge", "retrain", "keep")
+        assert report.recommendation in ("retrain", "keep")
 
     def test_report_summary_runs(self, clear_3state_system):
         """summary() should return a non-empty string."""
@@ -330,7 +329,7 @@ class TestRecommendation:
         assert report.jsd_matrix is not None
         assert report.jsd_matrix.shape == (3, 3)
         assert report.confidence in ("high", "medium", "low")
-        assert report.recommendation in ("keep", "merge", "retrain")
+        assert report.recommendation in ("keep", "retrain")
 
     def test_2state_system(self):
         """Minimum 2-state system should work without errors."""

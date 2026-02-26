@@ -13,6 +13,7 @@ Supports configuration presets and selective re-running of pipeline stages.
 """
 
 import os
+import re
 import argparse
 import json
 from datetime import datetime
@@ -350,15 +351,11 @@ class PipelineOrchestrator:
         args.cpu = self.config.cpu
         args.cache_dir = str(dirs['cache']) if self.config.cache else None
 
-        # State merging parameters
-        args.auto_merge = self.config.auto_merge
+        # State diagnostics parameters
         args.population_threshold = self.config.population_threshold
         args.jsd_threshold = self.config.jsd_threshold
-        args.merge_validation = self.config.merge_validation
-        args.vamp2_drop_threshold = self.config.vamp2_drop_threshold
 
         # Get lag_time from model path
-        import re
         match = re.search(r'lag(\d+)ns', str(model_path))
         if match:
             args.lag_time = float(match.group(1))
@@ -431,6 +428,100 @@ class PipelineOrchestrator:
         except Exception as e:
             print(f"Warning: Could not clean up dataset: {str(e)}")
 
+    def _run_retrain_loop(self, dirs, dataset_path, trained_models,
+                          analysis_results, max_retrain=2):
+        """
+        Check analysis results for "retrain" recommendations and automatically
+        retrain with the reduced state count.
+
+        Mutates trained_models and analysis_results in-place.
+
+        Parameters
+        ----------
+        dirs : dict
+            Experiment directory structure.
+        dataset_path : str
+            Path to the prepared dataset.
+        trained_models : dict
+            Maps exp_name -> model_path. Updated with retrained models.
+        analysis_results : dict
+            Maps exp_name -> results dict. Updated with retrained analysis.
+        max_retrain : int
+            Maximum number of retrain iterations per experiment (default: 2).
+        """
+        # Collect experiments that need retraining from the initial analysis
+        pending = []
+        for exp_name, results in list(analysis_results.items()):
+            report = results.get("diagnostic_report")
+            if report is not None and getattr(report, "recommendation", None) == "retrain":
+                pending.append((exp_name, report.effective_n_states, 0))
+
+        if not pending:
+            return
+
+        print("\n" + "=" * 60)
+        print("PHASE 3b: AUTOMATIC RETRAINING")
+        print("=" * 60)
+
+        while pending:
+            exp_name, new_n_states, iteration = pending.pop(0)
+
+            # Extract lag_time from the original exp_name
+            match = re.search(r'lag([\d.]+)ns', exp_name)
+            if not match:
+                print(f"Could not parse lag_time from '{exp_name}', skipping retrain.")
+                continue
+            lag_time = float(match.group(1))
+
+            # Build retrained exp_name with suffix
+            suffix = "_retrained" if iteration == 0 else f"_retrained{iteration + 1}"
+            retrained_exp = f"lag{lag_time:g}ns_{new_n_states}states{suffix}"
+
+            print(f"\n--- Retraining: {exp_name} -> {retrained_exp} "
+                  f"(n_states {exp_name} -> {new_n_states}, iteration {iteration + 1}/{max_retrain}) ---")
+
+            # Create training directory
+            exp_dir = dirs['training'] / retrained_exp
+            exp_dir.mkdir(exist_ok=True)
+
+            # Train
+            train_args = self._create_train_args(
+                dirs, dataset_path, lag_time, new_n_states, exp_dir
+            )
+            try:
+                model_path = run_training(train_args)
+                trained_models[retrained_exp] = str(model_path)
+                print(f"Retrain training completed: {model_path}")
+            except Exception as e:
+                print(f"Retrain training failed for {retrained_exp}: {e}")
+                continue
+
+            # Analyze
+            analysis_dir = dirs['analysis'] / retrained_exp
+            analysis_dir.mkdir(exist_ok=True)
+            analysis_args = self._create_analysis_args(dirs, model_path, analysis_dir)
+            try:
+                results = run_analysis(analysis_args)
+                analysis_results[retrained_exp] = results
+                print(f"Retrain analysis completed: {analysis_dir}")
+            except Exception as e:
+                print(f"Retrain analysis failed for {retrained_exp}: {e}")
+                continue
+
+            # Check if this retrained model also recommends "retrain"
+            report = results.get("diagnostic_report")
+            if (report is not None
+                    and getattr(report, "recommendation", None) == "retrain"
+                    and iteration + 1 < max_retrain):
+                print(f"Retrained model also recommends retrain "
+                      f"(effective_n_states={report.effective_n_states}). "
+                      f"Queuing iteration {iteration + 2}.")
+                pending.append((retrained_exp, report.effective_n_states, iteration + 1))
+            elif (report is not None
+                  and getattr(report, "recommendation", None) == "retrain"):
+                print(f"Retrained model still recommends retrain but max iterations "
+                      f"({max_retrain}) reached. Stopping.")
+
     def run_complete_pipeline(self, skip_preparation=False, skip_training=False,
                               only_analysis=False, resume=None):
         """Run the complete pipeline with optional phase skipping and resume support."""
@@ -482,6 +573,10 @@ class PipelineOrchestrator:
         else:
             print("No trained models found. Run training first.")
             analysis_results = {}
+
+        # Phase 3b: Automatic retraining
+        if analysis_results and dataset_path:
+            self._run_retrain_loop(dirs, dataset_path, trained_models, analysis_results)
 
         # Save summary
         self._save_pipeline_summary(dirs, trained_models, analysis_results)
@@ -565,11 +660,7 @@ def main():
     if args.no_continuous:
         config.continuous = False
 
-    # State merging overrides
-    if args.no_auto_merge:
-        config.auto_merge = False
-    if args.force_retrain:
-        config.auto_merge = False
+    # State diagnostics overrides
     if args.population_threshold is not None:
         config.population_threshold = args.population_threshold
     if args.jsd_threshold is not None:

@@ -257,8 +257,7 @@ def recommend_state_reduction(
     Decision logic:
     - If eigenvalue gap, population analysis, and redundancy detection all agree
       on a similar effective state count → high confidence
-    - If effective_n_states >= 0.7 * original_n_states → recommend "merge"
-    - If effective_n_states < 0.7 * original_n_states → recommend "retrain"
+    - If any state reduction is needed → recommend "retrain"
     - If no issues detected → recommend "keep"
 
     Parameters
@@ -316,8 +315,6 @@ def recommend_state_reduction(
     # --- Make recommendation ---
     if effective_n_states == n_states and not merge_groups and not underpopulated:
         recommendation = "keep"
-    elif effective_n_states >= 0.7 * n_states:
-        recommendation = "merge"
     else:
         recommendation = "retrain"
 

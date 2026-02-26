@@ -176,7 +176,7 @@ def run_analysis(args=None):
     2.  Inference → probs, embeddings, attentions, edge_indices
     3.  Plot transition matrix (original)
     4.  Run state diagnostics → StateReductionReport
-    5.  If merge recommended: merge states, validate, use merged probs downstream
+    5.  If retrain recommended: report effective_n_states for automatic retraining
     6.  Save diagnostic report (JSON + plots)
     7.  Calculate attention maps (using final probs)
     8.  Plot attention maps
@@ -253,16 +253,12 @@ def run_analysis(args=None):
         timestep=inferred_timestep
     )
 
-    # ---- Step 4-6: State diagnostics and merging ----
-    auto_merge = getattr(args, 'auto_merge', True)
+    # ---- Step 4-6: State diagnostics ----
     population_threshold = getattr(args, 'population_threshold', 0.02)
     jsd_threshold = getattr(args, 'jsd_threshold', 0.05)
-    merge_validation = getattr(args, 'merge_validation', True)
-    vamp2_drop_threshold = getattr(args, 'vamp2_drop_threshold', 0.10)
 
-    # Always run diagnostics (even if merging is disabled)
     from pygv.utils.state_diagnostics import recommend_state_reduction
-    from pygv.utils.state_merging import merge_and_validate, save_merge_report
+    from pygv.utils.state_merging import save_merge_report
     from pygv.utils.plotting import (plot_eigenvalue_spectrum, plot_jsd_heatmap,
                                       plot_diagnostic_summary)
 
@@ -278,41 +274,18 @@ def run_analysis(args=None):
     )
     print(diagnostic_report.summary())
 
-    # Decide whether to merge
     final_probs = probs
-    merge_result = None
 
-    if auto_merge and diagnostic_report.recommendation == "merge" and diagnostic_report.merge_groups:
-        print(f"\nAttempting to merge {diagnostic_report.original_n_states} → "
-              f"{diagnostic_report.effective_n_states} states...")
-
-        merge_result = merge_and_validate(
-            probs=probs,
-            merge_groups=diagnostic_report.merge_groups,
-            lag_time=args.lag_time,
-            stride=args.stride,
-            timestep=inferred_timestep,
-            vamp2_drop_threshold=vamp2_drop_threshold,
-            validate=merge_validation,
-        )
-        print(merge_result.summary())
-
-        if merge_result.validation_passed:
-            print("Merge validation PASSED — using merged states for downstream analysis.")
-            final_probs = merge_result.merged_probs
-        else:
-            print("Merge validation FAILED — keeping original states.")
-            merge_result = None
-    elif diagnostic_report.recommendation == "retrain":
+    if diagnostic_report.recommendation == "retrain":
         print(f"\nRecommendation: RETRAIN with ~{diagnostic_report.effective_n_states} states "
-              f"(large reduction from {diagnostic_report.original_n_states}).")
+              f"(reduction from {diagnostic_report.original_n_states}).")
     else:
-        print("\nNo state merging needed.")
+        print("\nNo state reduction needed.")
 
     # Save diagnostic report
     report_path = save_merge_report(
         report=diagnostic_report,
-        merge_result=merge_result,
+        merge_result=None,
         save_dir=paths['analysis_dir'],
         protein_name=args.protein_name,
     )
@@ -336,7 +309,7 @@ def run_analysis(args=None):
         plot_diagnostic_summary(
             diagnostic_report=diagnostic_report,
             original_transition_matrix=original_transition_matrix,
-            merge_result=merge_result,
+            merge_result=None,
             save_dir=paths['analysis_dir'],
             protein_name=args.protein_name,
         )
@@ -501,7 +474,6 @@ def run_analysis(args=None):
         "original_probs": probs,
         "embeddings": embeddings,
         "diagnostic_report": diagnostic_report,
-        "merge_result": merge_result,
         "state_attention_maps": state_attention_maps,
         "state_populations": state_populations,
     }
