@@ -471,15 +471,44 @@ def generate_merged_interactive_report(
         print(f"  No analysis directory found at {analysis_root}")
         return None
 
-    # Discover analysis subdirectories matching lag<X>ns_<Y>states pattern
-    lag_pattern = re.compile(r'lag(\d+(?:\.\d+)?)ns_(\d+)states')
-    subdirs = []
+    # Discover analysis subdirectories matching lag<X>ns_<Y>states[_retrained]
+    lag_pattern = re.compile(r'lag(\d+(?:\.\d+)?)ns_(\d+)states(_retrained)?')
+    all_entries = []
     for name in sorted(os.listdir(analysis_root)):
         match = lag_pattern.match(name)
         if match and os.path.isdir(os.path.join(analysis_root, name)):
             lag_time = float(match.group(1))
             n_states = int(match.group(2))
-            subdirs.append((lag_time, n_states, os.path.join(analysis_root, name)))
+            retrained = match.group(3) is not None
+            full_path = os.path.join(analysis_root, name)
+            mtime = os.path.getmtime(full_path)
+            all_entries.append((lag_time, n_states, full_path, retrained, mtime))
+
+    # For each lag time, find the final (best) run:
+    # - If retrained versions exist, the newest retrained dir is "final"
+    # - If no retrained versions, the original is "final"
+    # All other entries for that lag time are superseded.
+    from collections import defaultdict
+    lag_groups = defaultdict(list)
+    for entry in all_entries:
+        lag_groups[entry[0]].append(entry)
+
+    subdirs = []
+    for lag_time, entries in lag_groups.items():
+        retrained_entries = [e for e in entries if e[3]]
+        if retrained_entries:
+            # Pick the newest retrained entry as final
+            final = max(retrained_entries, key=lambda e: e[4])
+            for e in entries:
+                is_final = (e is final)
+                subdirs.append((e[0], e[1], e[2], is_final))
+        else:
+            # No retrained — all originals are final
+            for e in entries:
+                subdirs.append((e[0], e[1], e[2], True))
+
+    # Sort by lag time, then non-final first so final comes last
+    subdirs.sort(key=lambda x: (x[0], x[3]))
 
     if not subdirs:
         print("  No analysis subdirectories found matching lag*ns_*states pattern.")
@@ -519,7 +548,7 @@ def generate_merged_interactive_report(
 
     timescales_added = 0
 
-    for lag_time, n_states, subdir in subdirs:
+    for lag_time, n_states, subdir, is_final in subdirs:
         print(f"  Loading artifacts from {os.path.basename(subdir)}...")
         probs, embeddings, edge_attentions, edge_indices = _load_analysis_artifacts(subdir)
 
@@ -588,7 +617,7 @@ def generate_merged_interactive_report(
 
         # Load diagnostic data if available
         diagnostics = _load_diagnostic_data(subdir, protein_name)
-        metadata = {}
+        metadata = {'is_final': is_final}
         if diagnostics:
             metadata['diagnostics'] = diagnostics
 

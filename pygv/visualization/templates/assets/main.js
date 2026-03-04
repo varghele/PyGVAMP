@@ -55,8 +55,8 @@ function init() {
         initDiagnosticsPanel();
         initEventListeners();
 
-        // Load first timescale
-        loadTimescale(0);
+        // Load first visible timescale (skips superseded ones)
+        loadTimescale(state._firstVisibleIndex || 0);
 
         // Hide loading screen on success
         if (loading) loading.style.display = 'none';
@@ -82,14 +82,36 @@ function initTimescaleControls() {
     if (!container) return;
     container.innerHTML = '';
 
+    // Check if any timescales are superseded (not final)
+    const hasSuperseded = VISUALIZATION_DATA.timescales.some(
+        ts => ts.metadata && ts.metadata.is_final === false
+    );
+
+    // Find the first final timescale to auto-select
+    let firstVisibleIndex = 0;
+    for (let i = 0; i < VISUALIZATION_DATA.timescales.length; i++) {
+        const ts = VISUALIZATION_DATA.timescales[i];
+        const isFinal = !ts.metadata || ts.metadata.is_final !== false;
+        if (isFinal) { firstVisibleIndex = i; break; }
+    }
+
     VISUALIZATION_DATA.timescales.forEach((ts, index) => {
+        const isFinal = !ts.metadata || ts.metadata.is_final !== false;
+
         const btn = document.createElement('button');
         btn.className = 'timescale-btn';
-        if (index === 0) btn.classList.add('active');
+        btn.dataset.index = index;
+        if (!isFinal) {
+            btn.classList.add('superseded');
+            btn.style.display = 'none';
+        }
+        if (index === firstVisibleIndex) btn.classList.add('active');
 
         const label = document.createElement('span');
         label.className = 'timescale-label';
-        label.textContent = `Lag ${ts.lagtime}`;
+        let labelText = `Lag ${ts.lagtime} (${ts.n_states} states)`;
+        if (!isFinal) labelText += ' [superseded]';
+        label.textContent = labelText;
         btn.appendChild(label);
 
         const details = document.createElement('span');
@@ -105,6 +127,9 @@ function initTimescaleControls() {
 
         container.appendChild(btn);
     });
+
+    // Load the first visible timescale
+    state._firstVisibleIndex = firstVisibleIndex;
 }
 
 // =============================================================================
@@ -1215,6 +1240,23 @@ function initEventListeners() {
             VISUALIZATION_DATA.config.protein.representation = e.target.value;
             updateProteinViewer();
             updateAttentionViewer();
+        });
+    }
+
+    // Show superseded models toggle
+    const hasSuperseded = VISUALIZATION_DATA.timescales.some(
+        ts => ts.metadata && ts.metadata.is_final === false
+    );
+
+    const showOrigGroup = document.getElementById('show-original-group');
+    const showOrigToggle = document.getElementById('show-original-toggle');
+    if (showOrigGroup && showOrigToggle && hasSuperseded) {
+        showOrigGroup.style.display = '';
+        showOrigToggle.addEventListener('change', (e) => {
+            const show = e.target.checked;
+            document.querySelectorAll('.timescale-btn.superseded').forEach(btn => {
+                btn.style.display = show ? '' : 'none';
+            });
         });
     }
 }
