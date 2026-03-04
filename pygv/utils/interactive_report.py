@@ -321,7 +321,7 @@ def subsample_frames(
         edge_indices: list,
         max_frames: int = 5000,
         random_state: int = 42,
-) -> Tuple[np.ndarray, np.ndarray, list, list]:
+) -> Tuple[np.ndarray, np.ndarray, list, list, np.ndarray]:
     """
     Stratified subsampling by state assignment to preserve state distribution.
 
@@ -343,11 +343,13 @@ def subsample_frames(
     Returns
     -------
     tuple
-        (probs, embeddings, edge_attentions, edge_indices) subsampled.
+        (probs, embeddings, edge_attentions, edge_indices, selected_indices)
+        subsampled, where selected_indices maps subsampled points back to
+        original frame indices.
     """
     n_frames = len(probs)
     if n_frames <= max_frames:
-        return probs, embeddings, edge_attentions, edge_indices
+        return probs, embeddings, edge_attentions, edge_indices, np.arange(n_frames)
 
     rng = np.random.RandomState(random_state)
     state_assignments = np.argmax(probs, axis=1)
@@ -374,7 +376,7 @@ def subsample_frames(
     sub_attentions = [edge_attentions[i] for i in selected_indices]
     sub_indices = [edge_indices[i] for i in selected_indices]
 
-    return sub_probs, sub_embeddings, sub_attentions, sub_indices
+    return sub_probs, sub_embeddings, sub_attentions, sub_indices, selected_indices
 
 
 def _load_analysis_artifacts(analysis_dir: str) -> Tuple[
@@ -492,6 +494,32 @@ def _load_diagnostic_data(
     }
 
 
+def _create_pdb_template(frame, topology_file):
+    """
+    Create PDB template string from a single MDTraj frame.
+
+    Parameters
+    ----------
+    frame : mdtraj.Trajectory
+        Single-frame trajectory to use as template.
+    topology_file : str
+        Path to topology file (unused but kept for clarity).
+
+    Returns
+    -------
+    str
+        PDB text used as template for coordinate patching.
+    """
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.pdb', mode='w', delete=False) as f:
+        tmp_path = f.name
+    frame.save_pdb(tmp_path)
+    with open(tmp_path) as f:
+        pdb_text = f.read()
+    os.unlink(tmp_path)
+    return pdb_text
+
+
 def generate_merged_interactive_report(
         experiment_dir: str,
         topology_file: str,
@@ -499,6 +527,8 @@ def generate_merged_interactive_report(
         max_frames: int = 5000,
         stride: int = 1,
         timestep: float = 0.001,
+        traj_dir: str = None,
+        file_pattern: str = "*.xtc",
 ) -> Optional[str]:
     """
     Generate a single interactive HTML report combining all lag times.
@@ -520,6 +550,10 @@ def generate_merged_interactive_report(
         Stride used during frame extraction.
     timestep : float
         Trajectory timestep in nanoseconds.
+    traj_dir : str, optional
+        Path to trajectory directory. If None, reads from config.yaml.
+    file_pattern : str
+        Glob pattern for trajectory files (default: '*.xtc').
 
     Returns
     -------
@@ -584,6 +618,37 @@ def generate_merged_interactive_report(
 
     viz = MDTrajectoryVisualizer()
 
+    # --- Config.yaml fallback for traj_dir ---
+    if traj_dir is None:
+        config_path = os.path.join(experiment_dir, 'config.yaml')
+        if os.path.isfile(config_path):
+            try:
+                import yaml
+                with open(config_path) as f:
+                    cfg = yaml.safe_load(f)
+                traj_dir = cfg.get('traj_dir')
+                file_pattern = cfg.get('file_pattern', file_pattern)
+            except Exception:
+                pass
+
+    # --- Load trajectory frames for per-frame protein structure viewer ---
+    frame_coords = None
+    pdb_template = None
+    if traj_dir and topology_file:
+        try:
+            import mdtraj as md
+            from pygv.utils.pipe_utils import find_trajectory_files
+            traj_files = find_trajectory_files(traj_dir, file_pattern)
+            if traj_files:
+                traj = md.load(traj_files, top=topology_file, stride=stride)
+                pdb_template = _create_pdb_template(traj[0], topology_file)
+                # frame_coords shape: (n_frames, n_atoms, 3) in Ångströms
+                frame_coords = traj.xyz * 10.0  # nm → Å
+                print(f"  Loaded trajectory: {frame_coords.shape[0]} frames, "
+                      f"{frame_coords.shape[1]} atoms for per-frame structures.")
+        except Exception as e:
+            print(f"  Warning: could not load trajectory for frame structures: {e}")
+
     # --- Load preparation-phase data (Graph2Vec embeddings) ---
     prep_dir = os.path.join(experiment_dir, 'preparation')
     if os.path.isdir(prep_dir):
@@ -625,7 +690,7 @@ def generate_merged_interactive_report(
             continue
 
         # Subsample frames
-        probs, embeddings, edge_attentions, edge_indices = subsample_frames(
+        probs, embeddings, edge_attentions, edge_indices, selected_indices = subsample_frames(
             probs, embeddings, edge_attentions, edge_indices,
             max_frames=max_frames,
         )
@@ -708,6 +773,7 @@ def generate_merged_interactive_report(
             attention_values=attention_values,
             state_structures=state_structures,
             metadata=metadata,
+            trajectory_frame_indices=selected_indices,
         )
         timescales_added += 1
         n_loaded = sum(1 for s in state_structures.values() if s['average'])
@@ -718,6 +784,10 @@ def generate_merged_interactive_report(
     if timescales_added == 0:
         print("  No timescales could be added — skipping report generation.")
         return None
+
+    # Pass per-frame coordinates if trajectory was loaded
+    if frame_coords is not None and pdb_template is not None:
+        viz.set_frame_coordinates(frame_coords, pdb_template)
 
     viz.set_protein_structure(pdb_path=topology_file)
 

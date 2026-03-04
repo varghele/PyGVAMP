@@ -749,6 +749,38 @@ function onAlluvialTargetClick(targetState) {
 }
 
 // =============================================================================
+// Per-frame PDB construction from template + coordinates
+// =============================================================================
+
+function buildPdbFromCoords(frameIndex) {
+    const coords = VISUALIZATION_DATA.frame_coordinates;
+    const template = VISUALIZATION_DATA.pdb_template;
+    if (!coords || !template || frameIndex < 0 || frameIndex >= coords.length) return null;
+
+    const frameCoords = coords[frameIndex];
+    const lines = template.split('\n');
+    let atomIdx = 0;
+    const result = [];
+
+    for (const line of lines) {
+        if ((line.startsWith('ATOM') || line.startsWith('HETATM')) && atomIdx < frameCoords.length) {
+            const [x, y, z] = frameCoords[atomIdx];
+            // PDB format: columns 31-54 are x(8.3f), y(8.3f), z(8.3f)
+            const newLine = line.substring(0, 30)
+                + x.toFixed(3).padStart(8)
+                + y.toFixed(3).padStart(8)
+                + z.toFixed(3).padStart(8)
+                + line.substring(54);
+            result.push(newLine);
+            atomIdx++;
+        } else {
+            result.push(line);
+        }
+    }
+    return result.join('\n');
+}
+
+// =============================================================================
 // Protein viewer
 // =============================================================================
 
@@ -775,7 +807,44 @@ function updateProteinViewer() {
     const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
     const representation = VISUALIZATION_DATA.config.protein.representation;
 
-    // Priority 1: Selected frame → show its VAMP state's average attention
+    // Priority 1: Show selected frame's actual conformation
+    if (state.selectedFrameIndex !== null && ts.trajectory_frame_indices &&
+        VISUALIZATION_DATA.frame_coordinates) {
+        const trajFrame = ts.trajectory_frame_indices[state.selectedFrameIndex];
+        const pdbStr = buildPdbFromCoords(trajFrame);
+        if (pdbStr) {
+            proteinViewer.removeAllModels();
+            proteinViewer.addModel(pdbStr, 'pdb');
+
+            // Color by state attention if available
+            if (state.showAttention && state.selectedVampState !== null &&
+                ts.state_attention_avg && state.selectedVampState < ts.state_attention_avg.length) {
+                const attention = ts.state_attention_avg[state.selectedVampState];
+                const colorScale = d3.scaleLinear()
+                    .domain([0, 1])
+                    .range([
+                        VISUALIZATION_DATA.config.colors.attention.low,
+                        VISUALIZATION_DATA.config.colors.attention.high
+                    ]);
+                proteinViewer.setStyle({}, {});
+                attention.forEach((value, residueIndex) => {
+                    const color = colorScale(value);
+                    proteinViewer.setStyle(
+                        { resi: residueIndex + 1 },
+                        { [representation]: { color: color } }
+                    );
+                });
+            } else {
+                proteinViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
+            }
+
+            proteinViewer.zoomTo();
+            proteinViewer.render();
+            return;
+        }
+    }
+
+    // Priority 2: Selected VAMP state with attention coloring (no specific frame)
     if (state.selectedVampState !== null && state.showAttention) {
         proteinViewer.removeAllModels();
         if (VISUALIZATION_DATA.protein_structure) {
@@ -806,7 +875,7 @@ function updateProteinViewer() {
         return;
     }
 
-    // Priority 2: State structure view (from alluvial click or attention panel)
+    // Priority 3: State structure view (from alluvial click or attention panel)
     const viewState = state.selectedVampState;
     if (viewState !== null && ts.state_structures) {
         const stateData = ts.state_structures[viewState];
@@ -835,7 +904,7 @@ function updateProteinViewer() {
         }
     }
 
-    // Priority 3: Default spectrum coloring
+    // Priority 4: Default spectrum coloring
     proteinViewer.removeAllModels();
     if (VISUALIZATION_DATA.protein_structure) {
         proteinViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');

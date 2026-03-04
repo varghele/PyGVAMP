@@ -262,13 +262,14 @@ class TestSubsampleFrames:
         from pygv.utils.interactive_report import subsample_frames
         att, idx, _ = sample_edge_data
         # 50 frames, max_frames=100 → no subsampling
-        sub_p, sub_e, sub_a, sub_i = subsample_frames(
+        sub_p, sub_e, sub_a, sub_i, sel_idx = subsample_frames(
             sample_probs, sample_embeddings_2d, att, idx, max_frames=100,
         )
         np.testing.assert_array_equal(sub_p, sample_probs)
         np.testing.assert_array_equal(sub_e, sample_embeddings_2d)
         assert len(sub_a) == 50
         assert len(sub_i) == 50
+        np.testing.assert_array_equal(sel_idx, np.arange(50))
 
     def test_subsamples_to_max_frames(self, sample_edge_data):
         from pygv.utils.interactive_report import subsample_frames
@@ -281,13 +282,14 @@ class TestSubsampleFrames:
         idx = [np.random.randint(0, 5, size=(2, 10)) for _ in range(n_frames)]
 
         max_frames = 50
-        sub_p, sub_e, sub_a, sub_i = subsample_frames(
+        sub_p, sub_e, sub_a, sub_i, sel_idx = subsample_frames(
             probs, embeddings, att, idx, max_frames=max_frames,
         )
         assert len(sub_p) <= max_frames
         assert len(sub_e) <= max_frames
         assert len(sub_a) <= max_frames
         assert len(sub_i) <= max_frames
+        assert len(sel_idx) == len(sub_p)
 
     def test_preserves_state_distribution(self):
         from pygv.utils.interactive_report import subsample_frames
@@ -302,7 +304,7 @@ class TestSubsampleFrames:
         idx = [None] * n_frames
 
         max_frames = 100
-        sub_p, sub_e, sub_a, sub_i = subsample_frames(
+        sub_p, sub_e, sub_a, sub_i, sel_idx = subsample_frames(
             probs, embeddings, att, idx, max_frames=max_frames,
         )
         sub_states = np.argmax(sub_p, axis=1)
@@ -322,12 +324,13 @@ class TestSubsampleFrames:
         att = [np.random.rand(10).astype(np.float32) for _ in range(n_frames)]
         idx = [np.random.randint(0, 5, size=(2, 10)) for _ in range(n_frames)]
 
-        sub_p, sub_e, sub_a, sub_i = subsample_frames(
+        sub_p, sub_e, sub_a, sub_i, sel_idx = subsample_frames(
             probs, embeddings, att, idx, max_frames=30,
         )
         assert sub_p.shape[0] == sub_e.shape[0]
         assert len(sub_a) == sub_p.shape[0]
         assert len(sub_i) == sub_p.shape[0]
+        assert len(sel_idx) == sub_p.shape[0]
         assert sub_p.shape[1] == 5
         assert sub_e.shape[1] == 8
 

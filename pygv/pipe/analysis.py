@@ -459,6 +459,8 @@ def run_analysis(args=None):
                 max_frames=5000,
                 stride=args.stride,
                 timestep=inferred_timestep,
+                traj_dir=args.traj_dir,
+                file_pattern=args.file_pattern,
             )
             if report_path:
                 print(f"Merged interactive report: {report_path}")

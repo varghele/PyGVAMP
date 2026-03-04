@@ -65,6 +65,8 @@ class MDTrajectoryVisualizer:
         self.prep_data = None
         self.protein_structure = None
         self.protein_source = None
+        self.frame_coordinates = None
+        self.pdb_template = None
 
         # Default configuration
         self.config = {
@@ -112,7 +114,8 @@ class MDTrajectoryVisualizer:
         attention_values: np.ndarray,
         metadata: Optional[Dict] = None,
         state_structures: Optional[Dict] = None,
-        state_attention_avg: Optional[np.ndarray] = None
+        state_attention_avg: Optional[np.ndarray] = None,
+        trajectory_frame_indices: Optional[np.ndarray] = None,
     ):
         """
         Add data for one timescale/lagtime.
@@ -178,7 +181,8 @@ class MDTrajectoryVisualizer:
             'n_frames': n_frames,
             'n_residues': attention_values.shape[1],
             'metadata': metadata or {},
-            'state_structures': state_structures or {}
+            'state_structures': state_structures or {},
+            'trajectory_frame_indices': trajectory_frame_indices,
         }
 
         self.timescales_data.append(timescale_data)
@@ -211,6 +215,20 @@ class MDTrajectoryVisualizer:
             'n_frames': n_frames,
             'summary': discovery_summary or {}
         }
+
+    def set_frame_coordinates(self, coordinates: np.ndarray, pdb_template: str):
+        """
+        Set per-frame protein coordinates for structure display.
+
+        Parameters
+        ----------
+        coordinates : np.ndarray, shape (n_frames, n_atoms, 3)
+            XYZ coordinates in Angstroms for each frame.
+        pdb_template : str
+            PDB text used as template (atom names, residues, etc.).
+        """
+        self.frame_coordinates = np.round(coordinates.astype(np.float32), 1)
+        self.pdb_template = pdb_template
 
     def set_protein_structure(
         self,
@@ -294,8 +312,13 @@ class MDTrajectoryVisualizer:
             'bounds': bounds,
             'config': self.config,
             'protein_structure': self.protein_structure,
-            'protein_source': self.protein_source
+            'protein_source': self.protein_source,
         }
+
+        # Add per-frame coordinate data if available
+        if self.frame_coordinates is not None:
+            export_data['frame_coordinates'] = self.frame_coordinates
+            export_data['pdb_template'] = self.pdb_template
 
         # Add prep data if available
         if self.prep_data is not None:
@@ -325,7 +348,7 @@ class MDTrajectoryVisualizer:
                     'representatives': sdata.get('representatives', [])[:max_representatives]
                 }
 
-            export_data['timescales'].append({
+            ts_export = {
                 'lagtime': ts_data['lagtime'],
                 'embeddings': ts_data['embeddings'],
                 'frame_indices': ts_data['frame_indices'],
@@ -336,8 +359,11 @@ class MDTrajectoryVisualizer:
                 'n_frames': ts_data['n_frames'],
                 'n_residues': ts_data['n_residues'],
                 'metadata': ts_data['metadata'],
-                'state_structures': trimmed_structures
-            })
+                'state_structures': trimmed_structures,
+            }
+            if ts_data.get('trajectory_frame_indices') is not None:
+                ts_export['trajectory_frame_indices'] = ts_data['trajectory_frame_indices']
+            export_data['timescales'].append(ts_export)
 
         return DataProcessor.prepare_json_data(export_data)
 
