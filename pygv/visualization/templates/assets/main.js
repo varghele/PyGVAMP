@@ -801,6 +801,17 @@ function initProteinViewer() {
     }
 }
 
+function setProteinViewerInfo(text) {
+    const el = document.getElementById('protein-viewer-info');
+    if (!el) return;
+    if (text) {
+        el.textContent = text;
+        el.style.display = 'block';
+    } else {
+        el.style.display = 'none';
+    }
+}
+
 function updateProteinViewer() {
     if (!proteinViewer) return;
 
@@ -838,11 +849,20 @@ function updateProteinViewer() {
                 proteinViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
             }
 
+            // Build info label
+            let info = `Frame ${state.selectedFrameIndex}`;
+            if (state.selectedPrepState !== null) info += ` · Prep C${state.selectedPrepState}`;
+            if (state.selectedVampState !== null) info += ` · VAMP S${state.selectedVampState}`;
+            setProteinViewerInfo(info);
+
             proteinViewer.zoomTo();
             proteinViewer.render();
             return;
         }
     }
+
+    // No per-frame structure shown — clear the info label
+    setProteinViewerInfo(null);
 
     // Priority 2: Selected VAMP state with attention coloring (no specific frame)
     if (state.selectedVampState !== null && state.showAttention) {

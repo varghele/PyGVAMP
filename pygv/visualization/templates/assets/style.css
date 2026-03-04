@@ -425,6 +425,21 @@ body {
     pointer-events: none;
 }
 
+.viewer-sublabel {
+    position: absolute;
+    top: 38px;
+    left: 10px;
+    background-color: rgba(0, 0, 0, 0.5);
+    color: #ccc;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    z-index: 10;
+    pointer-events: none;
+    display: none;
+}
+
 /* Tooltip */
 #tooltip {
     position: absolute;
