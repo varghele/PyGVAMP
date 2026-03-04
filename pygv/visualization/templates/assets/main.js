@@ -343,26 +343,42 @@ function updateAlluvialPlot() {
     // Clear previous
     container.innerHTML = '';
 
-    if (state.selectedVampState === null) {
-        container.innerHTML = '<div class="alluvial-placeholder">Click a point in the embeddings<br/>to see state transitions.</div>';
+    if (state.selectedPrepState === null) {
+        container.innerHTML = '<div class="alluvial-placeholder">Click a point in the embeddings<br/>to see prep → VAMP state mapping.</div>';
         return;
     }
 
     const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
-    const row = ts.transition_matrix[state.selectedVampState];
-    if (!row) return;
+    const prepLabels = hasPrep ? VISUALIZATION_DATA.prep.cluster_labels : null;
+    const vampAssignments = ts.state_assignments;
+
+    if (!prepLabels || !vampAssignments) return;
+
+    // Compute co-occurrence: for all frames in selected prep state,
+    // count how many fall into each VAMP state
+    const vampCounts = {};
+    let totalInPrep = 0;
+    const nFrames = Math.min(prepLabels.length, vampAssignments.length);
+    for (let i = 0; i < nFrames; i++) {
+        if (prepLabels[i] === state.selectedPrepState) {
+            const vs = vampAssignments[i];
+            vampCounts[vs] = (vampCounts[vs] || 0) + 1;
+            totalInPrep++;
+        }
+    }
+
+    if (totalInPrep === 0) {
+        container.innerHTML = '<div class="alluvial-placeholder">No frames in this prep state.</div>';
+        return;
+    }
 
     const stateColors = VISUALIZATION_DATA.config.colors.states;
 
-    // Build target data, filter negligible transitions
-    const targets = row.map((prob, i) => ({ state: i, prob: prob }))
+    // Build targets sorted by fraction
+    const targets = Object.entries(vampCounts)
+        .map(([vs, count]) => ({ state: parseInt(vs), prob: count / totalInPrep, count: count }))
         .filter(d => d.prob > 0.001)
         .sort((a, b) => b.prob - a.prob);
-
-    if (targets.length === 0) {
-        container.innerHTML = '<div class="alluvial-placeholder">No significant transitions.</div>';
-        return;
-    }
 
     const width = container.clientWidth;
     const height = container.clientHeight;
@@ -372,7 +388,7 @@ function updateAlluvialPlot() {
         .attr('width', width)
         .attr('height', height);
 
-    const margin = { top: 30, right: 90, bottom: 20, left: 20 };
+    const margin = { top: 30, right: 90, bottom: 20, left: 90 };
     const innerW = width - margin.left - margin.right;
     const innerH = height - margin.top - margin.bottom;
 
@@ -387,7 +403,7 @@ function updateAlluvialPlot() {
         .attr('class', 'alluvial-label')
         .style('font-size', '13px')
         .style('font-weight', '600')
-        .text(`Transitions from S${state.selectedVampState} (Lag ${ts.lagtime})`);
+        .text(`Prep C${state.selectedPrepState} → VAMP States (Lag ${ts.lagtime})`);
 
     // Layout
     const sourceX = 0;
@@ -396,24 +412,33 @@ function updateAlluvialPlot() {
     const targetW = 30;
     const gap = 4;
 
-    // Source node (full height)
+    // Source node (full height) — prep state color
     g.append('rect')
         .attr('class', 'alluvial-node')
         .attr('x', sourceX)
         .attr('y', 0)
         .attr('width', sourceW)
         .attr('height', innerH)
-        .attr('fill', stateColors[state.selectedVampState % stateColors.length]);
+        .attr('fill', stateColors[state.selectedPrepState % stateColors.length]);
 
     // Source label
     g.append('text')
         .attr('class', 'alluvial-label')
-        .attr('x', sourceX + sourceW / 2)
+        .attr('x', sourceX - 6)
         .attr('y', innerH / 2)
-        .attr('text-anchor', 'middle')
+        .attr('text-anchor', 'end')
         .attr('dominant-baseline', 'middle')
-        .style('font-size', '14px')
-        .text(`S${state.selectedVampState}`);
+        .style('font-size', '13px')
+        .text(`Prep C${state.selectedPrepState}`);
+
+    // Frame count below label
+    g.append('text')
+        .attr('class', 'alluvial-prob')
+        .attr('x', sourceX - 6)
+        .attr('y', innerH / 2 + 16)
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .text(`(${totalInPrep} frames)`);
 
     // Compute target positions
     const totalGap = gap * (targets.length - 1);
@@ -456,7 +481,7 @@ function updateAlluvialPlot() {
             .attr('fill', color)
             .on('mouseover', function(event) {
                 d3.select(this).attr('opacity', 0.8);
-                showTooltip(event, `S${state.selectedVampState} → S${t.state}<br/>P = ${t.prob.toFixed(3)}`);
+                showTooltip(event, `Prep C${state.selectedPrepState} → VAMP S${t.state}<br/>${(t.prob * 100).toFixed(1)}% (${t.count} frames)`);
             })
             .on('mouseout', function() {
                 d3.select(this).attr('opacity', null);
@@ -486,7 +511,7 @@ function updateAlluvialPlot() {
                 .attr('x', targetX + targetW + 6)
                 .attr('y', t.y + t.h / 2)
                 .attr('dominant-baseline', 'middle')
-                .text(`S${t.state}`);
+                .text(`VAMP S${t.state}`);
         }
 
         // Probability label
