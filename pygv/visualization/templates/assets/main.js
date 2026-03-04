@@ -204,6 +204,21 @@ function initEmbeddingPlot() {
 
     embeddingSvg.call(embeddingZoom);
 
+    // Click on background to deselect
+    embeddingSvg.on('click', function(event) {
+        // Only deselect if clicking the background, not a point
+        if (event.target.tagName === 'circle') return;
+        if (state.selectedFrameIndex === null && state.selectedPrepState === null) return;
+
+        state.selectedFrameIndex = null;
+        state.selectedPrepState = null;
+        state.selectedVampState = null;
+        embeddingG.selectAll('.embedding-point.selected')
+            .classed('selected', false).attr('r', 4);
+        updateAlluvialPlot();
+        updateProteinViewer();
+    });
+
     // Draw embedding points (drawn once, constant across timescales)
     drawEmbeddingPoints();
 
@@ -340,27 +355,35 @@ function updateAlluvialPlot() {
     const container = document.getElementById('alluvial-plot');
     if (!container) return;
 
-    // Clear previous
     container.innerHTML = '';
-
-    if (state.selectedPrepState === null) {
-        container.innerHTML = '<div class="alluvial-placeholder">Click a point in the embeddings<br/>to see prep → VAMP state mapping.</div>';
-        return;
-    }
 
     const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
     const prepLabels = hasPrep ? VISUALIZATION_DATA.prep.cluster_labels : null;
     const vampAssignments = ts.state_assignments;
 
-    if (!prepLabels || !vampAssignments) return;
+    if (!prepLabels || !vampAssignments) {
+        container.innerHTML = '<div class="alluvial-placeholder">No prep or VAMP data available.</div>';
+        return;
+    }
 
-    // Compute co-occurrence: for all frames in selected prep state,
-    // count how many fall into each VAMP state
+    if (state.selectedPrepState !== null) {
+        drawSinglePrepAlluvial(container, ts, prepLabels, vampAssignments);
+    } else {
+        drawFullAlluvial(container, ts, prepLabels, vampAssignments);
+    }
+}
+
+// Single prep state → VAMP states (when a point is clicked)
+function drawSinglePrepAlluvial(container, ts, prepLabels, vampAssignments) {
+    const stateColors = VISUALIZATION_DATA.config.colors.states;
+    const nFrames = Math.min(prepLabels.length, vampAssignments.length);
+    const prepState = state.selectedPrepState;
+
+    // Count VAMP states for this prep cluster
     const vampCounts = {};
     let totalInPrep = 0;
-    const nFrames = Math.min(prepLabels.length, vampAssignments.length);
     for (let i = 0; i < nFrames; i++) {
-        if (prepLabels[i] === state.selectedPrepState) {
+        if (prepLabels[i] === prepState) {
             const vs = vampAssignments[i];
             vampCounts[vs] = (vampCounts[vs] || 0) + 1;
             totalInPrep++;
@@ -372,9 +395,6 @@ function updateAlluvialPlot() {
         return;
     }
 
-    const stateColors = VISUALIZATION_DATA.config.colors.states;
-
-    // Build targets sorted by fraction
     const targets = Object.entries(vampCounts)
         .map(([vs, count]) => ({ state: parseInt(vs), prob: count / totalInPrep, count: count }))
         .filter(d => d.prob > 0.001)
@@ -388,7 +408,7 @@ function updateAlluvialPlot() {
         .attr('width', width)
         .attr('height', height);
 
-    const margin = { top: 30, right: 90, bottom: 20, left: 90 };
+    const margin = { top: 30, right: 90, bottom: 10, left: 90 };
     const innerW = width - margin.left - margin.right;
     const innerH = height - margin.top - margin.bottom;
 
@@ -403,25 +423,23 @@ function updateAlluvialPlot() {
         .attr('class', 'alluvial-label')
         .style('font-size', '13px')
         .style('font-weight', '600')
-        .text(`Prep C${state.selectedPrepState} → VAMP States (Lag ${ts.lagtime})`);
+        .text(`Prep C${prepState} → VAMP States (Lag ${ts.lagtime})`);
 
-    // Layout
     const sourceX = 0;
     const sourceW = 30;
     const targetX = innerW - 30;
     const targetW = 30;
     const gap = 4;
 
-    // Source node (full height) — prep state color
+    // Source node (full height)
     g.append('rect')
         .attr('class', 'alluvial-node')
         .attr('x', sourceX)
         .attr('y', 0)
         .attr('width', sourceW)
         .attr('height', innerH)
-        .attr('fill', stateColors[state.selectedPrepState % stateColors.length]);
+        .attr('fill', stateColors[prepState % stateColors.length]);
 
-    // Source label
     g.append('text')
         .attr('class', 'alluvial-label')
         .attr('x', sourceX - 6)
@@ -429,9 +447,8 @@ function updateAlluvialPlot() {
         .attr('text-anchor', 'end')
         .attr('dominant-baseline', 'middle')
         .style('font-size', '13px')
-        .text(`Prep C${state.selectedPrepState}`);
+        .text(`C${prepState}`);
 
-    // Frame count below label
     g.append('text')
         .attr('class', 'alluvial-prob')
         .attr('x', sourceX - 6)
@@ -449,31 +466,23 @@ function updateAlluvialPlot() {
         t.h = Math.max(8, t.prob * availableH);
         targetY += t.h + gap;
     });
-
-    // Scale if overflow
     if (targetY - gap > innerH) {
         const scale = innerH / (targetY - gap);
-        targets.forEach(t => {
-            t.y *= scale;
-            t.h *= scale;
-        });
+        targets.forEach(t => { t.y *= scale; t.h *= scale; });
     }
 
-    // Draw flows and target nodes
+    // Draw flows and targets
     targets.forEach(t => {
         const color = stateColors[t.state % stateColors.length];
 
-        // Flow path (cubic bezier)
         const x0 = sourceX + sourceW;
         const y0_top = (t.y / innerH) * innerH;
         const y0_bot = y0_top + t.h;
         const x1 = targetX;
-        const y1_top = t.y;
-        const y1_bot = t.y + t.h;
         const cx = (x0 + x1) / 2;
 
-        const path = `M${x0},${y0_top} C${cx},${y0_top} ${cx},${y1_top} ${x1},${y1_top}
-                       L${x1},${y1_bot} C${cx},${y1_bot} ${cx},${y0_bot} ${x0},${y0_bot} Z`;
+        const path = `M${x0},${y0_top} C${cx},${y0_top} ${cx},${t.y} ${x1},${t.y}
+                       L${x1},${t.y + t.h} C${cx},${t.y + t.h} ${cx},${y0_bot} ${x0},${y0_bot} Z`;
 
         g.append('path')
             .attr('class', 'alluvial-flow')
@@ -481,7 +490,7 @@ function updateAlluvialPlot() {
             .attr('fill', color)
             .on('mouseover', function(event) {
                 d3.select(this).attr('opacity', 0.8);
-                showTooltip(event, `Prep C${state.selectedPrepState} → VAMP S${t.state}<br/>${(t.prob * 100).toFixed(1)}% (${t.count} frames)`);
+                showTooltip(event, `Prep C${prepState} → VAMP S${t.state}<br/>${(t.prob * 100).toFixed(1)}% (${t.count} frames)`);
             })
             .on('mouseout', function() {
                 d3.select(this).attr('opacity', null);
@@ -491,7 +500,6 @@ function updateAlluvialPlot() {
                 onAlluvialTargetClick(t.state);
             });
 
-        // Target node
         g.append('rect')
             .attr('class', 'alluvial-node')
             .attr('x', targetX)
@@ -500,27 +508,208 @@ function updateAlluvialPlot() {
             .attr('height', t.h)
             .attr('fill', color)
             .style('cursor', 'pointer')
-            .on('click', function() {
-                onAlluvialTargetClick(t.state);
-            });
+            .on('click', function() { onAlluvialTargetClick(t.state); });
 
-        // Target label
         if (t.h > 14) {
             g.append('text')
                 .attr('class', 'alluvial-label')
                 .attr('x', targetX + targetW + 6)
                 .attr('y', t.y + t.h / 2)
                 .attr('dominant-baseline', 'middle')
-                .text(`VAMP S${t.state}`);
+                .text(`S${t.state}`);
         }
 
-        // Probability label
         g.append('text')
             .attr('class', 'alluvial-prob')
             .attr('x', targetX + targetW + 6)
             .attr('y', t.y + t.h / 2 + (t.h > 14 ? 14 : 0))
             .attr('dominant-baseline', 'middle')
             .text(`${(t.prob * 100).toFixed(1)}%`);
+    });
+}
+
+// Full alluvial: all prep states → all VAMP states (default view)
+function drawFullAlluvial(container, ts, prepLabels, vampAssignments) {
+    const stateColors = VISUALIZATION_DATA.config.colors.states;
+    const nFrames = Math.min(prepLabels.length, vampAssignments.length);
+    const nPrepStates = VISUALIZATION_DATA.prep.n_states;
+    const nVampStates = ts.n_states;
+
+    // Build co-occurrence matrix
+    const cooc = Array.from({ length: nPrepStates }, () => new Array(nVampStates).fill(0));
+    const prepCounts = new Array(nPrepStates).fill(0);
+    const vampCounts = new Array(nVampStates).fill(0);
+
+    for (let i = 0; i < nFrames; i++) {
+        const p = prepLabels[i];
+        const v = vampAssignments[i];
+        if (p >= 0 && p < nPrepStates && v >= 0 && v < nVampStates) {
+            cooc[p][v]++;
+            prepCounts[p]++;
+            vampCounts[v]++;
+        }
+    }
+
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    alluvialSvg = d3.select(container)
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height);
+
+    const margin = { top: 30, right: 90, bottom: 10, left: 90 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const g = alluvialSvg.append('g')
+        .attr('transform', `translate(${margin.left}, ${margin.top})`);
+
+    // Title
+    alluvialSvg.append('text')
+        .attr('x', width / 2)
+        .attr('y', 18)
+        .attr('text-anchor', 'middle')
+        .attr('class', 'alluvial-label')
+        .style('font-size', '13px')
+        .style('font-weight', '600')
+        .text(`Prep → VAMP States (Lag ${ts.lagtime})`);
+
+    const sourceX = 0;
+    const sourceW = 30;
+    const targetX = innerW - 30;
+    const targetW = 30;
+    const nodeGap = 6;
+
+    // Left column: prep nodes
+    const prepAvailH = innerH - nodeGap * (nPrepStates - 1);
+    const prepNodes = [];
+    let py = 0;
+    for (let p = 0; p < nPrepStates; p++) {
+        const h = Math.max(4, (prepCounts[p] / nFrames) * prepAvailH);
+        prepNodes.push({ state: p, y: py, h: h, count: prepCounts[p] });
+        py += h + nodeGap;
+    }
+    if (py - nodeGap > innerH) {
+        const scale = innerH / (py - nodeGap);
+        prepNodes.forEach(n => { n.y *= scale; n.h *= scale; });
+    }
+
+    // Right column: VAMP nodes
+    const vampAvailH = innerH - nodeGap * (nVampStates - 1);
+    const vampNodes = [];
+    let vy = 0;
+    for (let v = 0; v < nVampStates; v++) {
+        const h = Math.max(4, (vampCounts[v] / nFrames) * vampAvailH);
+        vampNodes.push({ state: v, y: vy, h: h, count: vampCounts[v] });
+        vy += h + nodeGap;
+    }
+    if (vy - nodeGap > innerH) {
+        const scale = innerH / (vy - nodeGap);
+        vampNodes.forEach(n => { n.y *= scale; n.h *= scale; });
+    }
+
+    // Flows
+    const prepUsed = new Array(nPrepStates).fill(0);
+    const vampUsed = new Array(nVampStates).fill(0);
+
+    const flows = [];
+    for (let p = 0; p < nPrepStates; p++) {
+        for (let v = 0; v < nVampStates; v++) {
+            if (cooc[p][v] > 0) {
+                flows.push({ prep: p, vamp: v, count: cooc[p][v] });
+            }
+        }
+    }
+    flows.sort((a, b) => b.count - a.count);
+
+    flows.forEach(f => {
+        const pn = prepNodes[f.prep];
+        const vn = vampNodes[f.vamp];
+
+        const srcH = (pn.count > 0) ? (f.count / pn.count) * pn.h : 0;
+        const tgtH = (vn.count > 0) ? (f.count / vn.count) * vn.h : 0;
+
+        const srcY = pn.y + prepUsed[f.prep];
+        const tgtY = vn.y + vampUsed[f.vamp];
+        prepUsed[f.prep] += srcH;
+        vampUsed[f.vamp] += tgtH;
+
+        const x0 = sourceX + sourceW;
+        const x1 = targetX;
+        const cx = (x0 + x1) / 2;
+
+        const path = `M${x0},${srcY} C${cx},${srcY} ${cx},${tgtY} ${x1},${tgtY}
+                       L${x1},${tgtY + tgtH} C${cx},${tgtY + tgtH} ${cx},${srcY + srcH} ${x0},${srcY + srcH} Z`;
+
+        const color = stateColors[f.vamp % stateColors.length];
+
+        g.append('path')
+            .attr('class', 'alluvial-flow')
+            .attr('d', path)
+            .attr('fill', color)
+            .attr('opacity', 0.5)
+            .on('mouseover', function(event) {
+                d3.select(this).attr('opacity', 0.85);
+                const pct = pn.count > 0 ? ((f.count / pn.count) * 100).toFixed(1) : '0.0';
+                showTooltip(event, `Prep C${f.prep} → VAMP S${f.vamp}<br/>${pct}% of C${f.prep} (${f.count} frames)`);
+            })
+            .on('mouseout', function() {
+                d3.select(this).attr('opacity', 0.5);
+                hideTooltip();
+            })
+            .on('click', function() {
+                onAlluvialTargetClick(f.vamp);
+            });
+    });
+
+    // Draw prep nodes
+    prepNodes.forEach(pn => {
+        const color = stateColors[pn.state % stateColors.length];
+
+        g.append('rect')
+            .attr('class', 'alluvial-node')
+            .attr('x', sourceX)
+            .attr('y', pn.y)
+            .attr('width', sourceW)
+            .attr('height', pn.h)
+            .attr('fill', color);
+
+        if (pn.h > 12) {
+            g.append('text')
+                .attr('class', 'alluvial-label')
+                .attr('x', sourceX - 6)
+                .attr('y', pn.y + pn.h / 2)
+                .attr('text-anchor', 'end')
+                .attr('dominant-baseline', 'middle')
+                .style('font-size', '11px')
+                .text(`C${pn.state}`);
+        }
+    });
+
+    // Draw VAMP nodes
+    vampNodes.forEach(vn => {
+        const color = stateColors[vn.state % stateColors.length];
+
+        g.append('rect')
+            .attr('class', 'alluvial-node')
+            .attr('x', targetX)
+            .attr('y', vn.y)
+            .attr('width', targetW)
+            .attr('height', vn.h)
+            .attr('fill', color)
+            .style('cursor', 'pointer')
+            .on('click', function() { onAlluvialTargetClick(vn.state); });
+
+        if (vn.h > 12) {
+            g.append('text')
+                .attr('class', 'alluvial-label')
+                .attr('x', targetX + targetW + 6)
+                .attr('y', vn.y + vn.h / 2)
+                .attr('dominant-baseline', 'middle')
+                .style('font-size', '11px')
+                .text(`S${vn.state}`);
+        }
     });
 }
 
