@@ -129,6 +129,74 @@ def aggregate_edge_attention_to_residue(edge_attentions: List,
     return result
 
 
+def _superpose_pdb_onto_reference(ref_pdb_str: str, mobile_pdb_str: str) -> str:
+    """
+    Superpose a mobile PDB structure onto a reference, preserving B-factors.
+
+    Uses MDTraj for optimal rigid-body alignment (Kabsch algorithm), then
+    writes the aligned coordinates back into the original PDB text so that
+    B-factor values (used for attention coloring) are preserved exactly.
+
+    Parameters
+    ----------
+    ref_pdb_str : str
+        PDB file contents of the reference (average) structure.
+    mobile_pdb_str : str
+        PDB file contents of the structure to align.
+
+    Returns
+    -------
+    str
+        PDB text with coordinates from the superposed structure and
+        all other fields (including B-factors) unchanged.
+    """
+    try:
+        import mdtraj as md
+        import tempfile
+    except ImportError:
+        return mobile_pdb_str  # can't align without mdtraj
+
+    try:
+        # Write to temp files for MDTraj loading
+        with tempfile.NamedTemporaryFile(
+                suffix='.pdb', mode='w', delete=False) as f:
+            f.write(ref_pdb_str)
+            ref_path = f.name
+        with tempfile.NamedTemporaryFile(
+                suffix='.pdb', mode='w', delete=False) as f:
+            f.write(mobile_pdb_str)
+            mob_path = f.name
+
+        ref = md.load(ref_path)
+        mob = md.load(mob_path)
+        os.unlink(ref_path)
+        os.unlink(mob_path)
+
+        # Superpose mobile onto reference
+        mob.superpose(ref)
+
+        # Patch aligned coordinates back into the original PDB text,
+        # preserving B-factors, occupancy, and all other columns.
+        aligned_xyz = mob.xyz[0] * 10.0  # nm → Å
+        atom_idx = 0
+        new_lines = []
+        for line in mobile_pdb_str.split('\n'):
+            if line.startswith(('ATOM', 'HETATM')) and atom_idx < len(aligned_xyz):
+                x, y, z = aligned_xyz[atom_idx]
+                # PDB columns 31-54 hold x, y, z (each 8.3f)
+                line = (line[:30]
+                        + f'{x:8.3f}{y:8.3f}{z:8.3f}'
+                        + line[54:])
+                atom_idx += 1
+            new_lines.append(line)
+        return '\n'.join(new_lines)
+
+    except Exception as e:
+        import warnings
+        warnings.warn(f"Could not superpose PDB structure: {e}")
+        return mobile_pdb_str
+
+
 def generate_interactive_report(
         probs: np.ndarray,
         embeddings: np.ndarray,
@@ -602,17 +670,27 @@ def generate_merged_interactive_report(
             avg_pdb = os.path.join(
                 att_dir,
                 f'{protein_name}_state_{state_num}_average_attention.pdb')
-            rep_pdbs = sorted(glob.glob(os.path.join(
+            rep_pdbs = glob.glob(os.path.join(
                 att_dir,
-                f'{protein_name}_state_{state_num}_rank_*_attention.pdb')))
+                f'{protein_name}_state_{state_num}_rank_*_attention.pdb'))
+            # Sort by rank number (numeric) to get closest-to-average first
+            def _rank_key(p):
+                m = re.search(r'rank_(\d+)_', os.path.basename(p))
+                return int(m.group(1)) if m else 999
+            rep_pdbs.sort(key=_rank_key)
 
             entry = {'average': None, 'representatives': []}
             if os.path.isfile(avg_pdb):
                 with open(avg_pdb) as f:
                     entry['average'] = f.read()
-            for pdb_path in rep_pdbs[:10]:
+            for pdb_path in rep_pdbs[:3]:
                 with open(pdb_path) as f:
-                    entry['representatives'].append(f.read())
+                    rep_str = f.read()
+                # Superpose representative onto the average for proper overlay
+                if entry['average']:
+                    rep_str = _superpose_pdb_onto_reference(
+                        entry['average'], rep_str)
+                entry['representatives'].append(rep_str)
             state_structures[state_idx] = entry
 
         # Load diagnostic data if available
