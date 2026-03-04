@@ -896,39 +896,60 @@ function updateAttentionViewer() {
     const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
     const representation = VISUALIZATION_DATA.config.protein.representation;
 
-    if (state.selectedAttentionState !== null && ts.state_attention_avg) {
-        // Lazily create viewer only when a state is actually selected
+    if (state.selectedAttentionState !== null) {
         if (!ensureAttentionViewer()) return;
-        const attnAvg = ts.state_attention_avg[state.selectedAttentionState];
-        if (attnAvg) {
-            attentionViewer.removeAllModels();
-            if (VISUALIZATION_DATA.protein_structure) {
-                attentionViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
-            }
 
-            const colorScale = d3.scaleLinear()
-                .domain([0, 1])
-                .range([
-                    VISUALIZATION_DATA.config.colors.attention.low,
-                    VISUALIZATION_DATA.config.colors.attention.high
-                ]);
+        attentionViewer.removeAllModels();
 
-            attentionViewer.setStyle({}, {});
-            attnAvg.forEach((value, residueIndex) => {
-                const color = colorScale(value);
-                attentionViewer.setStyle(
-                    { resi: residueIndex + 1 },
-                    { [representation]: { color: color } }
-                );
+        const stateData = ts.state_structures
+            ? ts.state_structures[state.selectedAttentionState] : null;
+
+        if (stateData && stateData.average) {
+            // Use the pipeline's pre-computed average structure (attention in B-factor)
+            attentionViewer.addModel(stateData.average, 'pdb');
+            attentionViewer.setStyle({model: 0}, {
+                [representation]: {
+                    colorscheme: {prop: 'b', gradient: 'rwb', min: 0, max: 90}
+                }
             });
 
-            attentionViewer.zoomTo();
-            attentionViewer.render();
-            return;
+            // Overlay representative structures as transparent ghosts
+            if (stateData.representatives) {
+                stateData.representatives.forEach((pdb, i) => {
+                    attentionViewer.addModel(pdb, 'pdb');
+                    attentionViewer.setStyle({model: i + 1}, {
+                        [representation]: {opacity: 0.25, color: 'grey'}
+                    });
+                });
+            }
+        } else if (VISUALIZATION_DATA.protein_structure && ts.state_attention_avg) {
+            // Fallback: color global structure by state_attention_avg
+            attentionViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
+            const attnAvg = ts.state_attention_avg[state.selectedAttentionState];
+            if (attnAvg) {
+                const colorScale = d3.scaleLinear()
+                    .domain([0, 1])
+                    .range([
+                        VISUALIZATION_DATA.config.colors.attention.low,
+                        VISUALIZATION_DATA.config.colors.attention.high
+                    ]);
+                attentionViewer.setStyle({}, {});
+                attnAvg.forEach((value, residueIndex) => {
+                    const color = colorScale(value);
+                    attentionViewer.setStyle(
+                        { resi: residueIndex + 1 },
+                        { [representation]: { color: color } }
+                    );
+                });
+            }
         }
+
+        attentionViewer.zoomTo();
+        attentionViewer.render();
+        return;
     }
 
-    // Default: spectrum coloring (only if viewer already exists)
+    // No state selected: spectrum coloring (only if viewer already exists)
     if (!attentionViewer) return;
     attentionViewer.removeAllModels();
     if (VISUALIZATION_DATA.protein_structure) {
