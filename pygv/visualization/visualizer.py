@@ -62,6 +62,7 @@ class MDTrajectoryVisualizer:
                 - 'color_scheme': 'attention' or 'structure' (default: 'attention')
         """
         self.timescales_data = []
+        self.prep_data = None
         self.protein_structure = None
         self.protein_source = None
 
@@ -110,7 +111,8 @@ class MDTrajectoryVisualizer:
         transition_matrix: np.ndarray,
         attention_values: np.ndarray,
         metadata: Optional[Dict] = None,
-        state_structures: Optional[Dict] = None
+        state_structures: Optional[Dict] = None,
+        state_attention_avg: Optional[np.ndarray] = None
     ):
         """
         Add data for one timescale/lagtime.
@@ -156,6 +158,12 @@ class MDTrajectoryVisualizer:
             raise ValueError(f"State assignments contain state {max_state} but transition matrix "
                            f"only has {n_states} states")
 
+        # Compute or validate per-state average attention
+        if state_attention_avg is None:
+            state_attention_avg = DataProcessor.compute_state_attention_avg(
+                attention_normalized, state_assignments
+            )
+
         # Store data
         timescale_data = {
             'lagtime': int(lagtime),
@@ -165,6 +173,7 @@ class MDTrajectoryVisualizer:
             'transition_matrix': transition_matrix,
             'attention_values': attention_values,
             'attention_normalized': attention_normalized,
+            'state_attention_avg': state_attention_avg,
             'n_states': n_states,
             'n_frames': n_frames,
             'n_residues': attention_values.shape[1],
@@ -176,6 +185,32 @@ class MDTrajectoryVisualizer:
 
         # Sort by lagtime
         self.timescales_data.sort(key=lambda x: x['lagtime'])
+
+    def set_prep_data(self, embeddings_2d: np.ndarray, cluster_labels: np.ndarray,
+                      discovery_summary: Optional[Dict] = None):
+        """
+        Set preparation-phase Graph2Vec embeddings for the 2D scatter plot.
+
+        Parameters
+        ----------
+        embeddings_2d : np.ndarray, shape (n_frames, 2)
+            2D projection (t-SNE or UMAP) of Graph2Vec embeddings.
+        cluster_labels : np.ndarray, shape (n_frames,)
+            State discovery cluster assignments.
+        discovery_summary : dict, optional
+            Contents of discovery_summary.json for metadata display.
+        """
+        embeddings_2d = DataProcessor.validate_prep_embeddings(embeddings_2d)
+        n_frames = len(embeddings_2d)
+        cluster_labels = DataProcessor.validate_cluster_labels(cluster_labels, n_frames)
+
+        self.prep_data = {
+            'embeddings': embeddings_2d,
+            'cluster_labels': cluster_labels,
+            'n_states': int(np.max(cluster_labels)) + 1,
+            'n_frames': n_frames,
+            'summary': discovery_summary or {}
+        }
 
     def set_protein_structure(
         self,
@@ -249,7 +284,7 @@ class MDTrajectoryVisualizer:
         if not self.timescales_data:
             raise ValueError("No timescale data added. Use add_timescale() first.")
 
-        # Compute global bounds for consistent scaling
+        # Compute global bounds for consistent scaling (timescale embeddings)
         all_embeddings = [ts['embeddings'] for ts in self.timescales_data]
         bounds = DataProcessor.compute_embedding_bounds(all_embeddings)
 
@@ -262,21 +297,46 @@ class MDTrajectoryVisualizer:
             'protein_source': self.protein_source
         }
 
+        # Add prep data if available
+        if self.prep_data is not None:
+            prep_emb = self.prep_data['embeddings']
+            export_data['prep'] = {
+                'embeddings': prep_emb,
+                'cluster_labels': self.prep_data['cluster_labels'],
+                'n_states': self.prep_data['n_states'],
+                'n_frames': self.prep_data['n_frames'],
+                'source': self.prep_data['summary'].get('chosen_source', 'unknown')
+            }
+            export_data['prep_bounds'] = {
+                'min_x': float(np.min(prep_emb[:, 0])),
+                'max_x': float(np.max(prep_emb[:, 0])),
+                'min_y': float(np.min(prep_emb[:, 1])),
+                'max_y': float(np.max(prep_emb[:, 1]))
+            }
+
         # Add each timescale
+        max_representatives = 3  # Limit PDB representatives to control HTML size
         for ts_data in self.timescales_data:
+            # Trim state_structures to cap representative count
+            trimmed_structures = {}
+            for sid, sdata in ts_data['state_structures'].items():
+                trimmed_structures[sid] = {
+                    'average': sdata.get('average'),
+                    'representatives': sdata.get('representatives', [])[:max_representatives]
+                }
+
             export_data['timescales'].append({
                 'lagtime': ts_data['lagtime'],
                 'embeddings': ts_data['embeddings'],
                 'frame_indices': ts_data['frame_indices'],
                 'state_assignments': ts_data['state_assignments'],
                 'transition_matrix': ts_data['transition_matrix'],
-                'attention_values': ts_data['attention_values'],
-                'attention_normalized': ts_data['attention_normalized'],
+                'state_attention_avg': ts_data['state_attention_avg'],
                 'n_states': ts_data['n_states'],
                 'n_frames': ts_data['n_frames'],
                 'n_residues': ts_data['n_residues'],
                 'metadata': ts_data['metadata'],
-                'state_structures': ts_data['state_structures']
+                'state_structures': trimmed_structures
             })
 
         return DataProcessor.prepare_json_data(export_data)

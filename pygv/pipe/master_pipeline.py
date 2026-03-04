@@ -574,8 +574,8 @@ class PipelineOrchestrator:
             print("No trained models found. Run training first.")
             analysis_results = {}
 
-        # Phase 3b: Automatic retraining
-        if analysis_results and dataset_path:
+        # Phase 3b: Automatic retraining (skip when only running analysis)
+        if analysis_results and dataset_path and not only_analysis:
             self._run_retrain_loop(dirs, dataset_path, trained_models, analysis_results)
 
         # Save summary

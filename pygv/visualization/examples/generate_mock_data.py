@@ -181,6 +181,43 @@ def generate_mock_pdb(n_residues=100):
     return "\n".join(pdb_lines)
 
 
+def generate_mock_prep_data(n_frames, n_clusters=3, seed=100):
+    """
+    Generate mock preparation-phase Graph2Vec embeddings and cluster labels.
+
+    Parameters
+    ----------
+    n_frames : int
+        Number of frames
+    n_clusters : int
+        Number of state discovery clusters
+    seed : int
+        Random seed
+
+    Returns
+    -------
+    embeddings_2d : np.ndarray
+        Mock 2D embeddings (n_frames, 2)
+    cluster_labels : np.ndarray
+        Cluster assignments (n_frames,)
+    """
+    np.random.seed(seed)
+
+    angles = np.linspace(0, 2 * np.pi, n_clusters, endpoint=False)
+    radius = 5.0
+    centers = np.array([
+        [radius * np.cos(a), radius * np.sin(a)]
+        for a in angles
+    ])
+
+    cluster_labels = np.random.randint(0, n_clusters, n_frames)
+    embeddings_2d = np.zeros((n_frames, 2), dtype=np.float32)
+    for i, cl in enumerate(cluster_labels):
+        embeddings_2d[i] = centers[cl] + np.random.randn(2) * 0.8
+
+    return embeddings_2d, cluster_labels.astype(np.int32)
+
+
 def main():
     """Main function to generate mock data and create visualization."""
     print("=" * 60)
@@ -192,9 +229,16 @@ def main():
     lagtimes = [1, 5, 10]
     n_states = 5
     base_frames = 50
+    n_prep_clusters = 3
 
     # Create visualizer
     viz = MDTrajectoryVisualizer()
+
+    # Generate and set prep data
+    print(f"\nGenerating prep data ({n_prep_clusters} clusters, {base_frames} frames)...")
+    prep_emb, prep_labels = generate_mock_prep_data(base_frames, n_prep_clusters)
+    viz.set_prep_data(prep_emb, prep_labels, {'chosen_source': 'tsne_2'})
+    print(f"  Prep data set: {len(prep_emb)} frames, {n_prep_clusters} clusters")
 
     print(f"\nGenerating mock data for {len(lagtimes)} timescales...")
 

@@ -486,6 +486,37 @@ def generate_merged_interactive_report(
         return None
 
     viz = MDTrajectoryVisualizer()
+
+    # --- Load preparation-phase data (Graph2Vec embeddings) ---
+    prep_dir = os.path.join(experiment_dir, 'preparation')
+    if os.path.isdir(prep_dir):
+        prep_runs = sorted(glob.glob(os.path.join(prep_dir, 'prep_*', 'state_discovery')))
+        if prep_runs:
+            sd_dir = prep_runs[-1]
+            summary_path = os.path.join(sd_dir, 'discovery_summary.json')
+            labels_path = os.path.join(sd_dir, 'cluster_labels.npy')
+
+            if os.path.isfile(summary_path) and os.path.isfile(labels_path):
+                try:
+                    with open(summary_path) as f:
+                        discovery_summary = json.load(f)
+
+                    chosen_source = discovery_summary.get('chosen_source', 'tsne_2')
+                    emb_path = os.path.join(sd_dir, f'{chosen_source}_embeddings.npy')
+                    if not os.path.isfile(emb_path):
+                        emb_path = os.path.join(sd_dir, 'tsne_2_embeddings.npy')
+
+                    if os.path.isfile(emb_path):
+                        prep_embeddings = np.load(emb_path)
+                        prep_labels = np.load(labels_path)
+                        viz.set_prep_data(prep_embeddings, prep_labels, discovery_summary)
+                        print(f"  Loaded prep data: {len(prep_embeddings)} frames, "
+                              f"{int(np.max(prep_labels)) + 1} clusters, source={chosen_source}")
+                    else:
+                        print(f"  Prep embeddings file not found, skipping prep data.")
+                except Exception as e:
+                    print(f"  Warning: failed to load prep data: {e}")
+
     timescales_added = 0
 
     for lag_time, n_states, subdir in subdirs:

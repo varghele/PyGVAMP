@@ -4,71 +4,82 @@
 // Global state
 const state = {
     currentTimescaleIndex: 0,
-    selectedFrameIndex: null,
-    selectedState: null,
-    hoveredFrameIndex: null,
+    selectedFrameIndex: null,    // index into prep/timescale embeddings
+    selectedPrepState: null,     // prep cluster label of selected frame
+    selectedVampState: null,     // VAMP state of selected frame (on current timescale)
+    selectedAttentionState: null,// state shown in attention viewer
     showAttention: true,
-    camera: {
-        rotation: true,
-        rotationSpeed: 0.5
-    },
     protein: {
-        representation: 'cartoon',
-        colorScheme: 'attention'
+        representation: 'cartoon'
     }
 };
 
-// Three.js scene components
-let embeddingScene, embeddingCamera, embeddingRenderer, embeddingControls;
-let pointClouds = [];
-let selectedMarker = null;
+// D3.js embedding plot
+let embeddingSvg, embeddingG, xScale, yScale, embeddingZoom;
+const embeddingMargin = { top: 20, right: 20, bottom: 40, left: 50 };
 
-// 3Dmol.js viewer
-let proteinViewer;
+// D3.js alluvial
+let alluvialSvg;
 
 // D3.js matrix
 let matrixSvg;
 
-// D3.js state transitions
-let transitionsSvg;
+// 3Dmol.js viewers
+let proteinViewer, attentionViewer;
+
+// Determine data source for 2D scatter
+const hasPrep = !!(VISUALIZATION_DATA.prep && VISUALIZATION_DATA.prep.embeddings);
 
 // Initialize visualization
 function init() {
     console.log('Initializing MD Trajectory Visualization...');
     console.log(`Loaded ${VISUALIZATION_DATA.timescales.length} timescales`);
-
-    // Apply theme
-    if (VISUALIZATION_DATA.config.theme === 'light') {
-        document.body.classList.add('light-theme');
+    if (hasPrep) {
+        console.log(`Prep data: ${VISUALIZATION_DATA.prep.n_frames} frames, ${VISUALIZATION_DATA.prep.n_states} clusters`);
     }
 
-    // Initialize all components
-    initTimescaleControls();
-    initEmbeddingViewer();
-    initProteinViewer();
-    initTransitionMatrix();
-    initStateDetails();
-    initDiagnosticsPanel();
-    initEventListeners();
-
-    // Load first timescale
-    loadTimescale(0);
-
-    // Hide loading screen
     const loading = document.getElementById('loading');
-    if (loading) {
-        loading.style.display = 'none';
+
+    try {
+        // Apply theme
+        if (VISUALIZATION_DATA.config.theme === 'light') {
+            document.body.classList.add('light-theme');
+        }
+
+        // Initialize all components
+        initTimescaleControls();
+        initEmbeddingPlot();
+        initAlluvialPlot();
+        initProteinViewer();
+        initTransitionMatrix();
+        initDiagnosticsPanel();
+        initEventListeners();
+
+        // Load first timescale
+        loadTimescale(0);
+
+        // Hide loading screen on success
+        if (loading) loading.style.display = 'none';
+        console.log('Initialization complete');
+    } catch (e) {
+        console.error('Initialization error:', e);
+        // Replace loading spinner with error message
+        if (loading) {
+            loading.innerHTML = `
+                <p style="color: #ff6b6b; font-weight: bold;">Initialization Error</p>
+                <p style="color: #ccc; font-size: 12px; margin-top: 8px; white-space: pre-wrap; text-align: left; max-width: 600px;">${e.message}\n\n${e.stack || ''}</p>
+            `;
+        }
     }
-
-    // Start animation loop
-    animate();
-
-    console.log('Initialization complete');
 }
 
-// Initialize timescale controls
+// =============================================================================
+// Timescale controls (sidebar buttons)
+// =============================================================================
+
 function initTimescaleControls() {
     const container = document.getElementById('timescale-list');
+    if (!container) return;
     container.innerHTML = '';
 
     VISUALIZATION_DATA.timescales.forEach((ts, index) => {
@@ -76,12 +87,15 @@ function initTimescaleControls() {
         btn.className = 'timescale-btn';
         if (index === 0) btn.classList.add('active');
 
-        btn.innerHTML = `
-            <div>
-                <div class="timescale-label">Lagtime ${ts.lagtime}</div>
-                <div class="timescale-details">${ts.n_frames} frames, ${ts.n_states} states</div>
-            </div>
-        `;
+        const label = document.createElement('span');
+        label.className = 'timescale-label';
+        label.textContent = `Lag ${ts.lagtime}`;
+        btn.appendChild(label);
+
+        const details = document.createElement('span');
+        details.className = 'timescale-details';
+        details.textContent = `${ts.n_frames} frames, ${ts.n_states} states`;
+        btn.appendChild(details);
 
         btn.addEventListener('click', () => {
             document.querySelectorAll('.timescale-btn').forEach(b => b.classList.remove('active'));
@@ -93,89 +107,632 @@ function initTimescaleControls() {
     });
 }
 
-// Initialize Three.js embedding viewer
-function initEmbeddingViewer() {
-    const container = document.getElementById('embedding-viewer');
+// =============================================================================
+// Embedding scatter plot (uses prep data if available, else first timescale)
+// =============================================================================
+
+function getEmbeddingData() {
+    if (hasPrep) {
+        return {
+            embeddings: VISUALIZATION_DATA.prep.embeddings,
+            labels: VISUALIZATION_DATA.prep.cluster_labels,
+            bounds: VISUALIZATION_DATA.prep_bounds,
+            n_frames: VISUALIZATION_DATA.prep.n_frames
+        };
+    }
+    // Fallback: use first timescale embeddings
+    const ts = VISUALIZATION_DATA.timescales[0];
+    return {
+        embeddings: ts.embeddings,
+        labels: ts.state_assignments,
+        bounds: VISUALIZATION_DATA.bounds,
+        n_frames: ts.n_frames
+    };
+}
+
+function initEmbeddingPlot() {
+    const container = document.getElementById('embedding-plot');
+    if (!container) return;
+
     const width = container.clientWidth;
     const height = container.clientHeight;
+    const embData = getEmbeddingData();
+    const bounds = embData.bounds;
 
-    // Scene
-    embeddingScene = new THREE.Scene();
-    embeddingScene.background = new THREE.Color(
-        VISUALIZATION_DATA.config.theme === 'dark' ? 0x1a1a1a : 0xffffff
-    );
+    // Add padding to bounds
+    const padX = (bounds.max_x - bounds.min_x) * 0.05;
+    const padY = (bounds.max_y - bounds.min_y) * 0.05;
 
-    // Camera
-    embeddingCamera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
-    embeddingCamera.position.set(0, 0, 15);
+    // Scales
+    xScale = d3.scaleLinear()
+        .domain([bounds.min_x - padX, bounds.max_x + padX])
+        .range([embeddingMargin.left, width - embeddingMargin.right]);
 
-    // Renderer
-    embeddingRenderer = new THREE.WebGLRenderer({ antialias: true });
-    embeddingRenderer.setSize(width, height);
-    embeddingRenderer.setPixelRatio(window.devicePixelRatio);
-    container.appendChild(embeddingRenderer.domElement);
+    yScale = d3.scaleLinear()
+        .domain([bounds.min_y - padY, bounds.max_y + padY])
+        .range([height - embeddingMargin.bottom, embeddingMargin.top]);
 
-    // Controls
-    embeddingControls = new THREE.OrbitControls(embeddingCamera, embeddingRenderer.domElement);
-    embeddingControls.enableDamping = true;
-    embeddingControls.dampingFactor = 0.05;
+    // SVG
+    embeddingSvg = d3.select('#embedding-plot')
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height);
 
-    // Lights
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-    embeddingScene.add(ambientLight);
+    // Clip path for points
+    embeddingSvg.append('defs').append('clipPath')
+        .attr('id', 'plot-clip')
+        .append('rect')
+        .attr('x', embeddingMargin.left)
+        .attr('y', embeddingMargin.top)
+        .attr('width', width - embeddingMargin.left - embeddingMargin.right)
+        .attr('height', height - embeddingMargin.top - embeddingMargin.bottom);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.4);
-    directionalLight.position.set(10, 10, 10);
-    embeddingScene.add(directionalLight);
+    // Gridlines
+    embeddingSvg.append('g')
+        .attr('class', 'grid x-grid')
+        .attr('transform', `translate(0,${height - embeddingMargin.bottom})`)
+        .call(d3.axisBottom(xScale).ticks(8)
+            .tickSize(-(height - embeddingMargin.top - embeddingMargin.bottom))
+            .tickFormat(''));
 
-    // Grid helper
-    const gridSize = 20;
-    const gridDivisions = 20;
-    const gridColor = VISUALIZATION_DATA.config.theme === 'dark' ? 0x444444 : 0xcccccc;
-    const grid = new THREE.GridHelper(gridSize, gridDivisions, gridColor, gridColor);
-    embeddingScene.add(grid);
+    embeddingSvg.append('g')
+        .attr('class', 'grid y-grid')
+        .attr('transform', `translate(${embeddingMargin.left},0)`)
+        .call(d3.axisLeft(yScale).ticks(8)
+            .tickSize(-(width - embeddingMargin.left - embeddingMargin.right))
+            .tickFormat(''));
 
-    // Axes helper
-    const axesHelper = new THREE.AxesHelper(5);
-    embeddingScene.add(axesHelper);
+    // Axes
+    embeddingSvg.append('g')
+        .attr('class', 'x-axis')
+        .attr('transform', `translate(0,${height - embeddingMargin.bottom})`)
+        .call(d3.axisBottom(xScale).ticks(8));
 
-    // Raycaster for picking
-    window.raycaster = new THREE.Raycaster();
-    window.mouse = new THREE.Vector2();
+    embeddingSvg.append('g')
+        .attr('class', 'y-axis')
+        .attr('transform', `translate(${embeddingMargin.left},0)`)
+        .call(d3.axisLeft(yScale).ticks(8));
 
-    // Mouse events
-    embeddingRenderer.domElement.addEventListener('mousemove', onEmbeddingMouseMove);
-    embeddingRenderer.domElement.addEventListener('click', onEmbeddingClick);
+    // Points group (clipped)
+    embeddingG = embeddingSvg.append('g')
+        .attr('clip-path', 'url(#plot-clip)');
+
+    // Zoom behavior
+    embeddingZoom = d3.zoom()
+        .scaleExtent([0.5, 20])
+        .on('zoom', onEmbeddingZoom);
+
+    embeddingSvg.call(embeddingZoom);
+
+    // Draw embedding points (drawn once, constant across timescales)
+    drawEmbeddingPoints();
 
     // Resize handler
     window.addEventListener('resize', onWindowResize);
 }
 
-// Initialize 3Dmol.js protein viewer
+function drawEmbeddingPoints() {
+    if (!embeddingG) return;
+
+    const stateColors = VISUALIZATION_DATA.config.colors.states;
+    const embData = getEmbeddingData();
+
+    // Build data array
+    const data = embData.embeddings.map((point, i) => ({
+        x: point[0],
+        y: point[1],
+        index: i,
+        clusterLabel: embData.labels[i]
+    }));
+
+    // Draw points
+    embeddingG.selectAll('.embedding-point')
+        .data(data, d => d.index)
+        .enter()
+        .append('circle')
+        .attr('class', 'embedding-point')
+        .attr('r', 4)
+        .attr('cx', d => xScale(d.x))
+        .attr('cy', d => yScale(d.y))
+        .attr('fill', d => stateColors[d.clusterLabel % stateColors.length])
+        .on('mouseover', function(event, d) {
+            if (!d3.select(this).classed('selected')) {
+                d3.select(this).attr('r', 6);
+            }
+            // Look up VAMP state for current timescale
+            const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+            const vampState = (d.index < ts.state_assignments.length)
+                ? ts.state_assignments[d.index] : '?';
+            showTooltip(event, `
+                Frame: ${d.index}<br/>
+                Prep State: ${d.clusterLabel}<br/>
+                VAMP State: ${vampState}<br/>
+                X: ${d.x.toFixed(3)}<br/>
+                Y: ${d.y.toFixed(3)}
+            `);
+        })
+        .on('mousemove', function(event) {
+            const tooltip = document.getElementById('tooltip');
+            if (tooltip) {
+                tooltip.style.left = (event.pageX + 10) + 'px';
+                tooltip.style.top = (event.pageY + 10) + 'px';
+            }
+        })
+        .on('mouseout', function() {
+            if (!d3.select(this).classed('selected')) {
+                d3.select(this).attr('r', 4);
+            }
+            hideTooltip();
+        })
+        .on('click', function(event, d) {
+            onFrameClick(d, this);
+        });
+}
+
+function onFrameClick(d, element) {
+    // Deselect previous
+    embeddingG.selectAll('.embedding-point.selected')
+        .classed('selected', false)
+        .attr('r', 4);
+
+    // Select this point
+    d3.select(element).classed('selected', true).attr('r', 6);
+
+    state.selectedFrameIndex = d.index;
+    state.selectedPrepState = d.clusterLabel;
+
+    // Look up VAMP state for current timescale
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    state.selectedVampState = (d.index < ts.state_assignments.length)
+        ? ts.state_assignments[d.index] : null;
+
+    updateAlluvialPlot();
+    updateProteinViewer();
+
+    console.log(`Selected frame ${d.index}: prep=${d.clusterLabel}, vamp=${state.selectedVampState}`);
+}
+
+// Zoom handler
+function onEmbeddingZoom(event) {
+    const transform = event.transform;
+    const newXScale = transform.rescaleX(xScale);
+    const newYScale = transform.rescaleY(yScale);
+
+    const container = document.getElementById('embedding-plot');
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    // Update axes
+    embeddingSvg.select('.x-axis')
+        .call(d3.axisBottom(newXScale).ticks(8));
+    embeddingSvg.select('.y-axis')
+        .call(d3.axisLeft(newYScale).ticks(8));
+
+    // Update gridlines
+    embeddingSvg.select('.x-grid')
+        .call(d3.axisBottom(newXScale).ticks(8)
+            .tickSize(-(height - embeddingMargin.top - embeddingMargin.bottom))
+            .tickFormat(''));
+    embeddingSvg.select('.y-grid')
+        .call(d3.axisLeft(newYScale).ticks(8)
+            .tickSize(-(width - embeddingMargin.left - embeddingMargin.right))
+            .tickFormat(''));
+
+    // Update points
+    embeddingG.selectAll('.embedding-point')
+        .attr('cx', d => newXScale(d.x))
+        .attr('cy', d => newYScale(d.y));
+}
+
+// =============================================================================
+// Alluvial diagram
+// =============================================================================
+
+function initAlluvialPlot() {
+    const container = document.getElementById('alluvial-plot');
+    if (!container) return;
+
+    // Show placeholder
+    container.innerHTML = '<div class="alluvial-placeholder">Click a point in the embeddings<br/>to see state transitions.</div>';
+}
+
+function updateAlluvialPlot() {
+    const container = document.getElementById('alluvial-plot');
+    if (!container) return;
+
+    // Clear previous
+    container.innerHTML = '';
+
+    if (state.selectedVampState === null) {
+        container.innerHTML = '<div class="alluvial-placeholder">Click a point in the embeddings<br/>to see state transitions.</div>';
+        return;
+    }
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const row = ts.transition_matrix[state.selectedVampState];
+    if (!row) return;
+
+    const stateColors = VISUALIZATION_DATA.config.colors.states;
+
+    // Build target data, filter negligible transitions
+    const targets = row.map((prob, i) => ({ state: i, prob: prob }))
+        .filter(d => d.prob > 0.001)
+        .sort((a, b) => b.prob - a.prob);
+
+    if (targets.length === 0) {
+        container.innerHTML = '<div class="alluvial-placeholder">No significant transitions.</div>';
+        return;
+    }
+
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    alluvialSvg = d3.select(container)
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height);
+
+    const margin = { top: 30, right: 90, bottom: 20, left: 20 };
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const g = alluvialSvg.append('g')
+        .attr('transform', `translate(${margin.left}, ${margin.top})`);
+
+    // Title
+    alluvialSvg.append('text')
+        .attr('x', width / 2)
+        .attr('y', 18)
+        .attr('text-anchor', 'middle')
+        .attr('class', 'alluvial-label')
+        .style('font-size', '13px')
+        .style('font-weight', '600')
+        .text(`Transitions from S${state.selectedVampState} (Lag ${ts.lagtime})`);
+
+    // Layout
+    const sourceX = 0;
+    const sourceW = 30;
+    const targetX = innerW - 30;
+    const targetW = 30;
+    const gap = 4;
+
+    // Source node (full height)
+    g.append('rect')
+        .attr('class', 'alluvial-node')
+        .attr('x', sourceX)
+        .attr('y', 0)
+        .attr('width', sourceW)
+        .attr('height', innerH)
+        .attr('fill', stateColors[state.selectedVampState % stateColors.length]);
+
+    // Source label
+    g.append('text')
+        .attr('class', 'alluvial-label')
+        .attr('x', sourceX + sourceW / 2)
+        .attr('y', innerH / 2)
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'middle')
+        .style('font-size', '14px')
+        .text(`S${state.selectedVampState}`);
+
+    // Compute target positions
+    const totalGap = gap * (targets.length - 1);
+    const availableH = innerH - totalGap;
+    let targetY = 0;
+    targets.forEach(t => {
+        t.y = targetY;
+        t.h = Math.max(8, t.prob * availableH);
+        targetY += t.h + gap;
+    });
+
+    // Scale if overflow
+    if (targetY - gap > innerH) {
+        const scale = innerH / (targetY - gap);
+        targets.forEach(t => {
+            t.y *= scale;
+            t.h *= scale;
+        });
+    }
+
+    // Draw flows and target nodes
+    targets.forEach(t => {
+        const color = stateColors[t.state % stateColors.length];
+
+        // Flow path (cubic bezier)
+        const x0 = sourceX + sourceW;
+        const y0_top = (t.y / innerH) * innerH;
+        const y0_bot = y0_top + t.h;
+        const x1 = targetX;
+        const y1_top = t.y;
+        const y1_bot = t.y + t.h;
+        const cx = (x0 + x1) / 2;
+
+        const path = `M${x0},${y0_top} C${cx},${y0_top} ${cx},${y1_top} ${x1},${y1_top}
+                       L${x1},${y1_bot} C${cx},${y1_bot} ${cx},${y0_bot} ${x0},${y0_bot} Z`;
+
+        g.append('path')
+            .attr('class', 'alluvial-flow')
+            .attr('d', path)
+            .attr('fill', color)
+            .on('mouseover', function(event) {
+                d3.select(this).attr('opacity', 0.8);
+                showTooltip(event, `S${state.selectedVampState} → S${t.state}<br/>P = ${t.prob.toFixed(3)}`);
+            })
+            .on('mouseout', function() {
+                d3.select(this).attr('opacity', null);
+                hideTooltip();
+            })
+            .on('click', function() {
+                onAlluvialTargetClick(t.state);
+            });
+
+        // Target node
+        g.append('rect')
+            .attr('class', 'alluvial-node')
+            .attr('x', targetX)
+            .attr('y', t.y)
+            .attr('width', targetW)
+            .attr('height', t.h)
+            .attr('fill', color)
+            .style('cursor', 'pointer')
+            .on('click', function() {
+                onAlluvialTargetClick(t.state);
+            });
+
+        // Target label
+        if (t.h > 14) {
+            g.append('text')
+                .attr('class', 'alluvial-label')
+                .attr('x', targetX + targetW + 6)
+                .attr('y', t.y + t.h / 2)
+                .attr('dominant-baseline', 'middle')
+                .text(`S${t.state}`);
+        }
+
+        // Probability label
+        g.append('text')
+            .attr('class', 'alluvial-prob')
+            .attr('x', targetX + targetW + 6)
+            .attr('y', t.y + t.h / 2 + (t.h > 14 ? 14 : 0))
+            .attr('dominant-baseline', 'middle')
+            .text(`${(t.prob * 100).toFixed(1)}%`);
+    });
+}
+
+function onAlluvialTargetClick(targetState) {
+    // Show protein structure for the clicked target state
+    state.selectedVampState = targetState;
+    state.selectedFrameIndex = null; // clear frame selection so state structure shows
+    embeddingG.selectAll('.embedding-point.selected')
+        .classed('selected', false)
+        .attr('r', 4);
+    updateProteinViewer();
+}
+
+// =============================================================================
+// Protein viewer
+// =============================================================================
+
 function initProteinViewer() {
     const container = document.getElementById('protein-viewer');
+    if (!container) return;
 
-    // Create 3Dmol viewer
     proteinViewer = $3Dmol.createViewer(container, {
         backgroundColor: VISUALIZATION_DATA.config.theme === 'dark' ? '#2d2d2d' : '#f5f5f5'
     });
 
-    // Load protein structure if available
     if (VISUALIZATION_DATA.protein_structure) {
         proteinViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
-
-        // Set initial representation
         const representation = VISUALIZATION_DATA.config.protein.representation;
         proteinViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
-
         proteinViewer.zoomTo();
         proteinViewer.render();
     }
 }
 
-// Initialize D3.js transition matrix
+function updateProteinViewer() {
+    if (!proteinViewer) return;
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const representation = VISUALIZATION_DATA.config.protein.representation;
+
+    // Priority 1: Selected frame → show its VAMP state's average attention
+    if (state.selectedVampState !== null && state.showAttention) {
+        proteinViewer.removeAllModels();
+        if (VISUALIZATION_DATA.protein_structure) {
+            proteinViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
+        }
+
+        if (ts.state_attention_avg && state.selectedVampState < ts.state_attention_avg.length) {
+            const attention = ts.state_attention_avg[state.selectedVampState];
+            const colorScale = d3.scaleLinear()
+                .domain([0, 1])
+                .range([
+                    VISUALIZATION_DATA.config.colors.attention.low,
+                    VISUALIZATION_DATA.config.colors.attention.high
+                ]);
+
+            proteinViewer.setStyle({}, {});
+            attention.forEach((value, residueIndex) => {
+                const color = colorScale(value);
+                proteinViewer.setStyle(
+                    { resi: residueIndex + 1 },
+                    { [representation]: { color: color } }
+                );
+            });
+        }
+
+        proteinViewer.zoomTo();
+        proteinViewer.render();
+        return;
+    }
+
+    // Priority 2: State structure view (from alluvial click or attention panel)
+    const viewState = state.selectedVampState;
+    if (viewState !== null && ts.state_structures) {
+        const stateData = ts.state_structures[viewState];
+        if (stateData && stateData.average) {
+            proteinViewer.removeAllModels();
+
+            proteinViewer.addModel(stateData.average, 'pdb');
+            proteinViewer.setStyle({model: 0}, {
+                [representation]: {
+                    colorscheme: {prop: 'b', gradient: 'rwb', min: 0, max: 90}
+                }
+            });
+
+            if (stateData.representatives) {
+                stateData.representatives.forEach((pdb, i) => {
+                    proteinViewer.addModel(pdb, 'pdb');
+                    proteinViewer.setStyle({model: i + 1}, {
+                        [representation]: {opacity: 0.3, color: 'grey'}
+                    });
+                });
+            }
+
+            proteinViewer.zoomTo();
+            proteinViewer.render();
+            return;
+        }
+    }
+
+    // Priority 3: Default spectrum coloring
+    proteinViewer.removeAllModels();
+    if (VISUALIZATION_DATA.protein_structure) {
+        proteinViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
+        proteinViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
+        proteinViewer.zoomTo();
+    }
+    proteinViewer.render();
+}
+
+// =============================================================================
+// Attention panel (VAMP state chips + 3Dmol viewer)
+// =============================================================================
+
+function initAttentionPanel() {
+    // Attention viewer is created lazily on first use to avoid
+    // blocking init with a second WebGL context.
+}
+
+function ensureAttentionViewer() {
+    if (attentionViewer) return true;
+    const container = document.getElementById('attention-viewer');
+    if (!container) return false;
+    try {
+        attentionViewer = $3Dmol.createViewer(container, {
+            backgroundColor: VISUALIZATION_DATA.config.theme === 'dark' ? '#2d2d2d' : '#f5f5f5'
+        });
+        if (VISUALIZATION_DATA.protein_structure) {
+            attentionViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
+            const representation = VISUALIZATION_DATA.config.protein.representation;
+            attentionViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
+            attentionViewer.zoomTo();
+            attentionViewer.render();
+        }
+        return true;
+    } catch (e) {
+        console.error('Attention viewer init failed:', e);
+        return false;
+    }
+}
+
+function updateAttentionPanel() {
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const stateColors = VISUALIZATION_DATA.config.colors.states;
+    const selectorContainer = document.getElementById('attention-state-selector');
+    if (!selectorContainer) return;
+
+    selectorContainer.innerHTML = '';
+
+    for (let i = 0; i < ts.n_states; i++) {
+        const chip = document.createElement('span');
+        chip.className = 'state-chip';
+        if (state.selectedAttentionState === i) chip.classList.add('active');
+        chip.style.backgroundColor = stateColors[i % stateColors.length];
+        chip.textContent = `S${i}`;
+        chip.addEventListener('click', () => selectAttentionState(i));
+        selectorContainer.appendChild(chip);
+    }
+
+    // Clamp if new timescale has fewer states
+    if (state.selectedAttentionState !== null && state.selectedAttentionState >= ts.n_states) {
+        state.selectedAttentionState = null;
+    }
+
+    updateAttentionViewer();
+}
+
+function selectAttentionState(stateIndex) {
+    if (state.selectedAttentionState === stateIndex) {
+        state.selectedAttentionState = null;
+    } else {
+        state.selectedAttentionState = stateIndex;
+    }
+
+    // Update chip highlights
+    document.querySelectorAll('#attention-state-selector .state-chip').forEach((chip, i) => {
+        chip.classList.toggle('active', i === state.selectedAttentionState);
+    });
+
+    updateAttentionViewer();
+}
+
+function updateAttentionViewer() {
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const representation = VISUALIZATION_DATA.config.protein.representation;
+
+    if (state.selectedAttentionState !== null && ts.state_attention_avg) {
+        // Lazily create viewer only when a state is actually selected
+        if (!ensureAttentionViewer()) return;
+        const attnAvg = ts.state_attention_avg[state.selectedAttentionState];
+        if (attnAvg) {
+            attentionViewer.removeAllModels();
+            if (VISUALIZATION_DATA.protein_structure) {
+                attentionViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
+            }
+
+            const colorScale = d3.scaleLinear()
+                .domain([0, 1])
+                .range([
+                    VISUALIZATION_DATA.config.colors.attention.low,
+                    VISUALIZATION_DATA.config.colors.attention.high
+                ]);
+
+            attentionViewer.setStyle({}, {});
+            attnAvg.forEach((value, residueIndex) => {
+                const color = colorScale(value);
+                attentionViewer.setStyle(
+                    { resi: residueIndex + 1 },
+                    { [representation]: { color: color } }
+                );
+            });
+
+            attentionViewer.zoomTo();
+            attentionViewer.render();
+            return;
+        }
+    }
+
+    // Default: spectrum coloring (only if viewer already exists)
+    if (!attentionViewer) return;
+    attentionViewer.removeAllModels();
+    if (VISUALIZATION_DATA.protein_structure) {
+        attentionViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
+        attentionViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
+        attentionViewer.zoomTo();
+    }
+    attentionViewer.render();
+}
+
+// =============================================================================
+// Transition matrix
+// =============================================================================
+
 function initTransitionMatrix() {
     const container = document.getElementById('matrix-container');
+    if (!container) return;
+
     const width = container.clientWidth;
     const height = container.clientHeight;
 
@@ -185,97 +742,6 @@ function initTransitionMatrix() {
         .attr('height', height);
 }
 
-// Load timescale data
-function loadTimescale(index) {
-    state.currentTimescaleIndex = index;
-    const ts = VISUALIZATION_DATA.timescales[index];
-
-    console.log(`Loading timescale ${index}: lagtime ${ts.lagtime}`);
-
-    // Clear previous point clouds
-    pointClouds.forEach(cloud => embeddingScene.remove(cloud));
-    pointClouds = [];
-
-    // Create point clouds for all timescales with this one highlighted
-    VISUALIZATION_DATA.timescales.forEach((timescale, i) => {
-        const isActive = i === index;
-        const zPosition = i * VISUALIZATION_DATA.config.embedding.z_spacing;
-
-        const pointCloud = createPointCloud(timescale, zPosition, isActive);
-        embeddingScene.add(pointCloud);
-        pointClouds.push(pointCloud);
-    });
-
-    // Update transition matrix
-    updateTransitionMatrix(ts);
-
-    // Update state legend
-    updateStateLegend(ts);
-
-    // Update state details panel
-    updateStateDetails(ts);
-
-    // Update diagnostics panel
-    updateDiagnosticsPanel(ts);
-
-    // Reset frame selection (keep state selection across timescale switches)
-    state.selectedFrameIndex = null;
-    updateProteinViewer();
-}
-
-// Create point cloud from embeddings
-function createPointCloud(timescale, zPosition, isActive) {
-    const geometry = new THREE.BufferGeometry();
-    const positions = [];
-    const colors = [];
-
-    const bounds = VISUALIZATION_DATA.bounds;
-    const scaleX = 10 / (bounds.max_x - bounds.min_x);
-    const scaleY = 10 / (bounds.max_y - bounds.min_y);
-    const centerX = (bounds.max_x + bounds.min_x) / 2;
-    const centerY = (bounds.max_y + bounds.min_y) / 2;
-
-    const stateColors = VISUALIZATION_DATA.config.colors.states;
-
-    timescale.embeddings.forEach((point, i) => {
-        const x = (point[0] - centerX) * scaleX;
-        const y = (point[1] - centerY) * scaleY;
-        const z = zPosition;
-
-        positions.push(x, y, z);
-
-        // Color by state if active, grey if not
-        if (isActive) {
-            const state = timescale.state_assignments[i];
-            const colorHex = stateColors[state % stateColors.length];
-            const color = new THREE.Color(colorHex);
-            colors.push(color.r, color.g, color.b);
-        } else {
-            // Grey for non-active layers
-            colors.push(0.5, 0.5, 0.5);
-        }
-    });
-
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
-    const material = new THREE.PointsMaterial({
-        size: VISUALIZATION_DATA.config.embedding.point_size,
-        vertexColors: true,
-        transparent: false,
-        opacity: 1.0
-    });
-
-    const pointCloud = new THREE.Points(geometry, material);
-    pointCloud.userData = {
-        timescaleIndex: VISUALIZATION_DATA.timescales.indexOf(timescale),
-        isActive: isActive
-    };
-
-    return pointCloud;
-}
-
-// Update transition matrix
 function updateTransitionMatrix(timescale) {
     matrixSvg.selectAll('*').remove();
 
@@ -316,7 +782,6 @@ function updateTransitionMatrix(timescale) {
                 })
                 .on('mouseout', hideTooltip);
 
-            // Add probability text in every cell
             if (value > 0.001) {
                 const fontSize = Math.max(8, Math.min(12, cellSize * 0.35));
                 const maxVal = d3.max(matrix.flat());
@@ -335,7 +800,7 @@ function updateTransitionMatrix(timescale) {
         }
     }
 
-    // Add row labels
+    // Row labels
     for (let i = 0; i < n; i++) {
         g.append('text')
             .attr('class', 'matrix-label')
@@ -346,7 +811,7 @@ function updateTransitionMatrix(timescale) {
             .text(`S${i}`);
     }
 
-    // Add column labels
+    // Column labels
     for (let j = 0; j < n; j++) {
         g.append('text')
             .attr('class', 'matrix-label')
@@ -365,29 +830,44 @@ function updateTransitionMatrix(timescale) {
         .attr('class', 'matrix-label')
         .style('font-size', '14px')
         .style('font-weight', '600')
-        .text(`Transition Matrix (Lagtime ${timescale.lagtime})`);
+        .text(`Transition Matrix (Lag ${timescale.lagtime})`);
 }
 
-// Update state legend
+// =============================================================================
+// State legend
+// =============================================================================
+
 function updateStateLegend(timescale) {
     const legend = document.getElementById('state-legend');
     if (!legend) return;
 
     const stateColors = VISUALIZATION_DATA.config.colors.states;
-    const stateCounts = {};
 
-    timescale.state_assignments.forEach(state => {
-        stateCounts[state] = (stateCounts[state] || 0) + 1;
+    // Use prep cluster labels if available, else VAMP states
+    let labels, labelPrefix, n_states;
+    if (hasPrep) {
+        labels = VISUALIZATION_DATA.prep.cluster_labels;
+        labelPrefix = 'Cluster';
+        n_states = VISUALIZATION_DATA.prep.n_states;
+    } else {
+        labels = timescale.state_assignments;
+        labelPrefix = 'State';
+        n_states = timescale.n_states;
+    }
+
+    const counts = {};
+    labels.forEach(s => {
+        counts[s] = (counts[s] || 0) + 1;
     });
 
-    let html = '<h4>States</h4>';
-    for (let i = 0; i < timescale.n_states; i++) {
+    let html = `<h4>${hasPrep ? 'Prep Clusters' : 'States'}</h4>`;
+    for (let i = 0; i < n_states; i++) {
         const color = stateColors[i % stateColors.length];
-        const count = stateCounts[i] || 0;
+        const count = counts[i] || 0;
         html += `
             <div class="legend-item">
                 <div class="legend-color" style="background-color: ${color}"></div>
-                <span class="legend-label">State ${i}</span>
+                <span class="legend-label">${labelPrefix} ${i}</span>
                 <span class="legend-count">${count} frames</span>
             </div>
         `;
@@ -396,170 +876,40 @@ function updateStateLegend(timescale) {
     legend.innerHTML = html;
 }
 
-// Update protein viewer with attention
-function updateProteinViewer() {
-    if (!proteinViewer) return;
+// =============================================================================
+// Timescale loading
+// =============================================================================
 
-    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
-    const representation = VISUALIZATION_DATA.config.protein.representation;
+function loadTimescale(index) {
+    state.currentTimescaleIndex = index;
+    const ts = VISUALIZATION_DATA.timescales[index];
 
-    // Priority 1: Single-frame attention coloring
-    if (state.selectedFrameIndex !== null && state.showAttention) {
-        proteinViewer.removeAllModels();
-        if (VISUALIZATION_DATA.protein_structure) {
-            proteinViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
-        }
+    console.log(`Loading timescale ${index}: lagtime ${ts.lagtime}`);
 
-        const attention = ts.attention_normalized[state.selectedFrameIndex];
-        const colorScale = d3.scaleLinear()
-            .domain([0, 1])
-            .range([
-                VISUALIZATION_DATA.config.colors.attention.low,
-                VISUALIZATION_DATA.config.colors.attention.high
-            ]);
-
-        proteinViewer.setStyle({}, {});
-        attention.forEach((value, residueIndex) => {
-            const color = colorScale(value);
-            proteinViewer.setStyle(
-                { resi: residueIndex + 1 },
-                { [representation]: { color: color } }
-            );
-        });
-
-        proteinViewer.zoomTo();
-        proteinViewer.render();
-        return;
-    }
-
-    // Priority 2: State structure view (average + representatives)
-    if (state.selectedState !== null && ts.state_structures) {
-        const stateData = ts.state_structures[state.selectedState];
-        if (stateData && stateData.average) {
-            proteinViewer.removeAllModels();
-
-            // Average structure — color by B-factor (blue→white→red)
-            proteinViewer.addModel(stateData.average, 'pdb');
-            proteinViewer.setStyle({model: 0}, {
-                [representation]: {
-                    colorscheme: {prop: 'b', gradient: 'rwb', min: 0, max: 90}
-                }
-            });
-
-            // Representative structures — low opacity grey
-            if (stateData.representatives) {
-                stateData.representatives.forEach((pdb, i) => {
-                    proteinViewer.addModel(pdb, 'pdb');
-                    proteinViewer.setStyle({model: i + 1}, {
-                        [representation]: {opacity: 0.3, color: 'grey'}
-                    });
-                });
-            }
-
-            proteinViewer.zoomTo();
-            proteinViewer.render();
-            return;
-        }
-    }
-
-    // Priority 3: Default spectrum coloring
-    proteinViewer.removeAllModels();
-    if (VISUALIZATION_DATA.protein_structure) {
-        proteinViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
-        proteinViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
-        proteinViewer.zoomTo();
-    }
-    proteinViewer.render();
-}
-
-// Mouse move handler for embedding viewer
-function onEmbeddingMouseMove(event) {
-    const rect = embeddingRenderer.domElement.getBoundingClientRect();
-    window.mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    window.mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-    window.raycaster.setFromCamera(window.mouse, embeddingCamera);
-
-    // Check active point cloud only
-    const activeCloud = pointClouds.find(pc => pc.userData.isActive);
-    if (!activeCloud) return;
-
-    const intersects = window.raycaster.intersectObject(activeCloud);
-
-    if (intersects.length > 0) {
-        const pointIndex = intersects[0].index;
-        state.hoveredFrameIndex = pointIndex;
-
-        const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
-        const frameIdx = ts.frame_indices[pointIndex];
-        const stateIdx = ts.state_assignments[pointIndex];
-
-        showTooltip(event, `
-            Frame: ${frameIdx}<br/>
-            State: ${stateIdx}<br/>
-            X: ${ts.embeddings[pointIndex][0].toFixed(3)}<br/>
-            Y: ${ts.embeddings[pointIndex][1].toFixed(3)}
-        `);
-    } else {
-        state.hoveredFrameIndex = null;
-        hideTooltip();
-    }
-}
-
-// Click handler for embedding viewer
-function onEmbeddingClick(event) {
-    if (state.hoveredFrameIndex !== null) {
-        state.selectedFrameIndex = state.hoveredFrameIndex;
-        state.selectedState = null;
-
-        // Update marker
-        updateSelectionMarker();
-
-        // Update state chip highlights
-        document.querySelectorAll('.state-chip').forEach(c => c.classList.remove('active'));
-
-        // Update protein viewer
-        updateProteinViewer();
-
-        console.log(`Selected frame: ${state.selectedFrameIndex}`);
-    }
-}
-
-// Update selection marker
-function updateSelectionMarker() {
-    // Remove old marker
-    if (selectedMarker) {
-        embeddingScene.remove(selectedMarker);
-    }
-
-    if (state.selectedFrameIndex === null) return;
-
-    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
-    const point = ts.embeddings[state.selectedFrameIndex];
-
-    const bounds = VISUALIZATION_DATA.bounds;
-    const scaleX = 10 / (bounds.max_x - bounds.min_x);
-    const scaleY = 10 / (bounds.max_y - bounds.min_y);
-    const centerX = (bounds.max_x + bounds.min_x) / 2;
-    const centerY = (bounds.max_y + bounds.min_y) / 2;
-
-    const x = (point[0] - centerX) * scaleX;
-    const y = (point[1] - centerY) * scaleY;
-    const z = state.currentTimescaleIndex * VISUALIZATION_DATA.config.embedding.z_spacing;
-
-    const geometry = new THREE.SphereGeometry(0.2, 16, 16);
-    const material = new THREE.MeshBasicMaterial({
-        color: 0xffff00,
-        transparent: true,
-        opacity: 0.7
+    // Update sidebar button highlighting
+    document.querySelectorAll('.timescale-btn').forEach((btn, i) => {
+        btn.classList.toggle('active', i === index);
     });
-    selectedMarker = new THREE.Mesh(geometry, material);
-    selectedMarker.position.set(x, y, z);
 
-    embeddingScene.add(selectedMarker);
+    // Recompute VAMP state for selected frame (if any)
+    if (state.selectedFrameIndex !== null) {
+        state.selectedVampState = (state.selectedFrameIndex < ts.state_assignments.length)
+            ? ts.state_assignments[state.selectedFrameIndex] : null;
+    }
+
+    // Update timescale-dependent panels
+    updateAlluvialPlot();
+    updateTransitionMatrix(ts);
+    updateStateLegend(ts);
+    updateAttentionPanel();
+    updateDiagnosticsPanel(ts);
+    updateProteinViewer();
 }
 
-// Tooltip functions
+// =============================================================================
+// Tooltip
+// =============================================================================
+
 function showTooltip(event, html) {
     const tooltip = document.getElementById('tooltip');
     if (!tooltip) return;
@@ -577,176 +927,40 @@ function hideTooltip() {
     }
 }
 
-// Initialize state details panel
-function initStateDetails() {
-    const container = document.getElementById('state-transitions');
-    if (!container) return;
+// =============================================================================
+// Window resize
+// =============================================================================
 
-    transitionsSvg = d3.select('#state-transitions')
-        .append('svg')
-        .attr('width', '100%')
-        .attr('height', '100%');
-}
-
-// Update state details (selector chips + transitions)
-function updateStateDetails(timescale) {
-    const selectorContainer = document.getElementById('state-selector');
-    if (!selectorContainer) return;
-
-    const stateColors = VISUALIZATION_DATA.config.colors.states;
-    selectorContainer.innerHTML = '';
-
-    for (let i = 0; i < timescale.n_states; i++) {
-        const chip = document.createElement('span');
-        chip.className = 'state-chip';
-        if (state.selectedState === i) chip.classList.add('active');
-        chip.style.backgroundColor = stateColors[i % stateColors.length];
-        chip.textContent = `S${i}`;
-        chip.addEventListener('click', () => selectState(i));
-        selectorContainer.appendChild(chip);
-    }
-
-    // Clamp selectedState if new timescale has fewer states
-    if (state.selectedState !== null && state.selectedState >= timescale.n_states) {
-        state.selectedState = null;
-    }
-
-    updateStateTransitions();
-}
-
-// Select/deselect a state
-function selectState(stateIndex) {
-    if (state.selectedState === stateIndex) {
-        // Toggle off
-        state.selectedState = null;
-    } else {
-        state.selectedState = stateIndex;
-    }
-
-    // Deselect frame when selecting a state
-    state.selectedFrameIndex = null;
-    if (selectedMarker) {
-        embeddingScene.remove(selectedMarker);
-        selectedMarker = null;
-    }
-
-    // Update chip highlights
-    document.querySelectorAll('.state-chip').forEach((chip, i) => {
-        chip.classList.toggle('active', i === state.selectedState);
-    });
-
-    updateStateTransitions();
-    updateProteinViewer();
-}
-
-// Update state transition bar chart
-function updateStateTransitions() {
-    if (!transitionsSvg) return;
-    transitionsSvg.selectAll('*').remove();
-
-    if (state.selectedState === null) return;
-
-    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
-    const row = ts.transition_matrix[state.selectedState];
-    if (!row) return;
-
-    const stateColors = VISUALIZATION_DATA.config.colors.states;
-
-    // Build data sorted descending by probability
-    const data = row.map((prob, i) => ({ state: i, prob: prob }))
-        .sort((a, b) => b.prob - a.prob);
-
-    const container = document.getElementById('state-transitions');
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-
-    transitionsSvg
-        .attr('width', width)
-        .attr('height', height);
-
-    const margin = { top: 25, right: 50, bottom: 5, left: 35 };
-    const innerW = width - margin.left - margin.right;
-    const innerH = height - margin.top - margin.bottom;
-    const barHeight = Math.min(22, innerH / data.length - 2);
-
-    const g = transitionsSvg.append('g')
-        .attr('transform', `translate(${margin.left}, ${margin.top})`);
-
-    // Title
-    transitionsSvg.append('text')
-        .attr('x', width / 2)
-        .attr('y', 16)
-        .attr('text-anchor', 'middle')
-        .attr('class', 'transition-bar-label')
-        .style('font-size', '13px')
-        .style('font-weight', '600')
-        .text(`Transitions from S${state.selectedState}`);
-
-    const xScale = d3.scaleLinear()
-        .domain([0, d3.max(data, d => d.prob) || 1])
-        .range([0, innerW]);
-
-    // Bars
-    data.forEach((d, i) => {
-        const y = i * (barHeight + 2);
-
-        // Label
-        g.append('text')
-            .attr('class', 'transition-bar-label')
-            .attr('x', -5)
-            .attr('y', y + barHeight / 2)
-            .attr('text-anchor', 'end')
-            .attr('dominant-baseline', 'middle')
-            .text(`S${d.state}`);
-
-        // Bar
-        g.append('rect')
-            .attr('x', 0)
-            .attr('y', y)
-            .attr('width', xScale(d.prob))
-            .attr('height', barHeight)
-            .attr('fill', stateColors[d.state % stateColors.length])
-            .attr('rx', 3)
-            .attr('ry', 3)
-            .attr('opacity', 0.85);
-
-        // Value label
-        g.append('text')
-            .attr('class', 'transition-bar-value')
-            .attr('x', xScale(d.prob) + 4)
-            .attr('y', y + barHeight / 2)
-            .attr('dominant-baseline', 'middle')
-            .text(d.prob.toFixed(3));
-    });
-}
-
-// Window resize handler
 function onWindowResize() {
-    const embeddingContainer = document.getElementById('embedding-viewer');
-    const width = embeddingContainer.clientWidth;
-    const height = embeddingContainer.clientHeight;
-
-    embeddingCamera.aspect = width / height;
-    embeddingCamera.updateProjectionMatrix();
-    embeddingRenderer.setSize(width, height);
-}
-
-// Animation loop
-function animate() {
-    requestAnimationFrame(animate);
-
-    // Update controls
-    if (embeddingControls) {
-        embeddingControls.update();
+    // Rebuild embedding plot
+    if (embeddingSvg) {
+        embeddingSvg.remove();
+        embeddingSvg = null;
+        embeddingG = null;
+        initEmbeddingPlot();
     }
 
-    // Render
-    if (embeddingRenderer && embeddingScene && embeddingCamera) {
-        embeddingRenderer.render(embeddingScene, embeddingCamera);
+    // Rebuild matrix
+    if (matrixSvg) {
+        matrixSvg.remove();
+        matrixSvg = null;
+        initTransitionMatrix();
+        const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+        updateTransitionMatrix(ts);
     }
+
+    // Rebuild alluvial
+    updateAlluvialPlot();
+
+    // Resize 3Dmol viewers
+    if (proteinViewer) proteinViewer.resize();
+    if (attentionViewer) attentionViewer.resize();
 }
 
-// Initialize event listeners
+// =============================================================================
+// Event listeners
+// =============================================================================
+
 function initEventListeners() {
     // Attention toggle
     const attentionToggle = document.getElementById('attention-toggle');
@@ -765,25 +979,16 @@ function initEventListeners() {
         representationSelect.addEventListener('change', (e) => {
             VISUALIZATION_DATA.config.protein.representation = e.target.value;
             updateProteinViewer();
-        });
-    }
-
-    // Camera rotation toggle
-    const rotationToggle = document.getElementById('camera-rotation');
-    if (rotationToggle) {
-        rotationToggle.checked = state.camera.rotation;
-        rotationToggle.addEventListener('change', (e) => {
-            state.camera.rotation = e.target.checked;
+            updateAttentionViewer();
         });
     }
 }
 
-// =============================================
+// =============================================================================
 // Diagnostics panel
-// =============================================
+// =============================================================================
 
 function initDiagnosticsPanel() {
-    // Check if any timescale has diagnostic data
     const hasDiagnostics = VISUALIZATION_DATA.timescales.some(
         ts => ts.metadata && ts.metadata.diagnostics
     );
@@ -830,7 +1035,6 @@ function updateDiagnosticsPanel(timescale) {
     if (section) section.style.display = 'block';
     const report = diag.report.diagnostics || {};
 
-    // Update sidebar badge
     const badge = document.getElementById('diag-recommendation-badge');
     if (badge) {
         const rec = report.recommendation || 'keep';
@@ -838,7 +1042,6 @@ function updateDiagnosticsPanel(timescale) {
         badge.className = 'diag-badge ' + rec;
     }
 
-    // Quick info in sidebar
     const quickInfo = document.getElementById('diag-quick-info');
     if (quickInfo) {
         const lines = [];
@@ -866,11 +1069,9 @@ function openDiagnostics() {
     const report = diag.report ? diag.report.diagnostics : {};
     const plots = diag.plots || {};
 
-    // Update title
     const title = document.getElementById('diagnostics-title');
     if (title) title.textContent = `State Diagnostics — Lagtime ${ts.lagtime}`;
 
-    // Recommendation banner
     const banner = document.getElementById('diagnostics-banner');
     if (banner) {
         const rec = report.recommendation || 'keep';
@@ -884,7 +1085,6 @@ function openDiagnostics() {
         banner.textContent = bannerText;
     }
 
-    // Set plot images and show/hide tabs based on availability
     const plotMap = {
         'summary': 'diagnostic_summary',
         'eigenvalues': 'eigenvalue_spectrum',
@@ -905,7 +1105,6 @@ function openDiagnostics() {
         }
     }
 
-    // Populate report details table in summary tab
     const details = document.getElementById('diag-report-details');
     if (details && report) {
         let html = '<table>';
@@ -929,7 +1128,6 @@ function openDiagnostics() {
         details.innerHTML = html;
     }
 
-    // Activate first available tab
     const firstVisibleTab = document.querySelector('.diag-tab:not(.hidden)');
     if (firstVisibleTab) {
         document.querySelectorAll('.diag-tab').forEach(t => t.classList.remove('active'));
@@ -947,9 +1145,14 @@ function closeDiagnostics() {
     if (modal) modal.style.display = 'none';
 }
 
-// Start initialization when DOM is ready
+// =============================================================================
+// Start
+// =============================================================================
+
+// Use setTimeout to yield to the browser so the loading spinner paints
+// before heavy D3/3Dmol initialization work begins.
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 0));
 } else {
-    init();
+    setTimeout(init, 0);
 }

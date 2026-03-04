@@ -436,3 +436,95 @@ class TestGenerateMergedInteractiveReport:
         call_args = mock_viz_instance.add_timescale.call_args
         embeddings_arg = call_args[1]['embeddings'] if 'embeddings' in call_args[1] else call_args[0][1]
         assert len(embeddings_arg) <= 50
+
+
+# ============================================================================
+# Tests for set_prep_data and state_attention_avg
+# ============================================================================
+
+class TestSetPrepData:
+
+    def test_valid_prep_data(self):
+        from pygv.visualization import MDTrajectoryVisualizer
+        viz = MDTrajectoryVisualizer()
+        embeddings = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], dtype=np.float32)
+        labels = np.array([0, 1, 0], dtype=np.int32)
+        viz.set_prep_data(embeddings, labels)
+        assert viz.prep_data is not None
+        assert viz.prep_data['n_frames'] == 3
+        assert viz.prep_data['n_states'] == 2
+
+    def test_invalid_prep_embeddings_shape(self):
+        from pygv.visualization import MDTrajectoryVisualizer
+        viz = MDTrajectoryVisualizer()
+        embeddings_3d = np.random.randn(10, 3).astype(np.float32)
+        labels = np.zeros(10, dtype=np.int32)
+        with pytest.raises(ValueError, match="shape"):
+            viz.set_prep_data(embeddings_3d, labels)
+
+    def test_invalid_prep_embeddings_nan(self):
+        from pygv.visualization import MDTrajectoryVisualizer
+        viz = MDTrajectoryVisualizer()
+        embeddings = np.array([[1.0, np.nan], [3.0, 4.0]])
+        labels = np.array([0, 1])
+        with pytest.raises(ValueError, match="NaN"):
+            viz.set_prep_data(embeddings, labels)
+
+    def test_invalid_cluster_labels_length(self):
+        from pygv.visualization import MDTrajectoryVisualizer
+        viz = MDTrajectoryVisualizer()
+        embeddings = np.array([[1.0, 2.0], [3.0, 4.0]])
+        labels = np.array([0, 1, 2])  # wrong length
+        with pytest.raises(ValueError, match="length"):
+            viz.set_prep_data(embeddings, labels)
+
+    def test_negative_cluster_labels(self):
+        from pygv.visualization import MDTrajectoryVisualizer
+        viz = MDTrajectoryVisualizer()
+        embeddings = np.array([[1.0, 2.0], [3.0, 4.0]])
+        labels = np.array([0, -1])
+        with pytest.raises(ValueError, match="negative"):
+            viz.set_prep_data(embeddings, labels)
+
+    def test_prep_data_in_json(self):
+        from pygv.visualization import MDTrajectoryVisualizer
+        import json
+        viz = MDTrajectoryVisualizer()
+        # Set prep data
+        prep_emb = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+        prep_labels = np.array([0, 1], dtype=np.int32)
+        viz.set_prep_data(prep_emb, prep_labels, {'chosen_source': 'tsne_2'})
+        # Add a minimal timescale so to_json() works
+        viz.add_timescale(
+            lagtime=1,
+            embeddings=np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32),
+            frame_indices=np.array([0, 1]),
+            state_assignments=np.array([0, 1]),
+            transition_matrix=np.array([[0.8, 0.2], [0.3, 0.7]]),
+            attention_values=np.random.rand(2, 5).astype(np.float32),
+        )
+        data = json.loads(viz.to_json())
+        assert 'prep' in data
+        assert data['prep']['n_frames'] == 2
+        assert data['prep']['source'] == 'tsne_2'
+        assert 'prep_bounds' in data
+        assert data['prep_bounds']['min_x'] == 1.0
+        assert data['prep_bounds']['max_x'] == 3.0
+
+    def test_state_attention_avg_computed(self):
+        from pygv.visualization import MDTrajectoryVisualizer
+        import json
+        viz = MDTrajectoryVisualizer()
+        viz.add_timescale(
+            lagtime=1,
+            embeddings=np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32),
+            frame_indices=np.array([0, 1]),
+            state_assignments=np.array([0, 1]),
+            transition_matrix=np.array([[0.8, 0.2], [0.3, 0.7]]),
+            attention_values=np.array([[0.2, 0.8], [0.6, 0.4]], dtype=np.float32),
+        )
+        data = json.loads(viz.to_json())
+        assert 'state_attention_avg' in data['timescales'][0]
+        avg = data['timescales'][0]['state_attention_avg']
+        assert len(avg) == 2  # 2 states
+        assert len(avg[0]) == 2  # 2 residues

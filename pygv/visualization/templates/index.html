@@ -5,18 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
 
-    <!-- Three.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- jQuery (required by 3Dmol.js — must load first) -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 
     <!-- 3Dmol.js for protein visualization -->
     <script src="https://3dmol.csb.pitt.edu/build/3Dmol-min.js"></script>
 
-    <!-- D3.js for transition matrix -->
+    <!-- D3.js for plots -->
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-
-    <!-- jQuery (required by 3Dmol.js) -->
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 
     <style>{% include 'assets/style.css' %}</style>
 </head>
@@ -43,9 +39,9 @@
 
         <!-- Sidebar controls -->
         <div id="sidebar">
-            <!-- Timescale selection -->
+            <!-- Timescale selector -->
             <div class="control-section">
-                <h3>Timescales</h3>
+                <h3>Timescale</h3>
                 <div id="timescale-list"></div>
             </div>
 
@@ -66,13 +62,6 @@
                 </div>
 
                 <div class="control-group">
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="camera-rotation">
-                        Auto-rotate Camera
-                    </label>
-                </div>
-
-                <div class="control-group">
                     <label for="protein-representation">Protein Style</label>
                     <select id="protein-representation">
                         <option value="cartoon">Cartoon</option>
@@ -88,10 +77,7 @@
             <div class="control-section">
                 <div id="attention-scale">
                     <h4>Attention Scale</h4>
-                    <div class="color-gradient" style="background: linear-gradient(to right,
-                        {{ data_json | safe | tojson }}['config']['colors']['attention']['low'] if data_json else '#0000FF',
-                        {{ data_json | safe | tojson }}['config']['colors']['attention']['high'] if data_json else '#FF0000'
-                    );"></div>
+                    <div class="color-gradient"></div>
                     <div class="gradient-labels">
                         <span>Low</span>
                         <span>High</span>
@@ -117,23 +103,33 @@
                     <p><strong>Embeddings:</strong></p>
                     <ul style="margin-left: 15px; margin-top: 5px;">
                         <li>Click to select a frame</li>
-                        <li>Drag to rotate view</li>
-                        <li>Scroll to zoom</li>
                         <li>Hover for details</li>
+                        <li>Scroll to zoom, drag to pan</li>
+                    </ul>
+                    <p style="margin-top: 10px;"><strong>Alluvial:</strong></p>
+                    <ul style="margin-left: 15px; margin-top: 5px;">
+                        <li>Shows transition flow from selected state</li>
+                        <li>Click target to view structure</li>
                     </ul>
                     <p style="margin-top: 10px;"><strong>Protein:</strong></p>
                     <ul style="margin-left: 15px; margin-top: 5px;">
                         <li>Colors show attention</li>
-                        <li>Blue = low attention</li>
-                        <li>Red = high attention</li>
+                        <li>Blue = low, Red = high</li>
                     </ul>
                 </div>
             </div>
         </div>
 
-        <!-- Embedding viewer -->
+        <!-- Embedding viewer (prep data — constant across timescales) -->
         <div id="embedding-viewer">
-            <div class="viewer-label">3D Embeddings</div>
+            <div class="viewer-label">2D Embeddings (State Discovery)</div>
+            <div id="embedding-plot"></div>
+        </div>
+
+        <!-- Alluvial diagram panel -->
+        <div id="alluvial-panel">
+            <div class="viewer-label">State Transitions</div>
+            <div id="alluvial-plot"></div>
         </div>
 
         <!-- Protein viewer -->
@@ -141,16 +137,16 @@
             <div class="viewer-label">Protein Structure</div>
         </div>
 
+        <!-- Attention panel -->
+        <div id="attention-panel">
+            <div class="viewer-label">VAMP State Attention</div>
+            <div id="attention-state-selector"></div>
+            <div id="attention-viewer"></div>
+        </div>
+
         <!-- Transition matrix -->
         <div id="transition-matrix">
             <div id="matrix-container"></div>
-        </div>
-
-        <!-- State details panel -->
-        <div id="state-details">
-            <div class="viewer-label">State Details</div>
-            <div id="state-selector"></div>
-            <div id="state-transitions"></div>
         </div>
 
         <!-- Diagnostics modal (hidden by default) -->
