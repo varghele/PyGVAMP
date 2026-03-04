@@ -827,10 +827,10 @@ function updateProteinViewer() {
             proteinViewer.removeAllModels();
             proteinViewer.addModel(pdbStr, 'pdb');
 
-            // Color by state attention if available
-            if (state.showAttention && state.selectedVampState !== null &&
-                ts.state_attention_avg && state.selectedVampState < ts.state_attention_avg.length) {
-                const attention = ts.state_attention_avg[state.selectedVampState];
+            // Color by this frame's actual attention values
+            if (state.showAttention && ts.attention_normalized &&
+                state.selectedFrameIndex < ts.attention_normalized.length) {
+                const attention = ts.attention_normalized[state.selectedFrameIndex];
                 const colorScale = d3.scaleLinear()
                     .domain([0, 1])
                     .range([

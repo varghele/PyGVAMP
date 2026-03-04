@@ -355,6 +355,7 @@ class MDTrajectoryVisualizer:
                 'state_assignments': ts_data['state_assignments'],
                 'transition_matrix': ts_data['transition_matrix'],
                 'state_attention_avg': ts_data['state_attention_avg'],
+                'attention_normalized': np.round(ts_data['attention_normalized'], 2),
                 'n_states': ts_data['n_states'],
                 'n_frames': ts_data['n_frames'],
                 'n_residues': ts_data['n_residues'],
