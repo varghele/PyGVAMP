@@ -832,11 +832,8 @@ function updateProteinViewer() {
                 state.selectedFrameIndex < ts.attention_normalized.length) {
                 const attention = ts.attention_normalized[state.selectedFrameIndex];
                 const colorScale = d3.scaleLinear()
-                    .domain([0, 1])
-                    .range([
-                        VISUALIZATION_DATA.config.colors.attention.low,
-                        VISUALIZATION_DATA.config.colors.attention.high
-                    ]);
+                    .domain([0, 0.5, 1])
+                    .range(['#0000FF', '#FFFFFF', '#FF0000']);
                 proteinViewer.setStyle({}, {});
                 attention.forEach((value, residueIndex) => {
                     const color = colorScale(value);
