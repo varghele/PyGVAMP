@@ -1060,14 +1060,9 @@ function updateAttentionViewer() {
         return;
     }
 
-    // No state selected: spectrum coloring (only if viewer already exists)
+    // No state selected: clear the viewer
     if (!attentionViewer) return;
     attentionViewer.removeAllModels();
-    if (VISUALIZATION_DATA.protein_structure) {
-        attentionViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
-        attentionViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
-        attentionViewer.zoomTo();
-    }
     attentionViewer.render();
 }
 
