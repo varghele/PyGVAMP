@@ -739,13 +739,16 @@ function drawFullAlluvial(container, ts, prepLabels, vampAssignments) {
 }
 
 function onAlluvialTargetClick(targetState) {
-    // Show protein structure for the clicked target state
+    // Show state structure in the VAMP State Structures panel
     state.selectedVampState = targetState;
-    state.selectedFrameIndex = null; // clear frame selection so state structure shows
-    embeddingG.selectAll('.embedding-point.selected')
-        .classed('selected', false)
-        .attr('r', 4);
-    updateProteinViewer();
+    state.selectedAttentionState = targetState;
+
+    // Update attention panel chip highlights
+    document.querySelectorAll('#attention-state-selector .state-chip').forEach((chip, i) => {
+        chip.classList.toggle('active', i === targetState);
+    });
+
+    updateAttentionViewer();
 }
 
 // =============================================================================
@@ -861,38 +864,7 @@ function updateProteinViewer() {
     // No per-frame structure shown — clear the info label
     setProteinViewerInfo(null);
 
-    // Priority 2: Selected VAMP state with attention coloring (no specific frame)
-    if (state.selectedVampState !== null && state.showAttention) {
-        proteinViewer.removeAllModels();
-        if (VISUALIZATION_DATA.protein_structure) {
-            proteinViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
-        }
-
-        if (ts.state_attention_avg && state.selectedVampState < ts.state_attention_avg.length) {
-            const attention = ts.state_attention_avg[state.selectedVampState];
-            const colorScale = d3.scaleLinear()
-                .domain([0, 1])
-                .range([
-                    VISUALIZATION_DATA.config.colors.attention.low,
-                    VISUALIZATION_DATA.config.colors.attention.high
-                ]);
-
-            proteinViewer.setStyle({}, {});
-            attention.forEach((value, residueIndex) => {
-                const color = colorScale(value);
-                proteinViewer.setStyle(
-                    { resi: residueIndex + 1 },
-                    { [representation]: { color: color } }
-                );
-            });
-        }
-
-        proteinViewer.zoomTo();
-        proteinViewer.render();
-        return;
-    }
-
-    // Priority 3: State structure view (from alluvial click or attention panel)
+    // Priority 2: State structure view (from alluvial click or attention panel)
     const viewState = state.selectedVampState;
     if (viewState !== null && ts.state_structures) {
         const stateData = ts.state_structures[viewState];
