@@ -13,10 +13,12 @@ Supports configuration presets and selective re-running of pipeline stages.
 """
 
 import os
+import re
 import argparse
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 # Import CacheManager
 from pygv.pipe.caching import CacheManager
@@ -76,9 +78,13 @@ class PipelineOrchestrator:
 
     def run_preparation_phase(self, dirs):
         """
-        Run data preparation phase
+        Run data preparation phase.
 
-        Returns dataset hash for caching
+        Returns
+        -------
+        tuple
+            (dataset_path, recommended_n_states) where recommended_n_states
+            is an int if state discovery ran, or None otherwise.
         """
         print("\n" + "=" * 60)
         print("PHASE 1: DATA PREPARATION")
@@ -90,7 +96,7 @@ class PipelineOrchestrator:
 
         if cached_dataset and self.config.cache:
             print(f"Found cached dataset: {cached_dataset}")
-            return cached_dataset
+            return cached_dataset, None
 
         # Calculate optimal stride based on hurry mode
         if self.config.hurry:
@@ -102,11 +108,23 @@ class PipelineOrchestrator:
         prep_args = self._create_prep_args(dirs)
         dataset_path = run_preparation(prep_args)
 
+        # Read back recommended n_states from state discovery if it ran
+        recommended_n_states = None
+        if self.config.discover_states:
+            stats_path = os.path.join(dataset_path, 'dataset_stats.json')
+            if os.path.isfile(stats_path):
+                with open(stats_path) as f:
+                    stats = json.load(f)
+                if 'state_discovery' in stats:
+                    recommended_n_states = stats['state_discovery'].get('recommended_n_states')
+                    if recommended_n_states is not None:
+                        print(f"State discovery recommended n_states = {recommended_n_states}")
+
         # Cache dataset if requested
         if self.config.cache:
             self.cache_manager.cache_dataset(dataset_path, dataset_hash)
 
-        return dataset_path
+        return dataset_path, recommended_n_states
 
     def run_training_phase(self, dirs, dataset_path):
         """
@@ -141,11 +159,16 @@ class PipelineOrchestrator:
                 exp_dir = dirs['training'] / exp_name
                 exp_dir.mkdir(exist_ok=True)
 
-                # Check if model already exists
-                model_path = exp_dir / 'best_model.pt'
-                if model_path.exists():
+                # Check if model already exists (in timestamped subdirs or direct)
+                existing = sorted(exp_dir.glob('*/models/best_model.pt'))
+                if existing:
+                    model_path = existing[-1]  # latest run
                     print(f"Model already exists: {model_path}")
                     trained_models[exp_name] = str(model_path)
+                    continue
+                if (exp_dir / 'best_model.pt').exists():
+                    print(f"Model already exists: {exp_dir / 'best_model.pt'}")
+                    trained_models[exp_name] = str(exp_dir / 'best_model.pt')
                     continue
 
                 # Create training args
@@ -165,10 +188,6 @@ class PipelineOrchestrator:
                 except Exception as e:
                     print(f"Training failed: {str(e)}")
                     continue
-
-        # Clean up dataset if not caching
-        if not self.config.cache and dataset_path:
-            self._cleanup_dataset(dataset_path)
 
         return trained_models
 
@@ -281,6 +300,17 @@ class PipelineOrchestrator:
         args.cache_dir = str(dirs['cache']) if self.config.cache else None
         args.use_cache = self.config.cache
 
+        # State discovery
+        args.discover_states = self.config.discover_states
+        args.g2v_embedding_dim = self.config.g2v_embedding_dim
+        args.g2v_max_degree = self.config.g2v_max_degree
+        args.g2v_epochs = self.config.g2v_epochs
+        args.g2v_min_count = self.config.g2v_min_count
+        args.g2v_umap_dim = self.config.g2v_umap_dim or [2, 3, 5, 6, 7]
+        args.min_states = self.config.min_states
+        args.max_states = self.config.max_states
+        args.batch_size = self.config.batch_size
+
         return args
 
     def _create_train_args(self, dirs, dataset_path, lag_time, n_states, exp_dir):
@@ -319,9 +349,13 @@ class PipelineOrchestrator:
         args.protein_name = self.config.protein_name
         args.batch_size = self.config.batch_size
         args.cpu = self.config.cpu
+        args.cache_dir = str(dirs['cache']) if self.config.cache else None
+
+        # State diagnostics parameters
+        args.population_threshold = self.config.population_threshold
+        args.jsd_threshold = self.config.jsd_threshold
 
         # Get lag_time from model path
-        import re
         match = re.search(r'lag(\d+)ns', str(model_path))
         if match:
             args.lag_time = float(match.group(1))
@@ -330,6 +364,61 @@ class PipelineOrchestrator:
                                                                    list) else self.config.lag_time
 
         return args
+
+    def _discover_trained_models(self, dirs) -> dict:
+        """Scan training directory for existing trained models."""
+        trained_models = {}
+        training_dir = dirs['training']
+        if not training_dir.exists():
+            return trained_models
+        for exp_dir in sorted(training_dir.iterdir()):
+            if not exp_dir.is_dir():
+                continue
+            # Find best_model.pt inside timestamped subdirs
+            candidates = sorted(exp_dir.glob('*/models/best_model.pt'))
+            if candidates:
+                # Use the latest (last sorted) timestamped run
+                trained_models[exp_dir.name] = str(candidates[-1])
+            # Also check direct path (orchestrator's own layout)
+            elif (exp_dir / 'best_model.pt').exists():
+                trained_models[exp_dir.name] = str(exp_dir / 'best_model.pt')
+        return trained_models
+
+    def _discover_dataset_path(self, dirs) -> Optional[str]:
+        """Find existing dataset in preparation directory."""
+        prep_dir = dirs['preparation']
+        if not prep_dir.exists():
+            return None
+        # Preparation creates timestamped subdirs with dataset files
+        candidates = sorted(prep_dir.iterdir())
+        for c in reversed(candidates):  # latest first
+            if c.is_dir() and (c / 'dataset_stats.json').exists():
+                return str(c)
+        # Fallback: the prep dir itself if it contains data
+        if (prep_dir / 'dataset_stats.json').exists():
+            return str(prep_dir)
+        return None
+
+    def resume_experiment_directory(self, experiment_dir: str) -> dict:
+        """Resume from an existing experiment directory."""
+        exp_path = Path(experiment_dir)
+        # Resolve relative names against output_dir
+        if not exp_path.is_absolute():
+            exp_path = Path(self.config.output_dir) / experiment_dir
+        self.experiment_dir = exp_path
+        dirs = {
+            'root': self.experiment_dir,
+            'preparation': self.experiment_dir / 'preparation',
+            'training': self.experiment_dir / 'training',
+            'analysis': self.experiment_dir / 'analysis',
+            'cache': self.experiment_dir / 'cache' if self.config.cache else None,
+            'logs': self.experiment_dir / 'logs',
+        }
+        for name, path in dirs.items():
+            if path is not None:
+                path.mkdir(parents=True, exist_ok=True)
+        print(f"Resuming experiment: {self.experiment_dir}")
+        return dirs
 
     def _cleanup_dataset(self, dataset_path):
         """Remove dataset files if not caching"""
@@ -343,8 +432,103 @@ class PipelineOrchestrator:
         except Exception as e:
             print(f"Warning: Could not clean up dataset: {str(e)}")
 
-    def run_complete_pipeline(self):
-        """Run the complete pipeline"""
+    def _run_retrain_loop(self, dirs, dataset_path, trained_models,
+                          analysis_results, max_retrain=2):
+        """
+        Check analysis results for "retrain" recommendations and automatically
+        retrain with the reduced state count.
+
+        Mutates trained_models and analysis_results in-place.
+
+        Parameters
+        ----------
+        dirs : dict
+            Experiment directory structure.
+        dataset_path : str
+            Path to the prepared dataset.
+        trained_models : dict
+            Maps exp_name -> model_path. Updated with retrained models.
+        analysis_results : dict
+            Maps exp_name -> results dict. Updated with retrained analysis.
+        max_retrain : int
+            Maximum number of retrain iterations per experiment (default: 2).
+        """
+        # Collect experiments that need retraining from the initial analysis
+        pending = []
+        for exp_name, results in list(analysis_results.items()):
+            report = results.get("diagnostic_report")
+            if report is not None and getattr(report, "recommendation", None) == "retrain":
+                pending.append((exp_name, report.effective_n_states, 0))
+
+        if not pending:
+            return
+
+        print("\n" + "=" * 60)
+        print("PHASE 3b: AUTOMATIC RETRAINING")
+        print("=" * 60)
+
+        while pending:
+            exp_name, new_n_states, iteration = pending.pop(0)
+
+            # Extract lag_time from the original exp_name
+            match = re.search(r'lag([\d.]+)ns', exp_name)
+            if not match:
+                print(f"Could not parse lag_time from '{exp_name}', skipping retrain.")
+                continue
+            lag_time = float(match.group(1))
+
+            # Build retrained exp_name with suffix
+            suffix = "_retrained" if iteration == 0 else f"_retrained{iteration + 1}"
+            retrained_exp = f"lag{lag_time:g}ns_{new_n_states}states{suffix}"
+
+            print(f"\n--- Retraining: {exp_name} -> {retrained_exp} "
+                  f"(n_states {exp_name} -> {new_n_states}, iteration {iteration + 1}/{max_retrain}) ---")
+
+            # Create training directory
+            exp_dir = dirs['training'] / retrained_exp
+            exp_dir.mkdir(exist_ok=True)
+
+            # Train
+            train_args = self._create_train_args(
+                dirs, dataset_path, lag_time, new_n_states, exp_dir
+            )
+            try:
+                model_path = run_training(train_args)
+                trained_models[retrained_exp] = str(model_path)
+                print(f"Retrain training completed: {model_path}")
+            except Exception as e:
+                print(f"Retrain training failed for {retrained_exp}: {e}")
+                continue
+
+            # Analyze
+            analysis_dir = dirs['analysis'] / retrained_exp
+            analysis_dir.mkdir(exist_ok=True)
+            analysis_args = self._create_analysis_args(dirs, model_path, analysis_dir)
+            try:
+                results = run_analysis(analysis_args)
+                analysis_results[retrained_exp] = results
+                print(f"Retrain analysis completed: {analysis_dir}")
+            except Exception as e:
+                print(f"Retrain analysis failed for {retrained_exp}: {e}")
+                continue
+
+            # Check if this retrained model also recommends "retrain"
+            report = results.get("diagnostic_report")
+            if (report is not None
+                    and getattr(report, "recommendation", None) == "retrain"
+                    and iteration + 1 < max_retrain):
+                print(f"Retrained model also recommends retrain "
+                      f"(effective_n_states={report.effective_n_states}). "
+                      f"Queuing iteration {iteration + 2}.")
+                pending.append((retrained_exp, report.effective_n_states, iteration + 1))
+            elif (report is not None
+                  and getattr(report, "recommendation", None) == "retrain"):
+                print(f"Retrained model still recommends retrain but max iterations "
+                      f"({max_retrain}) reached. Stopping.")
+
+    def run_complete_pipeline(self, skip_preparation=False, skip_training=False,
+                              only_analysis=False, resume=None):
+        """Run the complete pipeline with optional phase skipping and resume support."""
         print("=" * 60)
         print("STARTING PYGVAMP PIPELINE")
         print("=" * 60)
@@ -354,17 +538,49 @@ class PipelineOrchestrator:
         print(f"Cache: {self.config.cache}")
         print(f"Hurry mode: {self.config.hurry}")
 
-        # Setup experiment directory
-        dirs = self.setup_experiment_directory()
+        # Setup dirs: resume existing or create new
+        if resume:
+            dirs = self.resume_experiment_directory(resume)
+        else:
+            dirs = self.setup_experiment_directory()
+
+        dataset_path = None
+        trained_models = {}
 
         # Phase 1: Preparation
-        dataset_path = self.run_preparation_phase(dirs)
+        if not skip_preparation and not only_analysis:
+            dataset_path, recommended_n_states = self.run_preparation_phase(dirs)
+            # Use discovered n_states if no explicit list was provided
+            if recommended_n_states is not None and not hasattr(self.config, '_n_states_from_cli'):
+                print(f"Using discovered n_states = {recommended_n_states}")
+                self.config.n_states_list = [recommended_n_states]
+        else:
+            print("Skipping preparation phase.")
+            dataset_path = self._discover_dataset_path(dirs)
 
         # Phase 2: Training
-        trained_models = self.run_training_phase(dirs, dataset_path)
+        if not skip_training and not only_analysis:
+            if dataset_path is None:
+                print("Error: No dataset found. Run preparation first or provide --cache.")
+                return None
+            trained_models = self.run_training_phase(dirs, dataset_path)
+        else:
+            print("Skipping training phase.")
+
+        # Discover all trained models (merges with any just-trained ones)
+        discovered = self._discover_trained_models(dirs)
+        trained_models = {**discovered, **trained_models}  # just-trained wins on conflict
 
         # Phase 3: Analysis
-        analysis_results = self.run_analysis_phase(dirs, trained_models)
+        if trained_models:
+            analysis_results = self.run_analysis_phase(dirs, trained_models)
+        else:
+            print("No trained models found. Run training first.")
+            analysis_results = {}
+
+        # Phase 3b: Automatic retraining (skip when only running analysis)
+        if analysis_results and dataset_path and not only_analysis:
+            self._run_retrain_loop(dirs, dataset_path, trained_models, analysis_results)
 
         # Save summary
         self._save_pipeline_summary(dirs, trained_models, analysis_results)
@@ -414,15 +630,54 @@ def main():
     config.traj_dir = args.traj_dir
     config.top = args.top
     config.lag_times = args.lag_times
-    config.n_states_list = args.n_states
     config.cache = args.cache
     config.hurry = args.hurry
     config.output_dir = args.output_dir
     config.protein_name = args.protein_name
+    config.cpu = args.cpu
+
+    # n_states: if explicitly provided, use it and skip discovery for state count
+    if args.n_states is not None:
+        config.n_states_list = args.n_states
+        config._n_states_from_cli = True
+    else:
+        # Will be determined by state discovery; fall back to config default
+        config.n_states_list = [config.n_states]
+
+    # State discovery: on by default, disabled with --no_discover_states
+    if args.no_discover_states:
+        config.discover_states = False
+    if args.min_states is not None:
+        config.min_states = args.min_states
+    if args.max_states is not None:
+        config.max_states = args.max_states
+
+    # Override training parameters only if explicitly provided
+    if args.epochs is not None:
+        config.epochs = args.epochs
+    if args.clip_grad is not None:
+        config.clip_grad = args.clip_grad
+    if args.stride is not None:
+        config.stride = args.stride
+    if args.selection is not None:
+        config.selection = args.selection
+    if args.no_continuous:
+        config.continuous = False
+
+    # State diagnostics overrides
+    if args.population_threshold is not None:
+        config.population_threshold = args.population_threshold
+    if args.jsd_threshold is not None:
+        config.jsd_threshold = args.jsd_threshold
 
     # Create orchestrator and run pipeline
     orchestrator = PipelineOrchestrator(config)
-    results = orchestrator.run_complete_pipeline()
+    results = orchestrator.run_complete_pipeline(
+        skip_preparation=args.skip_preparation,
+        skip_training=args.skip_training,
+        only_analysis=args.only_analysis,
+        resume=args.resume,
+    )
 
     return results
 

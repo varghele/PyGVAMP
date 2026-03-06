@@ -5,14 +5,10 @@ This script demonstrates the typical workflow for integrating the visualizer
 with actual molecular dynamics analysis results.
 """
 
-import sys
 import numpy as np
 from pathlib import Path
 
-# Add parent directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from md_visualizer import MDTrajectoryVisualizer
+from pygv.visualization import MDTrajectoryVisualizer
 
 
 def load_real_data_example():

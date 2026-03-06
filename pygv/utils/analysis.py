@@ -687,8 +687,10 @@ def generate_state_structures(
                     f"{protein_name}_state_{state_num}_rank_{rank + 1}_frame_{original_idx}_rmsd_{rmsd:.3f}_prob_{prob:.3f}.pdb"
                 )
 
-                # Save the frame as PDB
-                combined_traj[frame_idx].save_pdb(output_file)
+                # Superpose representative onto the average structure for minimal RMSD
+                rep_frame = aligned_traj[idx]
+                rep_frame.superpose(average_structure)
+                rep_frame.save_pdb(output_file)
                 state_structures[state_idx].append(output_file)
 
                 # Add to summary

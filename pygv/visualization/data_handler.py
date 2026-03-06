@@ -1,5 +1,6 @@
 """Data processing and validation utilities for MD trajectory visualization."""
 
+import os
 import numpy as np
 import json
 from typing import Optional, Dict, List, Tuple, Union
@@ -298,12 +299,15 @@ class DataProcessor:
     @staticmethod
     def load_pdb_file(pdb_path: str) -> str:
         """
-        Load PDB file and return as string.
+        Load structure file and return as PDB string.
+
+        Supports PDB files directly, and converts non-PDB formats
+        (e.g. .gro, .mol2) to PDB via MDTraj.
 
         Parameters
         ----------
         pdb_path : str
-            Path to PDB file or PDB ID (e.g., '1UBQ')
+            Path to structure file or 4-letter PDB ID (e.g., '1UBQ')
 
         Returns
         -------
@@ -320,10 +324,30 @@ class DataProcessor:
                     return response.read().decode('utf-8')
             except Exception as e:
                 raise ValueError(f"Failed to fetch PDB {pdb_path} from RCSB: {e}")
-        else:
-            # Load from file
+
+        ext = os.path.splitext(pdb_path)[1].lower()
+        if ext in ('.pdb',):
             with open(pdb_path, 'r') as f:
                 return f.read()
+
+        # Non-PDB format — convert via MDTraj
+        try:
+            import mdtraj as md
+            import tempfile
+            struct = md.load(pdb_path)
+            with tempfile.NamedTemporaryFile(suffix='.pdb', mode='r', delete=False) as tmp:
+                tmp_path = tmp.name
+            struct.save_pdb(tmp_path)
+            with open(tmp_path, 'r') as f:
+                pdb_string = f.read()
+            os.unlink(tmp_path)
+            return pdb_string
+        except ImportError:
+            # Fallback: read raw and hope 3Dmol can parse it
+            with open(pdb_path, 'r') as f:
+                return f.read()
+        except Exception as e:
+            raise ValueError(f"Failed to convert {pdb_path} to PDB format: {e}")
 
     @staticmethod
     def prepare_json_data(timescales_data: List[Dict]) -> str:
@@ -381,6 +405,110 @@ class DataProcessor:
             'min_y': float(np.min(all_embeddings[:, 1])),
             'max_y': float(np.max(all_embeddings[:, 1]))
         }
+
+    @staticmethod
+    def validate_prep_embeddings(embeddings: np.ndarray) -> np.ndarray:
+        """
+        Validate preparation-phase 2D embeddings.
+
+        Parameters
+        ----------
+        embeddings : np.ndarray
+            Array of shape (n_frames, 2)
+
+        Returns
+        -------
+        np.ndarray
+            Validated embeddings array (float32)
+
+        Raises
+        ------
+        ValueError
+            If embeddings have invalid shape or contain NaN/Inf values
+        """
+        if not isinstance(embeddings, np.ndarray):
+            embeddings = np.array(embeddings)
+
+        if embeddings.ndim != 2 or embeddings.shape[1] != 2:
+            raise ValueError(f"Prep embeddings must have shape (n_frames, 2), got {embeddings.shape}")
+
+        if np.any(np.isnan(embeddings)) or np.any(np.isinf(embeddings)):
+            raise ValueError("Prep embeddings contain NaN or Inf values")
+
+        return embeddings.astype(np.float32)
+
+    @staticmethod
+    def validate_cluster_labels(labels: np.ndarray, n_frames: int) -> np.ndarray:
+        """
+        Validate cluster label array from state discovery.
+
+        Parameters
+        ----------
+        labels : np.ndarray
+            1D array of integer cluster assignments
+        n_frames : int
+            Expected number of frames
+
+        Returns
+        -------
+        np.ndarray
+            Validated labels array (int32)
+
+        Raises
+        ------
+        ValueError
+            If labels are invalid
+        """
+        if not isinstance(labels, np.ndarray):
+            labels = np.array(labels)
+
+        if labels.ndim != 1:
+            raise ValueError(f"Cluster labels must be 1D array, got shape {labels.shape}")
+
+        if len(labels) != n_frames:
+            raise ValueError(f"Cluster labels length ({len(labels)}) must match "
+                           f"number of frames ({n_frames})")
+
+        if np.any(labels < 0):
+            raise ValueError("Cluster labels cannot be negative")
+
+        return labels.astype(np.int32)
+
+    @staticmethod
+    def compute_state_attention_avg(attention_values: np.ndarray,
+                                     state_assignments: np.ndarray) -> np.ndarray:
+        """
+        Compute average attention per VAMP state, normalized to [0, 1] per state.
+
+        Parameters
+        ----------
+        attention_values : np.ndarray
+            Attention values of shape (n_frames, n_residues)
+        state_assignments : np.ndarray
+            State assignments of shape (n_frames,)
+
+        Returns
+        -------
+        np.ndarray
+            Per-state average attention of shape (n_states, n_residues),
+            normalized to [0, 1] per state.
+        """
+        n_states = int(np.max(state_assignments)) + 1
+        n_residues = attention_values.shape[1]
+        state_attn_avg = np.zeros((n_states, n_residues), dtype=np.float32)
+
+        for s in range(n_states):
+            mask = state_assignments == s
+            if mask.any():
+                state_attn_avg[s] = attention_values[mask].mean(axis=0)
+
+        # Normalize per state to [0, 1]
+        for s in range(n_states):
+            mx = state_attn_avg[s].max()
+            if mx > 0:
+                state_attn_avg[s] /= mx
+
+        return state_attn_avg
 
     @staticmethod
     def get_residue_count_from_pdb(pdb_string: str) -> int:

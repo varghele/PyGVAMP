@@ -360,6 +360,10 @@ def run_training(args):
     # Infer num atoms for later embedding
     args.embedding_in_dim = dataset.n_atoms
 
+    # When using embedding, the encoder receives embedding output, not raw features
+    if args.use_embedding:
+        args.node_dim = args.embedding_out_dim
+
     # Create model
     model = create_model(args)
     print(f"Created VAMPNet model with {sum(p.numel() for p in model.parameters())} parameters")
@@ -451,7 +455,7 @@ def run_training(args):
     )
     print("ITS calculation complete")
 
-
+    return paths['best_model']
 
 
 
