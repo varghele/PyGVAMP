@@ -401,7 +401,11 @@ class PipelineOrchestrator:
 
     def resume_experiment_directory(self, experiment_dir: str) -> dict:
         """Resume from an existing experiment directory."""
-        self.experiment_dir = Path(experiment_dir)
+        exp_path = Path(experiment_dir)
+        # Resolve relative names against output_dir
+        if not exp_path.is_absolute():
+            exp_path = Path(self.config.output_dir) / experiment_dir
+        self.experiment_dir = exp_path
         dirs = {
             'root': self.experiment_dir,
             'preparation': self.experiment_dir / 'preparation',
