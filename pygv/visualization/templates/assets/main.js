@@ -882,7 +882,7 @@ function updateProteinViewer() {
                 stateData.representatives.forEach((pdb, i) => {
                     proteinViewer.addModel(pdb, 'pdb');
                     proteinViewer.setStyle({model: i + 1}, {
-                        [representation]: {opacity: 0.3, color: 'grey'}
+                        [representation]: {opacity: 0.5, color: 'grey'}
                     });
                 });
             }
@@ -1001,7 +1001,7 @@ function updateAttentionViewer() {
                 stateData.representatives.forEach((pdb, i) => {
                     attentionViewer.addModel(pdb, 'pdb');
                     attentionViewer.setStyle({model: i + 1}, {
-                        [representation]: {opacity: 0.25, color: 'grey'}
+                        [representation]: {opacity: 0.5, color: 'grey'}
                     });
                 });
             }
