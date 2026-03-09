@@ -61,6 +61,8 @@ def get_model_and_traj_directory(args):
     top_file = os.path.expanduser(args.top)
     if not os.path.isfile(top_file):
         sys.exit(f"Error: Topology file not found at {top_file}")
+    from pygv.pipe.master_pipeline import validate_topology_file
+    validate_topology_file(top_file)
     paths['top_file'] = top_file
 
     # Set analysis directory

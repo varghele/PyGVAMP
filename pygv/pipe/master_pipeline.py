@@ -610,9 +610,45 @@ class PipelineOrchestrator:
             json.dump(summary, f, indent=2)
 
 
+SUPPORTED_TOPOLOGY_EXTENSIONS = {
+    '.pdb', '.pdb.gz', '.gro',
+    '.pdbx', '.pdbx.gz', '.mmcif', '.mmcif.gz', '.cif', '.cif.gz',
+}
+
+
+def validate_topology_file(top_path: str):
+    """
+    Validate that the topology file has coordinates (required for standalone loading).
+
+    Topology-only formats like .psf (CHARMM/NAMD), .prmtop (AMBER) are not supported
+    because several pipeline steps need to load the file with md.load() which requires
+    coordinates.
+
+    Raises
+    ------
+    SystemExit
+        If the topology file extension is not supported.
+    """
+    import sys
+    ext = ''.join(Path(top_path).suffixes).lower()  # handles .pdb.gz
+    if ext not in SUPPORTED_TOPOLOGY_EXTENSIONS:
+        sys.exit(
+            f"Error: Topology file '{top_path}' has unsupported extension '{ext}'.\n"
+            f"The pipeline requires a topology file with coordinates.\n"
+            f"Supported formats: {', '.join(sorted(SUPPORTED_TOPOLOGY_EXTENSIONS))}\n"
+            f"Topology-only formats (.psf, .prmtop) are not supported.\n"
+            f"Hint: Convert your topology to PDB, e.g.:\n"
+            f"  mdtraj: md.load('traj.dcd', top='file.psf')[0].save_pdb('topology.pdb')\n"
+            f"  VMD:    mol load psf file.psf; animate write pdb topology.pdb"
+        )
+
+
 def main():
     """Main entry point for pipeline"""
     args = parse_pipeline_args()
+
+    # Validate topology file format early
+    validate_topology_file(args.top)
 
     # Load configuration
     if args.preset:
