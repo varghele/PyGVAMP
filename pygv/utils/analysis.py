@@ -470,7 +470,8 @@ def generate_state_structures(
         protein_name: str,
         stride: int = 10,
         n_structures: int = 10,
-        prob_threshold: float = 0.7
+        prob_threshold: float = 0.7,
+        selection: str = None
 ) -> dict:
     """
     Generate multiple representative PDB structures for each conformational state.
@@ -493,6 +494,9 @@ def generate_state_structures(
         Number of structures to generate per state (default: 10)
     prob_threshold : float, optional
         Probability threshold for accepting frames as representative of a state (default: 0.7)
+    selection : str, optional
+        MDTraj atom selection string (e.g. 'name CA'). If provided, only the
+        selected atoms are loaded and saved in the output PDB files.
 
     Returns
     -------
@@ -521,6 +525,15 @@ def generate_state_structures(
 
     print(f"Total trajectory files found: {len(traj_files)}")
 
+    # Compute atom indices for selection filtering
+    atom_indices = None
+    if selection:
+        top = md.load(topology_file).topology
+        atom_indices = top.select(selection)
+        if len(atom_indices) == 0:
+            raise ValueError(f"Selection '{selection}' returned no atoms")
+        print(f"Applying selection '{selection}': {len(atom_indices)} atoms")
+
     # Extract number of states from probability array
     n_states = probs.shape[1]
     n_frames_total = probs.shape[0]
@@ -545,7 +558,8 @@ def generate_state_structures(
     print("Loading trajectories...")
     for traj_file in tqdm(traj_files, desc="Loading trajectories"):
         try:
-            traj = md.load(traj_file, top=topology_file, stride=stride)
+            traj = md.load(traj_file, top=topology_file, stride=stride,
+                          atom_indices=atom_indices)
             trajs.append(traj)
             n_frames = len(traj)
             frame_counts.append(n_frames)

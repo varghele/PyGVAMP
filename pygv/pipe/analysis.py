@@ -363,7 +363,8 @@ def run_analysis(args=None):
         protein_name=args.protein_name,
         stride=args.stride,
         n_structures=10,
-        prob_threshold=0.0
+        prob_threshold=0.0,
+        selection=args.selection,
     )
 
     # ---- Step 10: PyMOL visualizations (optional) ----
@@ -463,6 +464,7 @@ def run_analysis(args=None):
                 timestep=inferred_timestep,
                 traj_dir=args.traj_dir,
                 file_pattern=args.file_pattern,
+                selection=args.selection,
             )
             if report_path:
                 print(f"Merged interactive report: {report_path}")

@@ -529,6 +529,7 @@ def generate_merged_interactive_report(
         timestep: float = 0.001,
         traj_dir: str = None,
         file_pattern: str = "*.xtc",
+        selection: str = None,
 ) -> Optional[str]:
     """
     Generate a single interactive HTML report combining all lag times.
@@ -554,6 +555,10 @@ def generate_merged_interactive_report(
         Path to trajectory directory. If None, reads from config.yaml.
     file_pattern : str
         Glob pattern for trajectory files (default: '*.xtc').
+    selection : str, optional
+        MDTraj atom selection string (e.g. 'name CA'). If provided, the
+        trajectory and protein structure are sliced to this selection to
+        match the atoms used during training.
 
     Returns
     -------
@@ -628,6 +633,8 @@ def generate_merged_interactive_report(
                     cfg = yaml.safe_load(f)
                 traj_dir = cfg.get('traj_dir')
                 file_pattern = cfg.get('file_pattern', file_pattern)
+                if selection is None:
+                    selection = cfg.get('selection')
             except Exception:
                 pass
 
@@ -641,6 +648,9 @@ def generate_merged_interactive_report(
             traj_files = find_trajectory_files(traj_dir, file_pattern)
             if traj_files:
                 traj = md.load(traj_files, top=topology_file, stride=stride)
+                if selection:
+                    atom_indices = traj.topology.select(selection)
+                    traj = traj.atom_slice(atom_indices)
                 pdb_template = _create_pdb_template(traj[0], topology_file)
                 # frame_coords shape: (n_frames, n_atoms, 3) in Ångströms
                 frame_coords = traj.xyz * 10.0  # nm → Å
@@ -789,7 +799,12 @@ def generate_merged_interactive_report(
     if frame_coords is not None and pdb_template is not None:
         viz.set_frame_coordinates(frame_coords, pdb_template)
 
-    viz.set_protein_structure(pdb_path=topology_file)
+    # Use the selection-sliced PDB template if available, otherwise fall back
+    # to the full topology file.
+    if pdb_template is not None:
+        viz.set_protein_structure(pdb_string=pdb_template)
+    else:
+        viz.set_protein_structure(pdb_path=topology_file)
 
     output_path = os.path.join(experiment_dir, f"{protein_name}_interactive_report.html")
     viz.generate(
