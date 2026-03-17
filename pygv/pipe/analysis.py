@@ -115,7 +115,8 @@ def create_dataset_and_loader(args):
         selection=args.selection,
         stride=args.stride,
         cache_dir=args.cache_dir,
-        use_cache=True if args.cache_dir is not None else False
+        use_cache=True if args.cache_dir is not None else False,
+        timestep=getattr(args, 'timestep', None),
     )
 
     # Get frames dataset instead of time-lagged pairs dataset
@@ -235,7 +236,8 @@ def run_analysis(args=None):
         return_tensors=False
     )
 
-    inferred_timestep = dataset._infer_timestep() / 1000  # Timestep in nanoseconds
+    timestep_override = getattr(args, 'timestep', None)
+    inferred_timestep = dataset._infer_timestep(timestep_override_ns=timestep_override) / 1000  # Timestep in nanoseconds
 
     # ---- Step 3: Plot original transition matrix ----
     from pygv.utils.analysis import calculate_transition_matrices

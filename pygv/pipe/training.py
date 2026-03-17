@@ -113,7 +113,8 @@ def create_dataset_and_loader(args,
         selection=args.selection,
         stride=args.stride,
         cache_dir=args.cache_dir,
-        use_cache=args.use_cache
+        use_cache=args.use_cache,
+        timestep=getattr(args, 'timestep', None),
     )
 
     print(f"Dataset created with {len(dataset)} samples")
@@ -400,7 +401,8 @@ def run_training(args):
                                                                           )
 
     # Get actual timestep of the trajectory
-    inferred_timestep = dataset._infer_timestep() / 1000  # Timestep in nanoseconds
+    timestep_override = getattr(args, 'timestep', None)
+    inferred_timestep = dataset._infer_timestep(timestep_override_ns=timestep_override) / 1000  # Timestep in nanoseconds
 
     # Get lag times up to maximum lag time
     if args.max_tau is not None:

@@ -20,6 +20,7 @@ class BaseConfig:
     stride: int = 10
     lag_time: float = 20.0
     continuous: bool = True  # If False, time-lagged pairs won't cross trajectory boundaries
+    timestep: Optional[float] = None  # Override trajectory timestep in ns (None = auto-infer)
 
     # Graph construction
     n_neighbors: int = 4

@@ -57,6 +57,10 @@ Examples:
                         help='Frame stride for trajectory loading (overrides preset)')
     parser.add_argument('--selection', type=str, default=None,
                         help='MDTraj atom selection string (overrides preset)')
+    parser.add_argument('--timestep', type=float, default=None,
+                        help='Override trajectory timestep in nanoseconds. '
+                             'Use when the XTC/DCD time metadata is incorrect '
+                             '(e.g. --timestep 0.2 for 0.2 ns between frames)')
     parser.add_argument('--cpu', action='store_true',
                         help='Force CPU usage even if CUDA is available')
     parser.add_argument('--no_continuous', action='store_true',

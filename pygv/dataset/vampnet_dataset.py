@@ -88,6 +88,7 @@ class VAMPNetDataset(Dataset):
             use_amino_acid_encoding: bool = False,
             amino_acid_feature_type: Literal["labels", "properties"] = "labels",
             continuous: bool = True,
+            timestep: Optional[float] = None,
     ):
         super(VAMPNetDataset, self).__init__()
 
@@ -104,6 +105,7 @@ class VAMPNetDataset(Dataset):
         self.use_amino_acid_encoding = use_amino_acid_encoding
         self.amino_acid_feature_type = amino_acid_feature_type
         self.continuous = continuous
+        self.timestep_override_ns = timestep
 
         # Create cache directory if it doesn't exist
         if self.cache_dir and not os.path.exists(self.cache_dir):
@@ -123,7 +125,7 @@ class VAMPNetDataset(Dataset):
 
         if not cache_loaded:
             # Check if lag time is compatible with trajectory timestep and stride
-            self._infer_timestep()
+            self._infer_timestep(timestep_override_ns=self.timestep_override_ns)
 
             # Process trajectories and create graphs
             self._process_trajectories()
@@ -562,9 +564,15 @@ class VAMPNetDataset(Dataset):
             print(f"Error loading dataset from cache: {str(e)}")
             return False
 
-    def _infer_timestep(self) -> float:
+    def _infer_timestep(self, timestep_override_ns: float = None) -> float:
         """
         Infer the trajectory timestep in picoseconds and check lag time compatibility.
+
+        Parameters
+        ----------
+        timestep_override_ns : float, optional
+            User-provided timestep in nanoseconds. If given, this is used
+            instead of reading from the trajectory time metadata.
 
         Returns
         -------
@@ -579,17 +587,21 @@ class VAMPNetDataset(Dataset):
         if not self.trajectory_files:
             raise ValueError("No trajectory files provided")
 
-        try:
-            traj_iterator = md.iterload(self.trajectory_files[0], top=self.topology_file, chunk=2)
-            first_chunk = next(traj_iterator)
+        if timestep_override_ns is not None:
+            timestep = timestep_override_ns * 1000.0  # Convert ns to ps
+            print(f"Using user-specified timestep: {timestep_override_ns} ns ({timestep:.3f} ps)")
+        else:
+            try:
+                traj_iterator = md.iterload(self.trajectory_files[0], top=self.topology_file, chunk=2)
+                first_chunk = next(traj_iterator)
 
-            if len(first_chunk.time) < 2:
-                raise ValueError("Trajectory must have at least 2 frames to infer timestep")
+                if len(first_chunk.time) < 2:
+                    raise ValueError("Trajectory must have at least 2 frames to infer timestep")
 
-            timestep = first_chunk.time[1] - first_chunk.time[0]
-        except Exception as e:
-            print(f"Warning: Could not determine timestep from trajectory time data: {str(e)}")
-            timestep = None
+                timestep = first_chunk.time[1] - first_chunk.time[0]
+            except Exception as e:
+                print(f"Warning: Could not determine timestep from trajectory time data: {str(e)}")
+                timestep = None
 
         lag_time_ps = self.lag_time * 1000.0
         effective_timestep = timestep * self.stride

@@ -235,28 +235,28 @@ class PipelineOrchestrator:
         max_stride = 50
         min_lag_time = min(self.config.lag_times) if isinstance(self.config.lag_times, list) else self.config.lag_times
 
-        # Infer timestep from trajectory (in picoseconds)
-        try:
-            # Load first few frames to get timestep
-            import mdtraj as md
-            traj_iterator = md.iterload(self.config.traj_dir, top=self.config.top, chunk=2)
-            first_chunk = next(traj_iterator)
+        # Get timestep (user override or inferred from trajectory)
+        if self.config.timestep is not None:
+            timestep_ns = self.config.timestep
+            print(f"Using user-specified timestep: {timestep_ns} ns")
+        else:
+            try:
+                import mdtraj as md
+                traj_iterator = md.iterload(self.config.traj_dir, top=self.config.top, chunk=2)
+                first_chunk = next(traj_iterator)
 
-            if len(first_chunk.time) < 2:
-                raise ValueError("Trajectory must have at least 2 frames to infer timestep")
+                if len(first_chunk.time) < 2:
+                    raise ValueError("Trajectory must have at least 2 frames to infer timestep")
 
-            # Calculate timestep from time differences (in picoseconds)
-            timestep_ps = first_chunk.time[1] - first_chunk.time[0]
+                timestep_ps = first_chunk.time[1] - first_chunk.time[0]
+                timestep_ns = timestep_ps / 1000.0
 
-            # Convert to nanoseconds for comparison with lag_time
-            timestep_ns = timestep_ps / 1000.0
+                print(f"Inferred trajectory timestep: {timestep_ps:.3f} ps ({timestep_ns:.6f} ns)")
 
-            print(f"Inferred trajectory timestep: {timestep_ps:.3f} ps ({timestep_ns:.6f} ns)")
-
-        except Exception as e:
-            print(f"Warning: Could not infer timestep from trajectory: {str(e)}")
-            print("Falling back to assumed timestep of 0.1 ns")
-            timestep_ns = 0.1  # Fallback to assumed value
+            except Exception as e:
+                print(f"Warning: Could not infer timestep from trajectory: {str(e)}")
+                print("Falling back to assumed timestep of 0.1 ns")
+                timestep_ns = 0.1
 
         # Convert min_lag_time to same units (nanoseconds)
         min_lag_time_ns = min_lag_time
@@ -350,6 +350,9 @@ class PipelineOrchestrator:
         args.batch_size = self.config.batch_size
         args.cpu = self.config.cpu
         args.cache_dir = str(dirs['cache']) if self.config.cache else None
+
+        # Timestep override
+        args.timestep = self.config.timestep
 
         # State diagnostics parameters
         args.population_threshold = self.config.population_threshold
@@ -643,6 +646,35 @@ def validate_topology_file(top_path: str):
         )
 
 
+def _warn_if_timestep_unreasonable(timestep_ns: float, n_traj_files: int):
+    """
+    Print a warning if the inferred timestep looks suspiciously large or small.
+
+    Some MD engines (notably NAMD) write XTC/DCD time metadata in non-standard
+    units (e.g. femtoseconds instead of picoseconds), causing a 1000x error.
+    """
+    if timestep_ns >= 10.0:
+        print(
+            f"\n{'=' * 60}\n"
+            f"WARNING: Inferred timestep is {timestep_ns:.1f} ns per frame.\n"
+            f"This is unusually large and may indicate incorrect time metadata\n"
+            f"in the trajectory file (common with NAMD/CHARMM trajectories).\n"
+            f"\n"
+            f"If this is wrong, re-run with --timestep <correct_value_in_ns>\n"
+            f"For example: --timestep 0.2  (for 0.2 ns = 200 ps between frames)\n"
+            f"{'=' * 60}\n"
+        )
+    elif timestep_ns <= 1e-6:
+        print(
+            f"\n{'=' * 60}\n"
+            f"WARNING: Inferred timestep is {timestep_ns:.2e} ns per frame.\n"
+            f"This is unusually small and may indicate incorrect time metadata.\n"
+            f"\n"
+            f"If this is wrong, re-run with --timestep <correct_value_in_ns>\n"
+            f"{'=' * 60}\n"
+        )
+
+
 def validate_lag_times(config):
     """
     Validate that all requested lag times are compatible with the trajectory timestep.
@@ -661,24 +693,33 @@ def validate_lag_times(config):
 
     lag_times = config.lag_times if isinstance(config.lag_times, list) else [config.lag_times]
     stride = config.stride
+    timestep_override_ns = getattr(config, 'timestep', None)
 
     traj_files = find_trajectory_files(config.traj_dir, file_pattern=config.file_pattern)
     if not traj_files:
         sys.exit(f"Error: No trajectory files found in {config.traj_dir} "
                  f"matching '{config.file_pattern}'")
 
-    try:
-        traj_iter = md.iterload(traj_files[0], top=config.top, chunk=2)
-        first_chunk = next(traj_iter)
-        if len(first_chunk.time) < 2:
-            print("Warning: Could not infer timestep (need at least 2 frames). "
-                  "Skipping lag time validation.")
+    if timestep_override_ns is not None:
+        timestep_ps = timestep_override_ns * 1000.0
+        print(f"Using user-specified timestep: {timestep_override_ns} ns ({timestep_ps:.0f} ps)")
+    else:
+        try:
+            traj_iter = md.iterload(traj_files[0], top=config.top, chunk=2)
+            first_chunk = next(traj_iter)
+            if len(first_chunk.time) < 2:
+                print("Warning: Could not infer timestep (need at least 2 frames). "
+                      "Skipping lag time validation.")
+                return
+            timestep_ps = float(first_chunk.time[1] - first_chunk.time[0])
+        except Exception as e:
+            print(f"Warning: Could not infer timestep from trajectory: {e}. "
+                  f"Skipping lag time validation.")
             return
-        timestep_ps = float(first_chunk.time[1] - first_chunk.time[0])
-    except Exception as e:
-        print(f"Warning: Could not infer timestep from trajectory: {e}. "
-              f"Skipping lag time validation.")
-        return
+
+        # Sanity check: warn if inferred timestep seems unreasonable
+        timestep_ns_inferred = timestep_ps / 1000.0
+        _warn_if_timestep_unreasonable(timestep_ns_inferred, len(traj_files))
 
     effective_timestep_ps = timestep_ps * stride
     effective_timestep_ns = effective_timestep_ps / 1000.0
@@ -701,9 +742,9 @@ def validate_lag_times(config):
         for lag, closest in invalid:
             msg += f"    {lag} ns  ->  closest valid: {closest:.1f} ns\n"
         msg += (f"\n"
-                f"  Valid lag times must be multiples of {effective_timestep_ns:.1f} ns.\n"
+                f"  Valid lag times must be multiples of {effective_timestep_ns:g} ns.\n"
                 f"  Example valid values: "
-                + ", ".join(f"{effective_timestep_ns * i:.0f}" for i in range(1, 6))
+                + ", ".join(f"{effective_timestep_ns * i:g}" for i in range(1, 6))
                 + ", ...")
         sys.exit(msg)
 
@@ -767,6 +808,8 @@ def main():
         config.selection = args.selection
     if args.no_continuous:
         config.continuous = False
+    if args.timestep is not None:
+        config.timestep = args.timestep
 
     # State diagnostics overrides
     if args.population_threshold is not None:
