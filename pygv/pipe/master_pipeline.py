@@ -643,6 +643,74 @@ def validate_topology_file(top_path: str):
         )
 
 
+def validate_lag_times(config):
+    """
+    Validate that all requested lag times are compatible with the trajectory timestep.
+
+    Loads 2 frames from the first trajectory file to infer the timestep, then
+    checks that each lag time is an exact multiple of (timestep * stride).
+
+    Raises
+    ------
+    SystemExit
+        If any lag time is incompatible.
+    """
+    import sys
+    import mdtraj as md
+    from pygv.utils.pipe_utils import find_trajectory_files
+
+    lag_times = config.lag_times if isinstance(config.lag_times, list) else [config.lag_times]
+    stride = config.stride
+
+    traj_files = find_trajectory_files(config.traj_dir, file_pattern=config.file_pattern)
+    if not traj_files:
+        sys.exit(f"Error: No trajectory files found in {config.traj_dir} "
+                 f"matching '{config.file_pattern}'")
+
+    try:
+        traj_iter = md.iterload(traj_files[0], top=config.top, chunk=2)
+        first_chunk = next(traj_iter)
+        if len(first_chunk.time) < 2:
+            print("Warning: Could not infer timestep (need at least 2 frames). "
+                  "Skipping lag time validation.")
+            return
+        timestep_ps = float(first_chunk.time[1] - first_chunk.time[0])
+    except Exception as e:
+        print(f"Warning: Could not infer timestep from trajectory: {e}. "
+              f"Skipping lag time validation.")
+        return
+
+    effective_timestep_ps = timestep_ps * stride
+    effective_timestep_ns = effective_timestep_ps / 1000.0
+
+    invalid = []
+    for lag in lag_times:
+        lag_ps = lag * 1000.0
+        remainder = lag_ps % effective_timestep_ps
+        if remainder > 1e-6 and abs(remainder - effective_timestep_ps) > 1e-6:
+            closest = round(lag_ps / effective_timestep_ps) * effective_timestep_ns
+            invalid.append((lag, closest))
+
+    if invalid:
+        msg = (f"Error: Some lag times are not compatible with the trajectory.\n"
+               f"  Trajectory timestep: {timestep_ps:.0f} ps ({effective_timestep_ns:.1f} ns)\n"
+               f"  Stride: {stride}\n"
+               f"  Effective timestep: {effective_timestep_ps:.0f} ps ({effective_timestep_ns:.1f} ns)\n"
+               f"\n"
+               f"  Invalid lag times:\n")
+        for lag, closest in invalid:
+            msg += f"    {lag} ns  ->  closest valid: {closest:.1f} ns\n"
+        msg += (f"\n"
+                f"  Valid lag times must be multiples of {effective_timestep_ns:.1f} ns.\n"
+                f"  Example valid values: "
+                + ", ".join(f"{effective_timestep_ns * i:.0f}" for i in range(1, 6))
+                + ", ...")
+        sys.exit(msg)
+
+    print(f"Lag time validation passed: {lag_times} "
+          f"(timestep={effective_timestep_ns:.1f} ns, stride={stride})")
+
+
 def main():
     """Main entry point for pipeline"""
     args = parse_pipeline_args()
@@ -705,6 +773,10 @@ def main():
         config.population_threshold = args.population_threshold
     if args.jsd_threshold is not None:
         config.jsd_threshold = args.jsd_threshold
+
+    # Validate lag times against trajectory timestep before any work begins
+    if not args.only_analysis:
+        validate_lag_times(config)
 
     # Create orchestrator and run pipeline
     orchestrator = PipelineOrchestrator(config)
