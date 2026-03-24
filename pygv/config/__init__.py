@@ -2,10 +2,10 @@
 Configuration management for PyGVAMP
 """
 from .base_config import BaseConfig
-from .model_configs import SchNetConfig, MetaConfig, ML3Config
-from .presets.small import SmallSchNetConfig, SmallMetaConfig, SmallML3Config
-from .presets.medium import MediumSchNetConfig, MediumMetaConfig, MediumML3Config
-from .presets.large import LargeSchNetConfig, LargeMetaConfig, LargeML3Config
+from .model_configs import SchNetConfig, MetaConfig, ML3Config, GINConfig
+from .presets.small import SmallSchNetConfig, SmallMetaConfig, SmallML3Config, SmallGINConfig
+from .presets.medium import MediumSchNetConfig, MediumMetaConfig, MediumML3Config, MediumGINConfig
+from .presets.large import LargeSchNetConfig, LargeMetaConfig, LargeML3Config, LargeGINConfig
 
 # Registry of available configurations
 CONFIG_REGISTRY = {
@@ -14,21 +14,25 @@ CONFIG_REGISTRY = {
     'schnet': SchNetConfig,
     'meta': MetaConfig,
     'ml3': ML3Config,
+    'gin': GINConfig,
 
     # Small presets (small molecules, ligands)
     'small_schnet': SmallSchNetConfig,
     'small_meta': SmallMetaConfig,
     'small_ml3': SmallML3Config,
+    'small_gin': SmallGINConfig,
 
     # Medium presets (peptides, small protein domains)
     'medium_schnet': MediumSchNetConfig,
     'medium_meta': MediumMetaConfig,
     'medium_ml3': MediumML3Config,
+    'medium_gin': MediumGINConfig,
 
     # Large presets (proteins, protein complexes)
     'large_schnet': LargeSchNetConfig,
     'large_meta': LargeMetaConfig,
     'large_ml3': LargeML3Config,
+    'large_gin': LargeGINConfig,
 }
 
 
@@ -71,7 +75,7 @@ def list_presets():
     """List all available configuration presets"""
     print("Available configuration presets:")
     print("\nBase configurations:")
-    for name in ['base', 'schnet', 'meta', 'ml3']:
+    for name in ['base', 'schnet', 'meta', 'ml3', 'gin']:
         if name in CONFIG_REGISTRY:
             print(f"  - {name}")
 
@@ -97,18 +101,22 @@ __all__ = [
     'SchNetConfig',
     'MetaConfig',
     'ML3Config',
+    'GINConfig',
     # Small presets
     'SmallSchNetConfig',
     'SmallMetaConfig',
     'SmallML3Config',
+    'SmallGINConfig',
     # Medium presets
     'MediumSchNetConfig',
     'MediumMetaConfig',
     'MediumML3Config',
+    'MediumGINConfig',
     # Large presets
     'LargeSchNetConfig',
     'LargeMetaConfig',
     'LargeML3Config',
+    'LargeGINConfig',
     # Functions
     'get_config',
     'list_presets',

@@ -136,4 +136,4 @@ class BaseConfig:
 
 
 # Import encoder-specific configs for backward compatibility
-from .model_configs import SchNetConfig, MetaConfig, ML3Config
+from .model_configs import SchNetConfig, MetaConfig, ML3Config, GINConfig

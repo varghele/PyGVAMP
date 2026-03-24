@@ -13,7 +13,7 @@ def add_encoder_selection_args(parser: argparse.ArgumentParser):
     """Add encoder type selection argument."""
     encoder_group = parser.add_argument_group('Encoder Selection')
     encoder_group.add_argument('--encoder_type', type=str, default='schnet',
-                               choices=['schnet', 'meta', 'ml3'],
+                               choices=['schnet', 'meta', 'ml3', 'gin'],
                                help='Type of graph neural network encoder')
     return encoder_group
 
