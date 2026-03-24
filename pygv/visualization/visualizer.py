@@ -67,6 +67,7 @@ class MDTrajectoryVisualizer:
         self.protein_source = None
         self.frame_coordinates = None
         self.pdb_template = None
+        self.residue_mapping = None
 
         # Default configuration
         self.config = {
@@ -230,6 +231,23 @@ class MDTrajectoryVisualizer:
         self.frame_coordinates = np.round(coordinates.astype(np.float32), 1)
         self.pdb_template = pdb_template
 
+    def set_residue_mapping(self, residue_mapping: List[int]):
+        """
+        Set the mapping from attention index to PDB residue sequence number.
+
+        When the visualization PDB contains the full protein but attention
+        values correspond to a subset of residues (e.g. CA-only selection),
+        this mapping tells the JS frontend which ``resi`` each attention
+        index corresponds to.
+
+        Parameters
+        ----------
+        residue_mapping : list of int
+            List of resSeq values, one per attention dimension. The i-th
+            entry is the PDB residue number for attention index i.
+        """
+        self.residue_mapping = list(residue_mapping)
+
     def set_protein_structure(
         self,
         pdb_path: Optional[str] = None,
@@ -279,7 +297,8 @@ class MDTrajectoryVisualizer:
                            "both trajectory_path and topology_path")
 
         # Validate residue count matches attention values
-        if self.timescales_data:
+        # (skip if residue_mapping is set — the PDB intentionally has more residues)
+        if self.timescales_data and self.residue_mapping is None:
             n_residues_pdb = DataProcessor.get_residue_count_from_pdb(self.protein_structure)
             expected_residues = self.timescales_data[0]['n_residues']
 
@@ -313,6 +332,7 @@ class MDTrajectoryVisualizer:
             'config': self.config,
             'protein_structure': self.protein_structure,
             'protein_source': self.protein_source,
+            'residue_mapping': self.residue_mapping,
         }
 
         # Add per-frame coordinate data if available

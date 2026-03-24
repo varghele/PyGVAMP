@@ -310,6 +310,7 @@ class PipelineOrchestrator:
         args.min_states = self.config.min_states
         args.max_states = self.config.max_states
         args.batch_size = self.config.batch_size
+        args.timestep = self.config.timestep
 
         return args
 
@@ -357,6 +358,14 @@ class PipelineOrchestrator:
         # State diagnostics parameters
         args.population_threshold = self.config.population_threshold
         args.jsd_threshold = self.config.jsd_threshold
+
+        # Visualization topology (full protein, no water/lipids)
+        args.viz_topology = None
+        dataset_path = self._discover_dataset_path(dirs)
+        if dataset_path:
+            viz_path = os.path.join(dataset_path, 'visualization_topology.pdb')
+            if os.path.isfile(viz_path):
+                args.viz_topology = viz_path
 
         # Get lag_time from model path
         match = re.search(r'lag(\d+)ns', str(model_path))

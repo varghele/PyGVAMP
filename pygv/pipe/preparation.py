@@ -38,6 +38,7 @@ def setup_output_directory(args):
         'config': os.path.join(run_dir, 'prep_config.json'),
         'stats': os.path.join(run_dir, 'dataset_stats.json'),
         'topology_pdb': os.path.join(run_dir, 'topology.pdb'),
+        'viz_topology_pdb': os.path.join(run_dir, 'visualization_topology.pdb'),
         'state_discovery_dir': os.path.join(run_dir, 'state_discovery'),
     }
 
@@ -193,6 +194,22 @@ def create_and_analyze_dataset(args, paths):
         output_path=paths['topology_pdb']
     )
 
+    # Save a full-protein visualization topology (excludes water/lipids/ions)
+    # Used by the interactive report for 3D rendering with cartoon representation
+    print("\n=== VISUALIZATION TOPOLOGY ===")
+    try:
+        viz_topology_info = save_topology_as_pdb(
+            topology_file=args.top,
+            selection="protein",
+            output_path=paths['viz_topology_pdb']
+        )
+    except ValueError:
+        print("Warning: 'protein' selection returned no atoms. "
+              "Falling back to training selection for visualization topology.")
+        import shutil
+        shutil.copy2(paths['topology_pdb'], paths['viz_topology_pdb'])
+        viz_topology_info = topology_info
+
     print(f"\nLooking for trajectory files in {args.traj_dir}")
 
     # Find trajectory files
@@ -227,6 +244,7 @@ def create_and_analyze_dataset(args, paths):
         use_cache=args.use_cache,
         use_amino_acid_encoding=use_amino_acid_encoding,
         amino_acid_feature_type=amino_acid_feature_type,
+        timestep=getattr(args, 'timestep', None),
     )
 
     print(f"Dataset created with {len(dataset)} samples")
@@ -238,6 +256,7 @@ def create_and_analyze_dataset(args, paths):
         'topology': {
             'input_file': topology_info['input_file'],
             'output_pdb': topology_info['output_pdb'],
+            'viz_topology_pdb': paths['viz_topology_pdb'],
             'n_atoms_selected': topology_info['n_atoms_selected'],
             'n_residues': len(topology_info['residues']),
         },
@@ -365,7 +384,8 @@ def run_preparation(args):
 
     print(f"\nData preparation completed successfully!")
     print(f"Output directory: {paths['run_dir']}")
-    print(f"Topology PDB: {paths['topology_pdb']}")
+    print(f"Topology PDB (training): {paths['topology_pdb']}")
+    print(f"Topology PDB (visualization): {paths['viz_topology_pdb']}")
     print(f"Cache directory: {paths['cache_dir']}")
 
     return paths['run_dir']

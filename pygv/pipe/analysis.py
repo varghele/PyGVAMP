@@ -356,6 +356,10 @@ def run_analysis(args=None):
     print("Attention analysis complete")
 
     # ---- Step 9: Generate state structures ----
+    # Use full-protein visualization topology if available (for cartoon rendering)
+    viz_topology = getattr(args, 'viz_topology', None)
+    viz_selection = "protein" if viz_topology else args.selection
+
     print("Generating state structures")
     state_structures = generate_state_structures(
         traj_folder=args.traj_dir,
@@ -366,7 +370,7 @@ def run_analysis(args=None):
         stride=args.stride,
         n_structures=10,
         prob_threshold=0.0,
-        selection=args.selection,
+        selection=viz_selection,
     )
 
     # ---- Step 10: PyMOL visualizations (optional) ----
@@ -459,14 +463,15 @@ def run_analysis(args=None):
         try:
             report_path = generate_merged_interactive_report(
                 experiment_dir=experiment_dir,
-                topology_file=args.top,
+                topology_file=viz_topology or args.top,
                 protein_name=args.protein_name,
                 max_frames=5000,
                 stride=args.stride,
                 timestep=inferred_timestep,
                 traj_dir=args.traj_dir,
                 file_pattern=args.file_pattern,
-                selection=args.selection,
+                selection=viz_selection,
+                training_selection=args.selection,
             )
             if report_path:
                 print(f"Merged interactive report: {report_path}")

@@ -530,6 +530,7 @@ def generate_merged_interactive_report(
         traj_dir: str = None,
         file_pattern: str = "*.xtc",
         selection: str = None,
+        training_selection: str = None,
 ) -> Optional[str]:
     """
     Generate a single interactive HTML report combining all lag times.
@@ -556,9 +557,13 @@ def generate_merged_interactive_report(
     file_pattern : str
         Glob pattern for trajectory files (default: '*.xtc').
     selection : str, optional
-        MDTraj atom selection string (e.g. 'name CA'). If provided, the
-        trajectory and protein structure are sliced to this selection to
-        match the atoms used during training.
+        MDTraj atom selection string for visualization (e.g. 'protein').
+        Controls which atoms are loaded for the 3D viewer.
+    training_selection : str, optional
+        MDTraj atom selection string used during training (e.g. 'name CA').
+        Used to compute the residue mapping between attention values
+        (one per training-selection residue) and the visualization PDB
+        residue numbering. If None, defaults to ``selection``.
 
     Returns
     -------
@@ -635,8 +640,36 @@ def generate_merged_interactive_report(
                 file_pattern = cfg.get('file_pattern', file_pattern)
                 if selection is None:
                     selection = cfg.get('selection')
+                if training_selection is None:
+                    training_selection = cfg.get('selection')
             except Exception:
                 pass
+
+    # If no separate training_selection, fall back to selection
+    if training_selection is None:
+        training_selection = selection
+
+    # --- Compute residue mapping (training selection residues → resSeq) ---
+    # When the visualization uses full protein but attention is per training-selection
+    # residue, we need to tell the JS frontend which resSeq each attention index maps to.
+    residue_mapping = None
+    if training_selection and topology_file:
+        try:
+            import mdtraj as md
+            full_top = md.load_topology(topology_file)
+            sel_indices = full_top.select(training_selection)
+            # Get unique resSeq values in order of first appearance
+            seen = set()
+            resseq_list = []
+            for ai in sel_indices:
+                rs = full_top.atom(ai).residue.resSeq
+                if rs not in seen:
+                    seen.add(rs)
+                    resseq_list.append(rs)
+            residue_mapping = resseq_list
+            print(f"  Residue mapping: {len(residue_mapping)} training residues → resSeq values")
+        except Exception as e:
+            print(f"  Warning: could not compute residue mapping: {e}")
 
     # --- Load trajectory frames for per-frame protein structure viewer ---
     frame_coords = None
@@ -805,6 +838,10 @@ def generate_merged_interactive_report(
         viz.set_protein_structure(pdb_string=pdb_template)
     else:
         viz.set_protein_structure(pdb_path=topology_file)
+
+    # Pass residue mapping so the JS frontend can map attention indices to resSeq
+    if residue_mapping is not None:
+        viz.set_residue_mapping(residue_mapping)
 
     output_path = os.path.join(experiment_dir, f"{protein_name}_interactive_report.html")
     viz.generate(

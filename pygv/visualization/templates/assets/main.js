@@ -14,6 +14,16 @@ const state = {
     }
 };
 
+// Helper: map attention index to PDB residue number (resi).
+// If VISUALIZATION_DATA.residue_mapping is set, use it; otherwise fall back to index+1.
+function attentionIndexToResi(attentionIndex) {
+    const mapping = VISUALIZATION_DATA.residue_mapping;
+    if (mapping && attentionIndex < mapping.length) {
+        return mapping[attentionIndex];
+    }
+    return attentionIndex + 1;
+}
+
 // D3.js embedding plot
 let embeddingSvg, embeddingG, xScale, yScale, embeddingZoom;
 const embeddingMargin = { top: 20, right: 20, bottom: 40, left: 50 };
@@ -841,7 +851,7 @@ function updateProteinViewer() {
                 attention.forEach((value, residueIndex) => {
                     const color = colorScale(value);
                     proteinViewer.setStyle(
-                        { resi: residueIndex + 1 },
+                        { resi: attentionIndexToResi(residueIndex) },
                         { [representation]: { color: color } }
                     );
                 });
@@ -1020,7 +1030,7 @@ function updateAttentionViewer() {
                 attnAvg.forEach((value, residueIndex) => {
                     const color = colorScale(value);
                     attentionViewer.setStyle(
-                        { resi: residueIndex + 1 },
+                        { resi: attentionIndexToResi(residueIndex) },
                         { [representation]: { color: color } }
                     );
                 });
