@@ -92,9 +92,12 @@ function registerResidueHover(viewer, infoElementId, viewerType) {
     );
 }
 
-// D3.js embedding plot
+// D3.js embedding plot (prep / Graph2Vec)
 let embeddingSvg, embeddingG, xScale, yScale, embeddingZoom;
 const embeddingMargin = { top: 20, right: 20, bottom: 40, left: 50 };
+
+// D3.js VAMP embedding plot (same coords, VAMP state coloring)
+let vampEmbeddingSvg, vampEmbeddingG, vampXScale, vampYScale, vampEmbeddingZoom;
 
 // D3.js alluvial
 let alluvialSvg;
@@ -127,6 +130,7 @@ function init() {
         // Initialize all components
         initTimescaleControls();
         initEmbeddingPlot();
+        initVampEmbeddingPlot();
         initAlluvialPlot();
         initProteinViewer();
         initTransitionMatrix();
@@ -318,6 +322,10 @@ function initEmbeddingPlot() {
         state.selectedVampState = null;
         embeddingG.selectAll('.embedding-point.selected')
             .classed('selected', false).attr('r', 4);
+        if (vampEmbeddingG) {
+            vampEmbeddingG.selectAll('.embedding-point.selected')
+                .classed('selected', false).attr('r', 4);
+        }
         updateAlluvialPlot();
         updateProteinViewer();
     });
@@ -388,13 +396,23 @@ function drawEmbeddingPoints() {
 }
 
 function onFrameClick(d, element) {
-    // Deselect previous
+    // Deselect in both plots
     embeddingG.selectAll('.embedding-point.selected')
-        .classed('selected', false)
-        .attr('r', 4);
+        .classed('selected', false).attr('r', 4);
+    if (vampEmbeddingG) {
+        vampEmbeddingG.selectAll('.embedding-point.selected')
+            .classed('selected', false).attr('r', 4);
+    }
 
-    // Select this point
+    // Select in prep plot
     d3.select(element).classed('selected', true).attr('r', 6);
+
+    // Also highlight in VAMP plot
+    if (vampEmbeddingG) {
+        vampEmbeddingG.selectAll('.embedding-point')
+            .filter(p => p.index === d.index)
+            .classed('selected', true).attr('r', 6);
+    }
 
     state.selectedFrameIndex = d.index;
     state.selectedPrepState = d.clusterLabel;
@@ -438,6 +456,222 @@ function onEmbeddingZoom(event) {
 
     // Update points
     embeddingG.selectAll('.embedding-point')
+        .attr('cx', d => newXScale(d.x))
+        .attr('cy', d => newYScale(d.y));
+}
+
+// =============================================================================
+// VAMP Embedding plot (same coords as prep, colored by VAMP states)
+// =============================================================================
+
+function initVampEmbeddingPlot() {
+    const container = document.getElementById('vamp-embedding-plot');
+    if (!container || !hasPrep) return;
+
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const embData = getEmbeddingData();
+    const bounds = embData.bounds;
+
+    const padX = (bounds.max_x - bounds.min_x) * 0.05;
+    const padY = (bounds.max_y - bounds.min_y) * 0.05;
+
+    vampXScale = d3.scaleLinear()
+        .domain([bounds.min_x - padX, bounds.max_x + padX])
+        .range([embeddingMargin.left, width - embeddingMargin.right]);
+
+    vampYScale = d3.scaleLinear()
+        .domain([bounds.min_y - padY, bounds.max_y + padY])
+        .range([height - embeddingMargin.bottom, embeddingMargin.top]);
+
+    vampEmbeddingSvg = d3.select('#vamp-embedding-plot')
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height);
+
+    vampEmbeddingSvg.append('defs').append('clipPath')
+        .attr('id', 'vamp-plot-clip')
+        .append('rect')
+        .attr('x', embeddingMargin.left)
+        .attr('y', embeddingMargin.top)
+        .attr('width', width - embeddingMargin.left - embeddingMargin.right)
+        .attr('height', height - embeddingMargin.top - embeddingMargin.bottom);
+
+    // Gridlines
+    vampEmbeddingSvg.append('g')
+        .attr('class', 'grid x-grid')
+        .attr('transform', `translate(0,${height - embeddingMargin.bottom})`)
+        .call(d3.axisBottom(vampXScale).ticks(8)
+            .tickSize(-(height - embeddingMargin.top - embeddingMargin.bottom))
+            .tickFormat(''));
+
+    vampEmbeddingSvg.append('g')
+        .attr('class', 'grid y-grid')
+        .attr('transform', `translate(${embeddingMargin.left},0)`)
+        .call(d3.axisLeft(vampYScale).ticks(8)
+            .tickSize(-(width - embeddingMargin.left - embeddingMargin.right))
+            .tickFormat(''));
+
+    // Axes
+    vampEmbeddingSvg.append('g')
+        .attr('class', 'x-axis')
+        .attr('transform', `translate(0,${height - embeddingMargin.bottom})`)
+        .call(d3.axisBottom(vampXScale).ticks(8));
+
+    vampEmbeddingSvg.append('g')
+        .attr('class', 'y-axis')
+        .attr('transform', `translate(${embeddingMargin.left},0)`)
+        .call(d3.axisLeft(vampYScale).ticks(8));
+
+    // Points group
+    vampEmbeddingG = vampEmbeddingSvg.append('g')
+        .attr('clip-path', 'url(#vamp-plot-clip)');
+
+    // Zoom
+    vampEmbeddingZoom = d3.zoom()
+        .scaleExtent([0.5, 20])
+        .on('zoom', onVampEmbeddingZoom);
+
+    vampEmbeddingSvg.call(vampEmbeddingZoom);
+
+    // Click background to deselect
+    vampEmbeddingSvg.on('click', function(event) {
+        if (event.target.tagName === 'circle') return;
+        if (state.selectedFrameIndex === null) return;
+
+        state.selectedFrameIndex = null;
+        state.selectedPrepState = null;
+        state.selectedVampState = null;
+        vampEmbeddingG.selectAll('.embedding-point.selected')
+            .classed('selected', false).attr('r', 4);
+        embeddingG.selectAll('.embedding-point.selected')
+            .classed('selected', false).attr('r', 4);
+        updateAlluvialPlot();
+        updateProteinViewer();
+    });
+
+    drawVampEmbeddingPoints();
+}
+
+function drawVampEmbeddingPoints() {
+    if (!vampEmbeddingG || !hasPrep) return;
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const stateColors = VISUALIZATION_DATA.config.colors.states;
+    const embData = getEmbeddingData();
+
+    const data = embData.embeddings.map((point, i) => ({
+        x: point[0],
+        y: point[1],
+        index: i,
+        clusterLabel: embData.labels[i],
+        vampState: (i < ts.state_assignments.length) ? ts.state_assignments[i] : 0
+    }));
+
+    vampEmbeddingG.selectAll('.embedding-point')
+        .data(data, d => d.index)
+        .enter()
+        .append('circle')
+        .attr('class', 'embedding-point')
+        .attr('r', 4)
+        .attr('cx', d => vampXScale(d.x))
+        .attr('cy', d => vampYScale(d.y))
+        .attr('fill', d => stateColors[d.vampState % stateColors.length])
+        .on('mouseover', function(event, d) {
+            if (!d3.select(this).classed('selected')) {
+                d3.select(this).attr('r', 6);
+            }
+            const vampState = d.vampState;
+            showTooltip(event, `
+                Frame: ${d.index}<br/>
+                Prep State: ${d.clusterLabel}<br/>
+                VAMP State: ${vampState}<br/>
+                X: ${d.x.toFixed(3)}<br/>
+                Y: ${d.y.toFixed(3)}
+            `);
+        })
+        .on('mousemove', function(event) {
+            const tooltip = document.getElementById('tooltip');
+            if (tooltip) {
+                tooltip.style.left = (event.pageX + 10) + 'px';
+                tooltip.style.top = (event.pageY + 10) + 'px';
+            }
+        })
+        .on('mouseout', function() {
+            if (!d3.select(this).classed('selected')) {
+                d3.select(this).attr('r', 4);
+            }
+            hideTooltip();
+        })
+        .on('click', function(event, d) {
+            onVampFrameClick(d, this);
+        });
+}
+
+function onVampFrameClick(d, element) {
+    // Deselect in both plots
+    vampEmbeddingG.selectAll('.embedding-point.selected')
+        .classed('selected', false).attr('r', 4);
+    embeddingG.selectAll('.embedding-point.selected')
+        .classed('selected', false).attr('r', 4);
+
+    // Select in VAMP plot
+    d3.select(element).classed('selected', true).attr('r', 6);
+
+    // Also highlight in prep plot
+    embeddingG.selectAll('.embedding-point')
+        .filter(p => p.index === d.index)
+        .classed('selected', true).attr('r', 6);
+
+    state.selectedFrameIndex = d.index;
+    state.selectedPrepState = d.clusterLabel;
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    state.selectedVampState = (d.index < ts.state_assignments.length)
+        ? ts.state_assignments[d.index] : null;
+
+    updateAlluvialPlot();
+    updateProteinViewer();
+}
+
+function updateVampEmbeddingColors() {
+    if (!vampEmbeddingG || !hasPrep) return;
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const stateColors = VISUALIZATION_DATA.config.colors.states;
+
+    vampEmbeddingG.selectAll('.embedding-point')
+        .each(function(d) {
+            d.vampState = (d.index < ts.state_assignments.length)
+                ? ts.state_assignments[d.index] : 0;
+        })
+        .attr('fill', d => stateColors[d.vampState % stateColors.length]);
+}
+
+function onVampEmbeddingZoom(event) {
+    const transform = event.transform;
+    const newXScale = transform.rescaleX(vampXScale);
+    const newYScale = transform.rescaleY(vampYScale);
+
+    const container = document.getElementById('vamp-embedding-plot');
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    vampEmbeddingSvg.select('.x-axis')
+        .call(d3.axisBottom(newXScale).ticks(8));
+    vampEmbeddingSvg.select('.y-axis')
+        .call(d3.axisLeft(newYScale).ticks(8));
+
+    vampEmbeddingSvg.select('.x-grid')
+        .call(d3.axisBottom(newXScale).ticks(8)
+            .tickSize(-(height - embeddingMargin.top - embeddingMargin.bottom))
+            .tickFormat(''));
+    vampEmbeddingSvg.select('.y-grid')
+        .call(d3.axisLeft(newYScale).ticks(8)
+            .tickSize(-(width - embeddingMargin.left - embeddingMargin.right))
+            .tickFormat(''));
+
+    vampEmbeddingG.selectAll('.embedding-point')
         .attr('cx', d => newXScale(d.x))
         .attr('cy', d => newYScale(d.y));
 }
@@ -1294,6 +1528,7 @@ function loadTimescale(index) {
     }
 
     // Update timescale-dependent panels
+    updateVampEmbeddingColors();
     updateAlluvialPlot();
     updateTransitionMatrix(ts);
     updateStateLegend(ts);
@@ -1334,6 +1569,14 @@ function onWindowResize() {
         embeddingSvg = null;
         embeddingG = null;
         initEmbeddingPlot();
+    }
+
+    // Rebuild VAMP embedding plot
+    if (vampEmbeddingSvg) {
+        vampEmbeddingSvg.remove();
+        vampEmbeddingSvg = null;
+        vampEmbeddingG = null;
+        initVampEmbeddingPlot();
     }
 
     // Rebuild matrix
