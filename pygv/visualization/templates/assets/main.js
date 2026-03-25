@@ -24,6 +24,74 @@ function attentionIndexToResi(attentionIndex) {
     return attentionIndex + 1;
 }
 
+/**
+ * Look up the attention value for a given PDB resi on the current view.
+ * Returns a number in [0,1] or null if unavailable.
+ */
+function getAttentionForResi(resi, viewerType) {
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    if (!ts) return null;
+
+    // Build reverse mapping: resi → attention index
+    const mapping = VISUALIZATION_DATA.residue_mapping;
+    let attentionIndex = null;
+    if (mapping) {
+        attentionIndex = mapping.indexOf(resi);
+        if (attentionIndex === -1) return null;
+    } else {
+        attentionIndex = resi - 1;
+    }
+
+    if (viewerType === 'attention') {
+        // Use per-state average attention
+        if (state.selectedAttentionState !== null && ts.state_attention_avg) {
+            const avg = ts.state_attention_avg[state.selectedAttentionState];
+            if (avg && attentionIndex < avg.length) return avg[attentionIndex];
+        }
+    } else {
+        // Protein viewer: use per-frame attention if a frame is selected
+        if (state.selectedFrameIndex !== null && ts.attention_normalized &&
+            state.selectedFrameIndex < ts.attention_normalized.length) {
+            const att = ts.attention_normalized[state.selectedFrameIndex];
+            if (att && attentionIndex < att.length) return att[attentionIndex];
+        }
+        // Fall back to state average if a VAMP state is shown
+        if (state.selectedVampState !== null && ts.state_attention_avg) {
+            const avg = ts.state_attention_avg[state.selectedVampState];
+            if (avg && attentionIndex < avg.length) return avg[attentionIndex];
+        }
+    }
+    return null;
+}
+
+/**
+ * Register hover-to-inspect on a 3Dmol viewer's model 0.
+ * Must be called after every removeAllModels/addModel cycle.
+ */
+function registerResidueHover(viewer, infoElementId, viewerType) {
+    if (!viewer) return;
+
+    // On hover: show residue info
+    viewer.setHoverable({model: 0}, true,
+        function onHover(atom) {
+            const infoEl = document.getElementById(infoElementId);
+            if (!infoEl) return;
+
+            const attention = getAttentionForResi(atom.resi, viewerType);
+            let html = `<span class="residue-name">${atom.resn} ${atom.resi}</span>`;
+            if (attention !== null) {
+                html += `<span class="residue-attention">Attention: ${attention.toFixed(3)}</span>`;
+            }
+            infoEl.innerHTML = html;
+            infoEl.style.display = 'block';
+        },
+        function onUnhover() {
+            const infoEl = document.getElementById(infoElementId);
+            if (infoEl) infoEl.style.display = 'none';
+        }
+    );
+}
+
 // D3.js embedding plot
 let embeddingSvg, embeddingG, xScale, yScale, embeddingZoom;
 const embeddingMargin = { top: 20, right: 20, bottom: 40, left: 50 };
@@ -812,6 +880,7 @@ function initProteinViewer() {
         proteinViewer.zoomTo();
         proteinViewer.render();
     }
+
 }
 
 function setProteinViewerInfo(text) {
@@ -865,6 +934,7 @@ function updateProteinViewer() {
             if (state.selectedVampState !== null) info += ` · VAMP S${state.selectedVampState}`;
             setProteinViewerInfo(info);
 
+            registerResidueHover(proteinViewer, 'protein-residue-info', 'protein');
             proteinViewer.zoomTo();
             proteinViewer.render();
             return;
@@ -897,6 +967,7 @@ function updateProteinViewer() {
                 });
             }
 
+            registerResidueHover(proteinViewer, 'protein-residue-info', 'protein');
             proteinViewer.zoomTo();
             proteinViewer.render();
             return;
@@ -910,6 +981,7 @@ function updateProteinViewer() {
         proteinViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
         proteinViewer.zoomTo();
     }
+    registerResidueHover(proteinViewer, 'protein-residue-info', 'protein');
     proteinViewer.render();
 }
 
@@ -1037,6 +1109,7 @@ function updateAttentionViewer() {
             }
         }
 
+        registerResidueHover(attentionViewer, 'attention-residue-info', 'attention');
         attentionViewer.zoomTo();
         attentionViewer.render();
         return;

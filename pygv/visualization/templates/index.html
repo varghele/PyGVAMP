@@ -9,7 +9,7 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 
     <!-- 3Dmol.js for protein visualization -->
-    <script src="https://3dmol.csb.pitt.edu/build/3Dmol-min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.2/build/3Dmol-min.js"></script>
 
     <!-- D3.js for plots -->
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
@@ -136,13 +136,16 @@
         <div id="protein-viewer">
             <div class="viewer-label">Protein Structure</div>
             <div id="protein-viewer-info" class="viewer-sublabel"></div>
+            <div id="protein-residue-info" class="residue-info"></div>
         </div>
 
         <!-- Attention panel -->
         <div id="attention-panel">
             <div class="viewer-label">VAMP State Structures</div>
             <div id="attention-state-selector"></div>
-            <div id="attention-viewer"></div>
+            <div id="attention-viewer">
+                <div id="attention-residue-info" class="residue-info"></div>
+            </div>
         </div>
 
         <!-- Transition matrix -->

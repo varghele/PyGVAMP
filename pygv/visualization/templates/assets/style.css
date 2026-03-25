@@ -817,3 +817,31 @@ body {
     padding: 40px 20px;
     font-size: 14px;
 }
+
+/* Residue info overlay (bottom of 3Dmol viewers) */
+.residue-info {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    right: 10px;
+    background-color: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    z-index: 10;
+    pointer-events: none;
+    display: none;
+    line-height: 1.5;
+}
+
+.residue-info .residue-name {
+    font-weight: 700;
+    color: var(--accent-color);
+}
+
+.residue-info .residue-attention {
+    float: right;
+    font-weight: 600;
+}
