@@ -273,8 +273,8 @@ class TestConfigRegistry:
 
     def test_registry_count(self):
         """Registry has expected number of entries."""
-        # 4 base + 3 small + 3 medium + 3 large = 13
-        assert len(CONFIG_REGISTRY) == 13
+        # 5 base + 4 small + 4 medium + 4 large = 17
+        assert len(CONFIG_REGISTRY) == 17
 
     def test_registry_values_are_classes(self):
         """Registry values are config classes."""

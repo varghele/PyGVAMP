@@ -609,18 +609,16 @@ def generate_merged_interactive_report(
     for lag_time, entries in lag_groups.items():
         retrained_entries = [e for e in entries if e[3]]
         if retrained_entries:
-            # Pick the newest retrained entry as final
+            # Pick only the newest retrained entry (final model)
             final = max(retrained_entries, key=lambda e: e[4])
-            for e in entries:
-                is_final = (e is final)
-                subdirs.append((e[0], e[1], e[2], is_final))
+            subdirs.append((final[0], final[1], final[2], True))
         else:
-            # No retrained — all originals are final
+            # No retrained — original is final
             for e in entries:
                 subdirs.append((e[0], e[1], e[2], True))
 
-    # Sort by lag time, then non-final first so final comes last
-    subdirs.sort(key=lambda x: (x[0], x[3]))
+    # Sort by lag time
+    subdirs.sort(key=lambda x: x[0])
 
     if not subdirs:
         print("  No analysis subdirectories found matching lag*ns_*states pattern.")

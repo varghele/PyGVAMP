@@ -32,6 +32,7 @@ from pygv.encoder.gin import GINEncoder
 
 from pygv.scores.vamp_score_v0 import VAMPScore
 from pygv.classifier.SoftmaxMLP import SoftmaxMLP
+from pygv.utils.logging_utils import PipelineLogger
 
 from torch_geometric.nn.models import MLP
 
@@ -477,4 +478,7 @@ if __name__ == "__main__":
     # Parse arguments
     args = parse_train_args()
 
-    run_training(args)
+    # Start logging to output directory
+    log_dir = os.path.join(args.output_dir, "logs")
+    with PipelineLogger(log_dir=log_dir):
+        run_training(args)

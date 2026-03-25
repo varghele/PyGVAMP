@@ -28,6 +28,7 @@ from pygv.utils.analysis import analyze_vampnet_outputs
 from torch_geometric.loader import DataLoader
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
 from pygv.utils.pipe_utils import find_trajectory_files
+from pygv.utils.logging_utils import PipelineLogger
 
 def get_model_and_traj_directory(args):
     """
@@ -500,5 +501,8 @@ if __name__ == "__main__":
     # Get args
     args = parse_anly_args()
 
-    # Run the analysis pipeline
-    run_analysis(args=args)
+    # Start logging to analysis directory
+    log_dir = os.path.join(os.path.expanduser(args.analysis_dir), "logs")
+    with PipelineLogger(log_dir=log_dir):
+        # Run the analysis pipeline
+        run_analysis(args=args)

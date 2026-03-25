@@ -17,6 +17,7 @@ import mdtraj as md
 
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
 from pygv.utils.pipe_utils import find_trajectory_files
+from pygv.utils.logging_utils import PipelineLogger
 from pygv.args import parse_prep_args
 
 
@@ -348,7 +349,7 @@ def analyze_sample_batch(dataset, args):
     print("\nSample batch analysis complete")
 
 
-def run_preparation(args):
+def run_preparation(args, _logger=None):
     """
     Run data preparation pipeline with a pre-built args namespace.
 
@@ -363,6 +364,8 @@ def run_preparation(args):
         stride, lag_time, n_neighbors, node_embedding_dim,
         gaussian_expansion_dim, output_dir, cache_dir, use_cache.
         Optional: sample_batch, batch_size, discover_states, g2v_* params.
+    _logger : PipelineLogger, optional
+        If provided, logging is already active (called from master pipeline).
 
     Returns
     -------
@@ -396,7 +399,10 @@ def main():
     # Parse arguments
     args = parse_prep_args()
 
-    run_preparation(args)
+    # Start logging to output directory
+    log_dir = os.path.join(args.output_dir, "logs")
+    with PipelineLogger(log_dir=log_dir):
+        run_preparation(args)
 
 
 if __name__ == "__main__":
