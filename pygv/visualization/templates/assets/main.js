@@ -1192,15 +1192,6 @@ function updateProteinViewer() {
                 }
             });
 
-            if (stateData.representatives) {
-                stateData.representatives.forEach((pdb, i) => {
-                    proteinViewer.addModel(pdb, 'pdb');
-                    proteinViewer.setStyle({model: i + 1}, {
-                        [representation]: {opacity: 0.5, color: 'grey'}
-                    });
-                });
-            }
-
             registerResidueHover(proteinViewer, 'protein-residue-info', 'protein');
             proteinViewer.zoomTo();
             proteinViewer.render();
