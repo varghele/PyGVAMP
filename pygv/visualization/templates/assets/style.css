@@ -92,9 +92,9 @@ body {
     grid-template-columns: 1fr 1fr 1fr;
     grid-template-rows: 1fr auto 1fr;
     grid-template-areas:
-        "att-residue   att-residue   att-residue"
-        "att-chips     att-chips     att-chips"
-        "att-heatmap   att-heatmap   att-contacts";
+        "att-residue   att-residue   att-protein"
+        "att-chips     att-chips     att-protein"
+        "att-heatmap   att-contacts  att-protein";
     gap: 0;
 }
 
@@ -1113,4 +1113,132 @@ body {
     justify-content: center;
     color: var(--text-muted);
     font-size: 14px;
+}
+
+/* Protein distance probe viewer (right column of Tab 2) */
+#att-protein-panel {
+    grid-area: att-protein;
+    background-color: var(--bg-secondary);
+    border-left: 1px solid var(--border-color);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+#att-protein-viewer-wrap {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+}
+
+#att-protein-viewer-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+}
+
+#att-protein-controls {
+    padding: 10px 12px;
+    border-top: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+#att-protein-controls .pair-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+#att-protein-controls select {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 8px;
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+#att-protein-controls .pair-btn {
+    padding: 5px 12px;
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.2s;
+}
+
+#att-protein-controls .pair-btn:hover {
+    background-color: var(--bg-primary);
+    border-color: var(--accent-color);
+}
+
+#att-distance-table-wrap {
+    max-height: 200px;
+    overflow-y: auto;
+    border-top: 1px solid var(--border-color);
+}
+
+#att-distance-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+#att-distance-table th,
+#att-distance-table td {
+    padding: 4px 8px;
+    text-align: right;
+    border-bottom: 1px solid var(--border-color);
+}
+
+#att-distance-table th {
+    position: sticky;
+    top: 0;
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    z-index: 1;
+}
+
+#att-distance-table th:first-child,
+#att-distance-table td:first-child {
+    text-align: left;
+}
+
+#att-distance-table td {
+    color: var(--text-primary);
+}
+
+#att-distance-table .remove-pair {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    padding: 0 4px;
+}
+
+#att-distance-table .remove-pair:hover {
+    color: #e74c3c;
+}
+
+#att-protein-placeholder {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 20px;
 }

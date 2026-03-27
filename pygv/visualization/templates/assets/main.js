@@ -21,6 +21,10 @@ const state = {
     attTabInitialized: false,
     attTabSelectedState: null,
     attEdgeMatrixCache: {},      // stateIdx → dense matrix
+    // Tab 2: Distance probe
+    attDistancePairs: [],        // [{res1idx, res2idx}, ...]
+    attProteinViewer: null,      // 3Dmol viewer instance (lazy)
+    attProteinInitialized: false,
 };
 
 // Helper: map attention index to PDB residue number (resi).
@@ -1613,6 +1617,9 @@ function loadTimescale(index) {
         updateAttResidueHeatmap();
         updateAttTabChips();
         updateAttTab();
+        // Recompute distances for new timescale
+        updateAttDistanceTable();
+        updateAttProteinViewer();
     }
 }
 
@@ -1673,6 +1680,7 @@ function onWindowResize() {
     // Resize 3Dmol viewers
     if (proteinViewer) proteinViewer.resize();
     if (attentionViewer) attentionViewer.resize();
+    if (state.attProteinViewer) state.attProteinViewer.resize();
 }
 
 // =============================================================================
@@ -1921,6 +1929,11 @@ function initMainTabs() {
                 if (proteinViewer) proteinViewer.resize();
                 if (attentionViewer) attentionViewer.resize();
             }
+
+            // Resize protein distance viewer when switching to tab 2
+            if (tabName === 'attention' && state.attProteinViewer) {
+                state.attProteinViewer.resize();
+            }
         });
     });
 }
@@ -1973,6 +1986,9 @@ function initAttTab() {
     // Draw residue heatmap (all states, independent of chip selection)
     updateAttResidueHeatmap();
 
+    // Initialize protein distance probe viewer
+    initAttProteinViewer();
+
     // Auto-select first state for edge heatmap + contacts
     if (ts.state_edge_attention && Object.keys(ts.state_edge_attention).length > 0) {
         state.attTabSelectedState = 0;
@@ -1983,7 +1999,7 @@ function initAttTab() {
 
 function showAttTabPlaceholder(show) {
     const placeholder = document.getElementById('att-tab-placeholder');
-    const panels = ['att-residue-panel', 'att-tab-chips', 'att-heatmap-panel', 'att-contacts-panel'];
+    const panels = ['att-residue-panel', 'att-tab-chips', 'att-heatmap-panel', 'att-contacts-panel', 'att-protein-panel'];
     if (placeholder) placeholder.style.display = show ? 'flex' : 'none';
     panels.forEach(id => {
         const el = document.getElementById(id);
@@ -2028,6 +2044,8 @@ function updateAttTab() {
     // Edge heatmap + contacts depend on selected state
     updateAttHeatmap();
     updateAttContactsTable();
+    // Update protein distance probe viewer for selected state
+    updateAttProteinViewer();
 }
 
 // --- Sparse-to-dense reconstruction ---
@@ -2543,6 +2561,250 @@ function downloadAttContactsCsv() {
         csv += `${i + 1},${srcName},${tgtName},${v.toFixed(6)}\n`;
     });
     downloadFile(csv, 'top_contacts.csv', 'text/csv');
+}
+
+// =============================================================================
+// Tab 2: Protein Distance Probe Viewer
+// =============================================================================
+
+function initAttProteinViewer() {
+    if (state.attProteinInitialized) return;
+    state.attProteinInitialized = true;
+
+    // Populate residue dropdowns
+    const names = VISUALIZATION_DATA.residue_names;
+    const sel1 = document.getElementById('att-pair-res1');
+    const sel2 = document.getElementById('att-pair-res2');
+    if (!sel1 || !sel2 || !names || names.length === 0) return;
+
+    names.forEach((name, i) => {
+        const opt1 = document.createElement('option');
+        opt1.value = i;
+        opt1.textContent = name;
+        sel1.appendChild(opt1);
+
+        const opt2 = document.createElement('option');
+        opt2.value = i;
+        opt2.textContent = name;
+        sel2.appendChild(opt2);
+    });
+
+    // Default second dropdown to a different residue
+    if (names.length > 1) sel2.value = 1;
+
+    // Create 3Dmol viewer
+    const container = document.getElementById('att-protein-viewer-container');
+    if (container && $3Dmol) {
+        state.attProteinViewer = $3Dmol.createViewer(container, {
+            backgroundColor: getComputedStyle(document.documentElement)
+                .getPropertyValue('--bg-secondary').trim() || '#2d2d2d'
+        });
+    }
+
+    // Load first state if available
+    updateAttProteinViewer();
+}
+
+function getCACoordFromPdb(pdbString, resi) {
+    // Parse PDB text, find first CA atom matching the given residue sequence number
+    const lines = pdbString.split('\n');
+    for (const line of lines) {
+        if (!line.startsWith('ATOM') && !line.startsWith('HETATM')) continue;
+        const atomName = line.substring(12, 16).trim();
+        if (atomName !== 'CA') continue;
+        const lineResi = parseInt(line.substring(22, 26).trim(), 10);
+        if (lineResi === resi) {
+            return {
+                x: parseFloat(line.substring(30, 38).trim()),
+                y: parseFloat(line.substring(38, 46).trim()),
+                z: parseFloat(line.substring(46, 54).trim())
+            };
+        }
+    }
+    return null;
+}
+
+function computePairDistances() {
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const names = VISUALIZATION_DATA.residue_names;
+    const results = [];
+
+    for (const pair of state.attDistancePairs) {
+        const resi1 = attentionIndexToResi(pair.res1idx);
+        const resi2 = attentionIndexToResi(pair.res2idx);
+        const res1name = (names && pair.res1idx < names.length) ? names[pair.res1idx] : `R${resi1}`;
+        const res2name = (names && pair.res2idx < names.length) ? names[pair.res2idx] : `R${resi2}`;
+
+        const distances = [];
+        for (let si = 0; si < ts.n_states; si++) {
+            const stateData = ts.state_structures ? ts.state_structures[si] : null;
+            if (stateData && stateData.average) {
+                const c1 = getCACoordFromPdb(stateData.average, resi1);
+                const c2 = getCACoordFromPdb(stateData.average, resi2);
+                if (c1 && c2) {
+                    const dx = c1.x - c2.x, dy = c1.y - c2.y, dz = c1.z - c2.z;
+                    distances.push(Math.sqrt(dx * dx + dy * dy + dz * dz));
+                } else {
+                    distances.push(null);
+                }
+            } else {
+                distances.push(null);
+            }
+        }
+
+        const valid = distances.filter(d => d !== null);
+        const delta = valid.length >= 2 ? Math.max(...valid) - Math.min(...valid) : null;
+
+        results.push({res1name, res2name, res1idx: pair.res1idx, res2idx: pair.res2idx, distances, delta});
+    }
+
+    return results;
+}
+
+function addDistancePair() {
+    const sel1 = document.getElementById('att-pair-res1');
+    const sel2 = document.getElementById('att-pair-res2');
+    if (!sel1 || !sel2) return;
+
+    const res1idx = parseInt(sel1.value, 10);
+    const res2idx = parseInt(sel2.value, 10);
+    if (res1idx === res2idx) return;
+
+    // Avoid duplicates
+    const exists = state.attDistancePairs.some(
+        p => (p.res1idx === res1idx && p.res2idx === res2idx) ||
+             (p.res1idx === res2idx && p.res2idx === res1idx)
+    );
+    if (exists) return;
+
+    state.attDistancePairs.push({res1idx, res2idx});
+    updateAttDistanceTable();
+    updateAttProteinViewer();
+}
+
+function removeDistancePair(index) {
+    state.attDistancePairs.splice(index, 1);
+    updateAttDistanceTable();
+    updateAttProteinViewer();
+}
+
+function clearDistancePairs() {
+    state.attDistancePairs = [];
+    updateAttDistanceTable();
+    updateAttProteinViewer();
+}
+
+function updateAttDistanceTable() {
+    const table = document.getElementById('att-distance-table');
+    if (!table) return;
+
+    if (state.attDistancePairs.length === 0) {
+        table.innerHTML = '';
+        return;
+    }
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const results = computePairDistances();
+
+    // Build header
+    let html = '<thead><tr><th>Pair</th>';
+    for (let si = 0; si < ts.n_states; si++) {
+        html += `<th>S${si}</th>`;
+    }
+    html += '<th>&Delta;</th><th></th></tr></thead><tbody>';
+
+    results.forEach((r, i) => {
+        html += `<tr><td>${r.res1name} &harr; ${r.res2name}</td>`;
+        r.distances.forEach(d => {
+            html += `<td>${d !== null ? d.toFixed(1) + ' &Aring;' : '&mdash;'}</td>`;
+        });
+        html += `<td>${r.delta !== null ? r.delta.toFixed(1) + ' &Aring;' : '&mdash;'}</td>`;
+        html += `<td><button class="remove-pair" onclick="removeDistancePair(${i})">&times;</button></td>`;
+        html += '</tr>';
+    });
+
+    html += '</tbody>';
+    table.innerHTML = html;
+}
+
+function updateAttProteinViewer() {
+    const viewer = state.attProteinViewer;
+    if (!viewer) return;
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const stateIdx = state.attTabSelectedState;
+    const placeholder = document.getElementById('att-protein-placeholder');
+    const viewerWrap = document.getElementById('att-protein-viewer-wrap');
+    const controls = document.getElementById('att-protein-controls');
+    const tableWrap = document.getElementById('att-distance-table-wrap');
+
+    // Check if structures are available for any state
+    const hasStructures = ts.state_structures && Object.keys(ts.state_structures).length > 0;
+
+    if (!hasStructures) {
+        if (placeholder) placeholder.style.display = 'flex';
+        if (viewerWrap) viewerWrap.style.display = 'none';
+        if (controls) controls.style.display = 'none';
+        if (tableWrap) tableWrap.style.display = 'none';
+        return;
+    }
+
+    if (placeholder) placeholder.style.display = 'none';
+    if (viewerWrap) viewerWrap.style.display = '';
+    if (controls) controls.style.display = '';
+    if (tableWrap) tableWrap.style.display = '';
+
+    viewer.removeAllModels();
+    viewer.removeAllShapes();
+    viewer.removeAllLabels();
+
+    // Load the selected state structure (or first available)
+    const loadIdx = stateIdx !== null ? stateIdx : 0;
+    const stateData = ts.state_structures[loadIdx];
+    if (stateData && stateData.average) {
+        viewer.addModel(stateData.average, 'pdb');
+
+        const rep = VISUALIZATION_DATA.config.protein.representation || 'cartoon';
+        const style = {};
+        style[rep] = {color: 'spectrum'};
+        viewer.setStyle({}, style);
+
+        // Draw distance probe lines
+        const stateColors = VISUALIZATION_DATA.config.colors.states;
+        for (const pair of state.attDistancePairs) {
+            const resi1 = attentionIndexToResi(pair.res1idx);
+            const resi2 = attentionIndexToResi(pair.res2idx);
+            const c1 = getCACoordFromPdb(stateData.average, resi1);
+            const c2 = getCACoordFromPdb(stateData.average, resi2);
+            if (c1 && c2) {
+                viewer.addCylinder({
+                    start: c1, end: c2,
+                    radius: 0.15,
+                    color: '#FFFF00',
+                    dashed: true,
+                    dashLength: 0.4,
+                    gapLength: 0.2,
+                    fromCap: 2, toCap: 2
+                });
+                // Label at midpoint
+                const dx = c1.x - c2.x, dy = c1.y - c2.y, dz = c1.z - c2.z;
+                const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                viewer.addLabel(dist.toFixed(1) + ' \u00C5', {
+                    position: {x: (c1.x + c2.x) / 2, y: (c1.y + c2.y) / 2, z: (c1.z + c2.z) / 2},
+                    fontSize: 12,
+                    fontColor: 'white',
+                    backgroundColor: 'rgba(0,0,0,0.7)',
+                    borderRadius: 4,
+                    padding: 2
+                });
+            }
+        }
+
+        viewer.zoomTo();
+        viewer.render();
+    }
+
+    viewer.resize();
 }
 
 // =============================================================================

@@ -210,6 +210,29 @@
                     <div id="att-contacts-container"></div>
                 </div>
 
+                <!-- Protein distance probe viewer (right column) -->
+                <div id="att-protein-panel">
+                    <div class="viewer-label">Residue Distance Probe</div>
+                    <div id="att-protein-viewer-wrap">
+                        <div id="att-protein-viewer-container"></div>
+                    </div>
+                    <div id="att-protein-controls">
+                        <div class="pair-row">
+                            <select id="att-pair-res1"></select>
+                            <span style="color: var(--text-muted);">&harr;</span>
+                            <select id="att-pair-res2"></select>
+                            <button class="pair-btn" onclick="addDistancePair()">Add</button>
+                            <button class="pair-btn" onclick="clearDistancePairs()">Clear</button>
+                        </div>
+                    </div>
+                    <div id="att-distance-table-wrap">
+                        <table id="att-distance-table"></table>
+                    </div>
+                    <div id="att-protein-placeholder" style="display: none;">
+                        <p>No state structures available for this timescale.</p>
+                    </div>
+                </div>
+
                 <!-- Placeholder for when no data is available -->
                 <div id="att-tab-placeholder" style="display: none;">
                     <p>No edge attention data available for this timescale.</p>
