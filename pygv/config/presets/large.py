@@ -6,7 +6,7 @@ class LargeSchNetConfig(SchNetConfig):
     """Large SchNet configuration for large molecular graphs (proteins)"""
     # Dataset
     stride: int = 5
-    batch_size: int = 64
+    batch_size: int = 16
 
     # Model
     node_dim: int = 32
@@ -35,7 +35,7 @@ class LargeMetaConfig(MetaConfig):
     """Large Meta configuration for large molecular graphs (proteins)"""
     # Dataset
     stride: int = 5
-    batch_size: int = 64
+    batch_size: int = 16
 
     # Model
     meta_node_dim: int = 32
@@ -65,7 +65,7 @@ class LargeML3Config(ML3Config):
     """Large ML3 configuration for large molecular graphs (proteins)"""
     # Dataset
     stride: int = 5
-    batch_size: int = 64
+    batch_size: int = 16
 
     # Model
     ml3_node_dim: int = 32
@@ -95,7 +95,7 @@ class LargeGINConfig(GINConfig):
     """Large GIN configuration for large molecular graphs (proteins)"""
     # Dataset
     stride: int = 5
-    batch_size: int = 64
+    batch_size: int = 16
 
     # Model
     node_dim: int = 32

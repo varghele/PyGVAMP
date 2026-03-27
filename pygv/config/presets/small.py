@@ -6,7 +6,7 @@ class SmallSchNetConfig(SchNetConfig):
     """Small SchNet configuration for small molecular graphs"""
     # Dataset
     stride: int = 20
-    batch_size: int = 16
+    batch_size: int = 64
 
     # Model
     hidden_dim: int = 64
@@ -27,7 +27,7 @@ class SmallMetaConfig(MetaConfig):
     """Small Meta configuration for small molecular graphs"""
     # Dataset
     stride: int = 20
-    batch_size: int = 16
+    batch_size: int = 64
 
     # Model
     meta_hidden_dim: int = 64
@@ -48,7 +48,7 @@ class SmallML3Config(ML3Config):
     """Small ML3 configuration for small molecular graphs"""
     # Dataset
     stride: int = 20
-    batch_size: int = 16
+    batch_size: int = 64
 
     # Model
     ml3_hidden_dim: int = 20
@@ -69,7 +69,7 @@ class SmallGINConfig(GINConfig):
     """Small GIN configuration for small molecular graphs"""
     # Dataset
     stride: int = 20
-    batch_size: int = 16
+    batch_size: int = 64
 
     # Model
     hidden_dim: int = 64

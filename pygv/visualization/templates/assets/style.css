@@ -836,6 +836,28 @@ body {
     font-size: 14px;
 }
 
+/* Download button (top-right of 3Dmol viewers) */
+.viewer-download-btn {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    background-color: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    z-index: 10;
+    transition: background-color 0.2s;
+    display: none;
+}
+
+.viewer-download-btn:hover {
+    background-color: rgba(0, 0, 0, 0.85);
+}
+
 /* Residue info overlay (bottom of 3Dmol viewers) */
 .residue-info {
     position: absolute;

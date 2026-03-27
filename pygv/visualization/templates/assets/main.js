@@ -11,7 +11,11 @@ const state = {
     showAttention: true,
     protein: {
         representation: 'cartoon'
-    }
+    },
+    proteinPdb: null,            // PDB string currently shown in protein viewer
+    proteinPdbLabel: null,       // descriptive label for filename
+    attentionPdb: null,          // PDB string currently shown in attention viewer
+    attentionPdbLabel: null,     // descriptive label for filename
 };
 
 // Helper: map attention index to PDB residue number (resi).
@@ -22,6 +26,41 @@ function attentionIndexToResi(attentionIndex) {
         return mapping[attentionIndex];
     }
     return attentionIndex + 1;
+}
+
+/**
+ * Trigger a file download in the browser.
+ */
+function downloadPdb(pdbString, filename) {
+    const blob = new Blob([pdbString], {type: 'chemical/x-pdb'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function downloadProteinPdb() {
+    if (!state.proteinPdb) return;
+    const name = state.proteinPdbLabel || 'structure';
+    downloadPdb(state.proteinPdb, name + '.pdb');
+}
+
+function downloadAttentionPdb() {
+    if (!state.attentionPdb) return;
+    const name = state.attentionPdbLabel || 'state_structure';
+    downloadPdb(state.attentionPdb, name + '.pdb');
+}
+
+/**
+ * Show or hide a download button based on whether PDB data is available.
+ */
+function updateDownloadButton(buttonId, pdbString) {
+    const btn = document.getElementById(buttonId);
+    if (btn) btn.style.display = pdbString ? 'block' : 'none';
 }
 
 /**
@@ -1168,6 +1207,11 @@ function updateProteinViewer() {
             if (state.selectedVampState !== null) info += ` · VAMP S${state.selectedVampState}`;
             setProteinViewerInfo(info);
 
+            // Track PDB for download
+            state.proteinPdb = pdbStr;
+            state.proteinPdbLabel = `frame_${state.selectedFrameIndex}`;
+            updateDownloadButton('protein-download-btn', state.proteinPdb);
+
             registerResidueHover(proteinViewer, 'protein-residue-info', 'protein');
             proteinViewer.zoomTo();
             proteinViewer.render();
@@ -1192,6 +1236,11 @@ function updateProteinViewer() {
                 }
             });
 
+            // Track PDB for download
+            state.proteinPdb = stateData.average;
+            state.proteinPdbLabel = `vamp_state_${viewState}_avg`;
+            updateDownloadButton('protein-download-btn', state.proteinPdb);
+
             registerResidueHover(proteinViewer, 'protein-residue-info', 'protein');
             proteinViewer.zoomTo();
             proteinViewer.render();
@@ -1205,6 +1254,15 @@ function updateProteinViewer() {
         proteinViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
         proteinViewer.setStyle({}, { [representation]: { color: 'spectrum' } });
         proteinViewer.zoomTo();
+
+        // Track PDB for download
+        state.proteinPdb = VISUALIZATION_DATA.protein_structure;
+        state.proteinPdbLabel = 'default_structure';
+        updateDownloadButton('protein-download-btn', state.proteinPdb);
+    } else {
+        state.proteinPdb = null;
+        state.proteinPdbLabel = null;
+        updateDownloadButton('protein-download-btn', null);
     }
     registerResidueHover(proteinViewer, 'protein-residue-info', 'protein');
     proteinViewer.render();
@@ -1312,6 +1370,10 @@ function updateAttentionViewer() {
                     });
                 });
             }
+
+            // Track main (average) PDB for download
+            state.attentionPdb = stateData.average;
+            state.attentionPdbLabel = `vamp_state_${state.selectedAttentionState}_avg`;
         } else if (VISUALIZATION_DATA.protein_structure && ts.state_attention_avg) {
             // Fallback: color global structure by state_attention_avg
             attentionViewer.addModel(VISUALIZATION_DATA.protein_structure, 'pdb');
@@ -1332,15 +1394,23 @@ function updateAttentionViewer() {
                     );
                 });
             }
+
+            // Track fallback PDB for download
+            state.attentionPdb = VISUALIZATION_DATA.protein_structure;
+            state.attentionPdbLabel = `vamp_state_${state.selectedAttentionState}_fallback`;
         }
 
+        updateDownloadButton('attention-download-btn', state.attentionPdb);
         registerResidueHover(attentionViewer, 'attention-residue-info', 'attention');
         attentionViewer.zoomTo();
         attentionViewer.render();
         return;
     }
 
-    // No state selected: clear the viewer
+    // No state selected: clear the viewer and download state
+    state.attentionPdb = null;
+    state.attentionPdbLabel = null;
+    updateDownloadButton('attention-download-btn', null);
     if (!attentionViewer) return;
     attentionViewer.removeAllModels();
     attentionViewer.render();
