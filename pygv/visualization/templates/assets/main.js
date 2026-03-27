@@ -2332,7 +2332,17 @@ function updateAttHeatmap() {
         }
     }
 
-    // Canvas
+    // Zoomable content wrapper
+    const zoomGroup = document.createElement('div');
+    zoomGroup.style.position = 'absolute';
+    zoomGroup.style.top = '0';
+    zoomGroup.style.left = '0';
+    zoomGroup.style.width = width + 'px';
+    zoomGroup.style.height = height + 'px';
+    zoomGroup.style.transformOrigin = `${margin.left}px ${margin.top}px`;
+    container.appendChild(zoomGroup);
+
+    // Canvas (inside zoomGroup)
     const canvas = document.createElement('canvas');
     canvas.width = Math.ceil(canvasW);
     canvas.height = Math.ceil(canvasH);
@@ -2341,10 +2351,11 @@ function updateAttHeatmap() {
     canvas.style.top = margin.top + 'px';
     canvas.style.width = canvasW + 'px';
     canvas.style.height = canvasH + 'px';
-    container.appendChild(canvas);
+    canvas.style.imageRendering = 'pixelated';
+    zoomGroup.appendChild(canvas);
 
     const ctx = canvas.getContext('2d');
-    const colorFn = d3.scaleSequential(d3.interpolateReds).domain([0, maxVal || 1]);
+    const colorFn = d3.scaleSequential(d3.interpolateViridis).domain([0, maxVal || 1]);
 
     for (let ri = 0; ri < activeResidues.length; ri++) {
         for (let ci = 0; ci < activeResidues.length; ci++) {
@@ -2354,55 +2365,100 @@ function updateAttHeatmap() {
         }
     }
 
-    // SVG overlay for axes
+    // SVG overlay for axes (inside zoomGroup)
     const names = VISUALIZATION_DATA.residue_names;
-    const svg = d3.select(container).append('svg')
+    const labelSvg = d3.select(zoomGroup).append('svg')
         .attr('width', width)
         .attr('height', height)
         .style('position', 'absolute')
         .style('top', '0')
         .style('left', '0')
-        .style('pointer-events', 'none');
+        .style('pointer-events', 'none')
+        .style('overflow', 'visible');
 
-    // Only show labels if cells are large enough
-    if (cellSize >= 12) {
-        const g = svg.append('g')
-            .attr('transform', `translate(${margin.left}, ${margin.top})`);
+    const labelG = labelSvg.append('g')
+        .attr('transform', `translate(${margin.left}, ${margin.top})`);
+
+    // Always render labels (they become visible on zoom even if cells are tiny)
+    const labelFontSize = Math.max(8, Math.min(10, cellSize * 0.6));
+    activeResidues.forEach((resIdx, i) => {
+        const label = (names && resIdx < names.length) ? names[resIdx] : `${resIdx + 1}`;
+        const shortLabel = label.length > 5 ? label.substring(0, 5) : label;
 
         // Top labels
-        activeResidues.forEach((resIdx, i) => {
-            const label = (names && resIdx < names.length) ? names[resIdx] : `${resIdx + 1}`;
-            g.append('text')
-                .attr('x', i * cellSize + cellSize / 2)
-                .attr('y', -4)
-                .attr('text-anchor', 'middle')
-                .attr('font-size', Math.min(10, cellSize * 0.6))
-                .attr('fill', 'var(--text-muted)')
-                .text(label.length > 5 ? label.substring(0, 5) : label);
-        });
+        labelG.append('text')
+            .attr('class', 'heatmap-label')
+            .attr('x', i * cellSize + cellSize / 2)
+            .attr('y', -4)
+            .attr('text-anchor', 'middle')
+            .attr('font-size', labelFontSize)
+            .attr('fill', 'var(--text-muted)')
+            .text(shortLabel)
+            .style('opacity', cellSize >= 12 ? 1 : 0);
 
         // Left labels
-        activeResidues.forEach((resIdx, i) => {
-            const label = (names && resIdx < names.length) ? names[resIdx] : `${resIdx + 1}`;
-            g.append('text')
-                .attr('x', -4)
-                .attr('y', i * cellSize + cellSize / 2)
-                .attr('text-anchor', 'end')
-                .attr('dominant-baseline', 'middle')
-                .attr('font-size', Math.min(10, cellSize * 0.6))
-                .attr('fill', 'var(--text-muted)')
-                .text(label.length > 5 ? label.substring(0, 5) : label);
-        });
-    }
+        labelG.append('text')
+            .attr('class', 'heatmap-label')
+            .attr('x', -4)
+            .attr('y', i * cellSize + cellSize / 2)
+            .attr('text-anchor', 'end')
+            .attr('dominant-baseline', 'middle')
+            .attr('font-size', labelFontSize)
+            .attr('fill', 'var(--text-muted)')
+            .text(shortLabel)
+            .style('opacity', cellSize >= 12 ? 1 : 0);
+    });
 
-    // Tooltip on canvas hover
-    canvas.style.pointerEvents = 'auto';
-    canvas.addEventListener('mousemove', (event) => {
-        const rect = canvas.getBoundingClientRect();
-        const mx = event.clientX - rect.left;
-        const my = event.clientY - rect.top;
-        const ci = Math.floor(mx / cellSize);
-        const ri = Math.floor(my / cellSize);
+    // Zoom capture layer (on top, covers full container)
+    const zoomSvg = d3.select(container).append('svg')
+        .attr('width', width)
+        .attr('height', height)
+        .style('position', 'absolute')
+        .style('top', '0')
+        .style('left', '0');
+
+    // Transparent rect to capture all pointer events
+    zoomSvg.append('rect')
+        .attr('width', width)
+        .attr('height', height)
+        .attr('fill', 'none')
+        .attr('pointer-events', 'all');
+
+    // d3.zoom behavior
+    const zoom = d3.zoom()
+        .scaleExtent([1, 20])
+        .translateExtent([[0, 0], [width, height]])
+        .on('zoom', (event) => {
+            const {x, y, k} = event.transform;
+            zoomGroup.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+            // Show labels once zoomed enough that effective cell size >= 12
+            const effCell = cellSize * k;
+            const labelOpacity = effCell >= 12 ? 1 : 0;
+            labelSvg.selectAll('.heatmap-label').style('opacity', labelOpacity);
+            // Scale down label font so they don't grow huge
+            const scaledFont = Math.max(6, Math.min(10, 10 / k * (effCell >= 12 ? 1 : 0)));
+            labelSvg.selectAll('.heatmap-label').attr('font-size', scaledFont);
+        });
+
+    zoomSvg.call(zoom);
+
+    // Store references for resetHeatmapZoom
+    state._heatmapZoom = zoom;
+    state._heatmapZoomSvg = zoomSvg;
+
+    // Tooltip on pointer move (via zoom capture layer)
+    zoomSvg.on('mousemove', (event) => {
+        // Get the current zoom transform
+        const t = d3.zoomTransform(zoomSvg.node());
+        // Invert screen coords to data coords
+        const containerRect = container.getBoundingClientRect();
+        const sx = event.clientX - containerRect.left;
+        const sy = event.clientY - containerRect.top;
+        // Undo zoom transform, then subtract margin
+        const dx = (sx - t.x) / t.k - margin.left;
+        const dy = (sy - t.y) / t.k - margin.top;
+        const ci = Math.floor(dx / cellSize);
+        const ri = Math.floor(dy / cellSize);
 
         if (ri >= 0 && ri < activeResidues.length && ci >= 0 && ci < activeResidues.length) {
             const srcIdx = activeResidues[ri];
@@ -2411,9 +2467,17 @@ function updateAttHeatmap() {
             const srcName = (names && srcIdx < names.length) ? names[srcIdx] : `R${srcIdx + 1}`;
             const tgtName = (names && tgtIdx < names.length) ? names[tgtIdx] : `R${tgtIdx + 1}`;
             showTooltip(event, `${srcName} → ${tgtName}<br/>Attention: ${val.toFixed(4)}`);
+        } else {
+            hideTooltip();
         }
     });
-    canvas.addEventListener('mouseout', hideTooltip);
+    zoomSvg.on('mouseout', hideTooltip);
+}
+
+function resetHeatmapZoom() {
+    if (state._heatmapZoom && state._heatmapZoomSvg) {
+        state._heatmapZoomSvg.call(state._heatmapZoom.transform, d3.zoomIdentity);
+    }
 }
 
 // --- Top contacts table ---

@@ -1015,6 +1015,11 @@ body {
     overflow: hidden;
     min-height: 0;
     position: relative;
+    cursor: grab;
+}
+
+#att-heatmap-container:active {
+    cursor: grabbing;
 }
 
 #att-contacts-panel {
@@ -1103,6 +1108,13 @@ body {
 .att-download-btn:hover {
     background-color: var(--bg-primary);
     border-color: var(--accent-color);
+}
+
+.att-hint {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-style: italic;
+    margin-left: auto;
 }
 
 #att-tab-placeholder {

@@ -195,8 +195,10 @@
                     <div class="viewer-label">Edge Attention Heatmap</div>
                     <div class="att-controls">
                         <label>Threshold: <input type="range" id="att-heatmap-threshold" min="0" max="100" value="0" step="1"><span id="att-heatmap-threshold-val">0.000</span></label>
+                        <button class="att-download-btn" onclick="resetHeatmapZoom()">Reset Zoom</button>
                         <button class="att-download-btn" onclick="downloadAttHeatmapPng()">PNG</button>
                         <button class="att-download-btn" onclick="downloadAttHeatmapCsv()">CSV</button>
+                        <span class="att-hint">Scroll to zoom, drag to pan</span>
                     </div>
                     <div id="att-heatmap-container"></div>
                 </div>
