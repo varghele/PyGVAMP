@@ -31,6 +31,10 @@
         <!-- Header -->
         <div id="header">
             <h1>{{ title }}</h1>
+            <div id="main-tabs">
+                <button class="main-tab active" data-tab="states">States &amp; Structures</button>
+                <button class="main-tab" data-tab="attention" id="main-tab-attention">Attention Analysis</button>
+            </div>
             <div id="header-info">
                 <span class="info-badge" id="timescale-count"></span>
                 <span class="info-badge" id="frame-count"></span>
@@ -120,45 +124,97 @@
             </div>
         </div>
 
-        <!-- Embedding viewer (prep data — constant across timescales) -->
-        <div id="embedding-viewer">
-            <div class="viewer-label">2D Embeddings (State Discovery)</div>
-            <div id="embedding-plot"></div>
-        </div>
+        <!-- Content area (holds both tabs) -->
+        <div id="content-area">
+            <!-- Tab 1: States & Structures (current layout) -->
+            <div id="tab-content-states" class="tab-content active">
+                <!-- Embedding viewer (prep data — constant across timescales) -->
+                <div id="embedding-viewer">
+                    <div class="viewer-label">2D Embeddings (State Discovery)</div>
+                    <div id="embedding-plot"></div>
+                </div>
 
-        <!-- VAMP embedding viewer (same coordinates, VAMP state coloring) -->
-        <div id="vamp-embedding-viewer">
-            <div class="viewer-label">2D Embeddings (VAMP States)</div>
-            <div id="vamp-embedding-plot"></div>
-        </div>
+                <!-- VAMP embedding viewer (same coordinates, VAMP state coloring) -->
+                <div id="vamp-embedding-viewer">
+                    <div class="viewer-label">2D Embeddings (VAMP States)</div>
+                    <div id="vamp-embedding-plot"></div>
+                </div>
 
-        <!-- Alluvial diagram panel -->
-        <div id="alluvial-panel">
-            <div class="viewer-label">Prep → VAMP State Mapping</div>
-            <div id="alluvial-plot"></div>
-        </div>
+                <!-- Alluvial diagram panel -->
+                <div id="alluvial-panel">
+                    <div class="viewer-label">Prep &rarr; VAMP State Mapping</div>
+                    <div id="alluvial-plot"></div>
+                </div>
 
-        <!-- Protein viewer -->
-        <div id="protein-viewer">
-            <div class="viewer-label">Protein Structure</div>
-            <div id="protein-viewer-info" class="viewer-sublabel"></div>
-            <button id="protein-download-btn" class="viewer-download-btn" onclick="downloadProteinPdb()">&#x2B73; PDB</button>
-            <div id="protein-residue-info" class="residue-info"></div>
-        </div>
+                <!-- Protein viewer -->
+                <div id="protein-viewer">
+                    <div class="viewer-label">Protein Structure</div>
+                    <div id="protein-viewer-info" class="viewer-sublabel"></div>
+                    <button id="protein-download-btn" class="viewer-download-btn" onclick="downloadProteinPdb()">&#x2B73; PDB</button>
+                    <div id="protein-residue-info" class="residue-info"></div>
+                </div>
 
-        <!-- Attention panel -->
-        <div id="attention-panel">
-            <div class="viewer-label">VAMP State Structures</div>
-            <div id="attention-state-selector"></div>
-            <div id="attention-viewer">
-                <button id="attention-download-btn" class="viewer-download-btn" onclick="downloadAttentionPdb()">&#x2B73; PDB</button>
-                <div id="attention-residue-info" class="residue-info"></div>
+                <!-- Attention panel -->
+                <div id="attention-panel">
+                    <div class="viewer-label">VAMP State Structures</div>
+                    <div id="attention-state-selector"></div>
+                    <div id="attention-viewer">
+                        <button id="attention-download-btn" class="viewer-download-btn" onclick="downloadAttentionPdb()">&#x2B73; PDB</button>
+                        <div id="attention-residue-info" class="residue-info"></div>
+                    </div>
+                </div>
+
+                <!-- Transition matrix -->
+                <div id="transition-matrix">
+                    <div id="matrix-container"></div>
+                </div>
             </div>
-        </div>
 
-        <!-- Transition matrix -->
-        <div id="transition-matrix">
-            <div id="matrix-container"></div>
+            <!-- Tab 2: Attention Analysis -->
+            <div id="tab-content-attention" class="tab-content" style="display: none;">
+                <!-- Residue attention heatmap (all states × residues) -->
+                <div id="att-residue-panel">
+                    <div class="viewer-label">Normalized Residue Attention (all states)</div>
+                    <div class="att-controls">
+                        <label>Top N: <input type="range" id="att-residue-topn" min="5" max="100" value="30"><span id="att-residue-topn-val">30</span></label>
+                        <label class="checkbox-label att-checkbox"><input type="checkbox" id="att-residue-sort-seq" checked>Sort by residue #</label>
+                        <button class="att-download-btn" onclick="downloadAttResiduePng()">PNG</button>
+                        <button class="att-download-btn" onclick="downloadAttResidueCsv()">CSV</button>
+                    </div>
+                    <div id="att-residue-container"></div>
+                </div>
+
+                <!-- State selector chips (for edge heatmap + contacts) -->
+                <div id="att-tab-chips">
+                    <div class="viewer-label">Select State (edge map &amp; contacts)</div>
+                    <div id="att-tab-chip-container"></div>
+                </div>
+
+                <!-- Edge attention heatmap (per-state) -->
+                <div id="att-heatmap-panel">
+                    <div class="viewer-label">Edge Attention Heatmap</div>
+                    <div class="att-controls">
+                        <label>Threshold: <input type="range" id="att-heatmap-threshold" min="0" max="100" value="0" step="1"><span id="att-heatmap-threshold-val">0.000</span></label>
+                        <button class="att-download-btn" onclick="downloadAttHeatmapPng()">PNG</button>
+                        <button class="att-download-btn" onclick="downloadAttHeatmapCsv()">CSV</button>
+                    </div>
+                    <div id="att-heatmap-container"></div>
+                </div>
+
+                <!-- Top contacts table (per-state) -->
+                <div id="att-contacts-panel">
+                    <div class="viewer-label">Top Contacts</div>
+                    <div class="att-controls">
+                        <button class="att-download-btn" onclick="downloadAttContactsCsv()">CSV</button>
+                    </div>
+                    <div id="att-contacts-container"></div>
+                </div>
+
+                <!-- Placeholder for when no data is available -->
+                <div id="att-tab-placeholder" style="display: none;">
+                    <p>No edge attention data available for this timescale.</p>
+                </div>
+            </div>
         </div>
 
         <!-- Diagnostics modal (hidden by default) -->

@@ -16,6 +16,11 @@ const state = {
     proteinPdbLabel: null,       // descriptive label for filename
     attentionPdb: null,          // PDB string currently shown in attention viewer
     attentionPdbLabel: null,     // descriptive label for filename
+    // Tab 2: Attention Analysis
+    activeMainTab: 'states',
+    attTabInitialized: false,
+    attTabSelectedState: null,
+    attEdgeMatrixCache: {},      // stateIdx → dense matrix
 };
 
 // Helper: map attention index to PDB residue number (resi).
@@ -167,6 +172,7 @@ function init() {
         }
 
         // Initialize all components
+        initMainTabs();
         initTimescaleControls();
         initEmbeddingPlot();
         initVampEmbeddingPlot();
@@ -1596,6 +1602,18 @@ function loadTimescale(index) {
     updateAttentionPanel();
     updateDiagnosticsPanel(ts);
     updateProteinViewer();
+
+    // If tab 2 is initialized, refresh it
+    if (state.attTabInitialized) {
+        state.attEdgeMatrixCache = {};
+        // Reset selected state if new timescale has different state count
+        if (state.attTabSelectedState !== null && state.attTabSelectedState >= ts.n_states) {
+            state.attTabSelectedState = null;
+        }
+        updateAttResidueHeatmap();
+        updateAttTabChips();
+        updateAttTab();
+    }
 }
 
 // =============================================================================
@@ -1860,6 +1878,671 @@ function openDiagnostics() {
 function closeDiagnostics() {
     const modal = document.getElementById('diagnostics-modal');
     if (modal) modal.style.display = 'none';
+}
+
+// =============================================================================
+// Main tab switching
+// =============================================================================
+
+function initMainTabs() {
+    // Hide attention tab if no timescale has edge attention data
+    const hasAnyEdgeAttention = VISUALIZATION_DATA.timescales.some(
+        ts => ts.state_edge_attention && Object.keys(ts.state_edge_attention).length > 0
+    );
+    const attTabBtn = document.getElementById('main-tab-attention');
+    if (!hasAnyEdgeAttention && attTabBtn) {
+        attTabBtn.style.display = 'none';
+    }
+
+    document.querySelectorAll('.main-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tabName = btn.dataset.tab;
+            if (tabName === state.activeMainTab) return;
+
+            state.activeMainTab = tabName;
+
+            // Update button active states
+            document.querySelectorAll('.main-tab').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            // Toggle tab content visibility
+            document.getElementById('tab-content-states').style.display =
+                tabName === 'states' ? 'grid' : 'none';
+            document.getElementById('tab-content-attention').style.display =
+                tabName === 'attention' ? 'grid' : 'none';
+
+            // Lazy-init tab 2 on first visit
+            if (tabName === 'attention' && !state.attTabInitialized) {
+                initAttTab();
+            }
+
+            // Resize viewers when switching back to tab 1
+            if (tabName === 'states') {
+                if (proteinViewer) proteinViewer.resize();
+                if (attentionViewer) attentionViewer.resize();
+            }
+        });
+    });
+}
+
+// =============================================================================
+// Tab 2: Attention Analysis
+// =============================================================================
+
+function initAttTab() {
+    state.attTabInitialized = true;
+    state.attEdgeMatrixCache = {};
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const hasData = ts.state_edge_attention && Object.keys(ts.state_edge_attention).length > 0;
+
+    if (!hasData) {
+        showAttTabPlaceholder(true);
+        return;
+    }
+
+    showAttTabPlaceholder(false);
+    updateAttTabChips();
+
+    // Wire up residue heatmap top-N slider
+    const topnSlider = document.getElementById('att-residue-topn');
+    if (topnSlider) {
+        topnSlider.addEventListener('input', () => {
+            document.getElementById('att-residue-topn-val').textContent = topnSlider.value;
+            updateAttResidueHeatmap();
+        });
+    }
+
+    // Wire up sort-by-residue-number checkbox
+    const sortSeqCheckbox = document.getElementById('att-residue-sort-seq');
+    if (sortSeqCheckbox) {
+        sortSeqCheckbox.addEventListener('change', () => updateAttResidueHeatmap());
+    }
+
+    // Wire up edge heatmap threshold slider
+    const threshSlider = document.getElementById('att-heatmap-threshold');
+    if (threshSlider) {
+        threshSlider.addEventListener('input', () => {
+            const val = parseFloat(threshSlider.value) / 1000;
+            document.getElementById('att-heatmap-threshold-val').textContent = val.toFixed(3);
+            updateAttHeatmap();
+            updateAttContactsTable();
+        });
+    }
+
+    // Draw residue heatmap (all states, independent of chip selection)
+    updateAttResidueHeatmap();
+
+    // Auto-select first state for edge heatmap + contacts
+    if (ts.state_edge_attention && Object.keys(ts.state_edge_attention).length > 0) {
+        state.attTabSelectedState = 0;
+        updateAttTabChips();
+        updateAttTab();
+    }
+}
+
+function showAttTabPlaceholder(show) {
+    const placeholder = document.getElementById('att-tab-placeholder');
+    const panels = ['att-residue-panel', 'att-tab-chips', 'att-heatmap-panel', 'att-contacts-panel'];
+    if (placeholder) placeholder.style.display = show ? 'flex' : 'none';
+    panels.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = show ? 'none' : '';
+    });
+}
+
+function updateAttTabChips() {
+    const container = document.getElementById('att-tab-chip-container');
+    if (!container) return;
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const stateColors = VISUALIZATION_DATA.config.colors.states;
+
+    container.innerHTML = '';
+    for (let i = 0; i < ts.n_states; i++) {
+        const chip = document.createElement('span');
+        chip.className = 'state-chip';
+        if (state.attTabSelectedState === i) chip.classList.add('active');
+        chip.style.backgroundColor = stateColors[i % stateColors.length];
+        chip.textContent = `S${i}`;
+        chip.addEventListener('click', () => {
+            state.attTabSelectedState = (state.attTabSelectedState === i) ? null : i;
+            state.attEdgeMatrixCache = {};
+            updateAttTabChips();
+            updateAttTab();
+        });
+        container.appendChild(chip);
+    }
+}
+
+function updateAttTab() {
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    const hasData = ts.state_edge_attention && Object.keys(ts.state_edge_attention).length > 0;
+
+    if (!hasData) {
+        showAttTabPlaceholder(true);
+        return;
+    }
+    showAttTabPlaceholder(false);
+
+    // Edge heatmap + contacts depend on selected state
+    updateAttHeatmap();
+    updateAttContactsTable();
+}
+
+// --- Sparse-to-dense reconstruction ---
+
+function getEdgeAttentionMatrix(stateIdx) {
+    const cacheKey = `${state.currentTimescaleIndex}_${stateIdx}`;
+    if (state.attEdgeMatrixCache[cacheKey]) return state.attEdgeMatrixCache[cacheKey];
+
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    if (!ts.state_edge_attention) return null;
+
+    const triples = ts.state_edge_attention[stateIdx];
+    if (!triples || triples.length === 0) return null;
+
+    // Determine matrix size
+    let maxIdx = 0;
+    for (const [r, c] of triples) {
+        if (r > maxIdx) maxIdx = r;
+        if (c > maxIdx) maxIdx = c;
+    }
+    const n = maxIdx + 1;
+
+    const matrix = Array.from({length: n}, () => new Float32Array(n));
+    for (const [r, c, v] of triples) {
+        matrix[r][c] = v;
+    }
+
+    state.attEdgeMatrixCache[cacheKey] = {matrix, n, triples};
+    return state.attEdgeMatrixCache[cacheKey];
+}
+
+function getResidueAttentionFromEdges(stateIdx) {
+    const data = getEdgeAttentionMatrix(stateIdx);
+    if (!data) return null;
+
+    const {matrix, n} = data;
+    const sums = new Float32Array(n);
+
+    // Sum columns (incoming attention)
+    for (let r = 0; r < n; r++) {
+        for (let c = 0; c < n; c++) {
+            sums[c] += matrix[r][c];
+        }
+    }
+
+    // Min-max normalize
+    let minVal = Infinity, maxVal = -Infinity;
+    for (let i = 0; i < n; i++) {
+        if (sums[i] < minVal) minVal = sums[i];
+        if (sums[i] > maxVal) maxVal = sums[i];
+    }
+    const range = maxVal - minVal || 1;
+
+    const result = [];
+    const names = VISUALIZATION_DATA.residue_names;
+    for (let i = 0; i < n; i++) {
+        result.push({
+            index: i,
+            name: (names && i < names.length) ? names[i] : `R${i + 1}`,
+            value: sums[i],
+            normalized: (sums[i] - minVal) / range
+        });
+    }
+
+    return result;
+}
+
+// --- Normalized residue attention heatmap (all states × residues) ---
+
+function getAllStatesResidueAttention() {
+    // Compute per-residue normalized attention for ALL states
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    if (!ts.state_edge_attention) return null;
+
+    const stateResults = [];
+    for (let si = 0; si < ts.n_states; si++) {
+        const res = getResidueAttentionFromEdges(si);
+        if (!res) return null;
+        stateResults.push(res);
+    }
+    return stateResults;
+}
+
+function updateAttResidueHeatmap() {
+    const container = document.getElementById('att-residue-container');
+    if (!container) return;
+
+    const allStates = getAllStatesResidueAttention();
+    if (!allStates || allStates.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const nStates = allStates.length;
+    const nResidues = allStates[0].length;
+    const topN = Math.min(parseInt(document.getElementById('att-residue-topn').value) || 30, nResidues);
+
+    // Find top-N residues by max normalized attention across any state
+    const maxPerResidue = allStates[0].map((r, i) => {
+        let mx = 0;
+        for (let si = 0; si < nStates; si++) {
+            if (allStates[si][i].normalized > mx) mx = allStates[si][i].normalized;
+        }
+        return {index: i, name: r.name, maxNorm: mx};
+    });
+    maxPerResidue.sort((a, b) => b.maxNorm - a.maxNorm);
+    const topResidues = maxPerResidue.slice(0, topN);
+
+    // Re-sort by residue index (sequence order) if checkbox is checked
+    const sortBySeq = document.getElementById('att-residue-sort-seq');
+    if (sortBySeq && sortBySeq.checked) {
+        topResidues.sort((a, b) => a.index - b.index);
+    }
+
+    // Build matrix: rows = states, cols = top residues
+    const matrix = [];
+    for (let si = 0; si < nStates; si++) {
+        const row = topResidues.map(r => allStates[si][r.index].normalized);
+        matrix.push(row);
+    }
+
+    container.innerHTML = '';
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const margin = {top: 10, right: 60, bottom: 60, left: 70};
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const cellW = innerW / topN;
+    const cellH = innerH / nStates;
+
+    const svg = d3.select(container).append('svg')
+        .attr('width', width)
+        .attr('height', height);
+
+    const g = svg.append('g')
+        .attr('transform', `translate(${margin.left},${margin.top})`);
+
+    // Color scale: viridis-like
+    const colorScale = d3.scaleSequential(d3.interpolateViridis).domain([0, 1]);
+
+    // Draw cells
+    for (let si = 0; si < nStates; si++) {
+        for (let ri = 0; ri < topN; ri++) {
+            const val = matrix[si][ri];
+            g.append('rect')
+                .attr('x', ri * cellW)
+                .attr('y', si * cellH)
+                .attr('width', cellW)
+                .attr('height', cellH)
+                .attr('fill', colorScale(val))
+                .attr('stroke', 'var(--bg-primary)')
+                .attr('stroke-width', 0.5)
+                .on('mouseover', function(event) {
+                    showTooltip(event,
+                        `State ${si} | ${topResidues[ri].name}<br/>Normalized: ${val.toFixed(3)}`);
+                })
+                .on('mousemove', function(event) {
+                    const tooltip = document.getElementById('tooltip');
+                    if (tooltip) {
+                        tooltip.style.left = (event.pageX + 10) + 'px';
+                        tooltip.style.top = (event.pageY + 10) + 'px';
+                    }
+                })
+                .on('mouseout', hideTooltip);
+        }
+    }
+
+    // Y-axis: state labels
+    for (let si = 0; si < nStates; si++) {
+        g.append('text')
+            .attr('x', -8)
+            .attr('y', si * cellH + cellH / 2)
+            .attr('text-anchor', 'end')
+            .attr('dominant-baseline', 'middle')
+            .attr('font-size', Math.min(12, cellH * 0.7))
+            .attr('font-weight', '600')
+            .attr('fill', 'var(--text-secondary)')
+            .text(`S${si}`);
+    }
+
+    // X-axis: residue labels
+    topResidues.forEach((r, i) => {
+        g.append('text')
+            .attr('x', i * cellW + cellW / 2)
+            .attr('y', nStates * cellH + 8)
+            .attr('text-anchor', 'end')
+            .attr('dominant-baseline', 'hanging')
+            .attr('font-size', Math.min(10, cellW * 0.8))
+            .attr('fill', 'var(--text-muted)')
+            .attr('transform', `rotate(-60, ${i * cellW + cellW / 2}, ${nStates * cellH + 8})`)
+            .text(r.name);
+    });
+
+    // Color bar
+    const barW = 12;
+    const barH = innerH;
+    const barX = innerW + 10;
+    const barSteps = 50;
+    for (let i = 0; i < barSteps; i++) {
+        const frac = 1 - i / barSteps;
+        g.append('rect')
+            .attr('x', barX)
+            .attr('y', (i / barSteps) * barH)
+            .attr('width', barW)
+            .attr('height', barH / barSteps + 1)
+            .attr('fill', colorScale(frac));
+    }
+    g.append('text').attr('x', barX + barW + 4).attr('y', 0)
+        .attr('font-size', '9px').attr('fill', 'var(--text-muted)')
+        .attr('dominant-baseline', 'hanging').text('1.0');
+    g.append('text').attr('x', barX + barW + 4).attr('y', barH)
+        .attr('font-size', '9px').attr('fill', 'var(--text-muted)')
+        .attr('dominant-baseline', 'auto').text('0.0');
+
+    // Axis labels
+    svg.append('text')
+        .attr('x', margin.left - 40)
+        .attr('y', margin.top + innerH / 2)
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'auto')
+        .attr('transform', `rotate(-90, ${margin.left - 40}, ${margin.top + innerH / 2})`)
+        .attr('font-size', '12px')
+        .attr('font-weight', '600')
+        .attr('fill', 'var(--text-secondary)')
+        .text('State');
+}
+
+// --- Edge attention heatmap (Canvas-backed) ---
+
+function updateAttHeatmap() {
+    const container = document.getElementById('att-heatmap-container');
+    if (!container || state.attTabSelectedState === null) {
+        if (container) container.innerHTML = '';
+        return;
+    }
+
+    const data = getEdgeAttentionMatrix(state.attTabSelectedState);
+    if (!data) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const {matrix, n} = data;
+    const threshold = parseFloat(document.getElementById('att-heatmap-threshold').value) / 1000;
+
+    // Determine which residues have at least one edge above threshold
+    const activeResidues = [];
+    for (let i = 0; i < n; i++) {
+        let hasEdge = false;
+        for (let j = 0; j < n; j++) {
+            if (matrix[i][j] >= threshold || matrix[j][i] >= threshold) {
+                hasEdge = true;
+                break;
+            }
+        }
+        if (hasEdge) activeResidues.push(i);
+    }
+
+    if (activeResidues.length === 0) {
+        container.innerHTML = '<div style="color: var(--text-muted); text-align: center; padding: 40px;">No edges above threshold.</div>';
+        return;
+    }
+
+    container.innerHTML = '';
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const margin = {top: 40, right: 10, bottom: 10, left: 40};
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const cellSize = Math.min(innerW / activeResidues.length, innerH / activeResidues.length);
+    const canvasW = cellSize * activeResidues.length;
+    const canvasH = cellSize * activeResidues.length;
+
+    // Find max value for color scale
+    let maxVal = 0;
+    for (const r of activeResidues) {
+        for (const c of activeResidues) {
+            if (matrix[r][c] > maxVal) maxVal = matrix[r][c];
+        }
+    }
+
+    // Canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(canvasW);
+    canvas.height = Math.ceil(canvasH);
+    canvas.style.position = 'absolute';
+    canvas.style.left = margin.left + 'px';
+    canvas.style.top = margin.top + 'px';
+    canvas.style.width = canvasW + 'px';
+    canvas.style.height = canvasH + 'px';
+    container.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    const colorFn = d3.scaleSequential(d3.interpolateReds).domain([0, maxVal || 1]);
+
+    for (let ri = 0; ri < activeResidues.length; ri++) {
+        for (let ci = 0; ci < activeResidues.length; ci++) {
+            const val = matrix[activeResidues[ri]][activeResidues[ci]];
+            ctx.fillStyle = val >= threshold ? colorFn(val) : '#1a1a1a';
+            ctx.fillRect(ci * cellSize, ri * cellSize, Math.ceil(cellSize), Math.ceil(cellSize));
+        }
+    }
+
+    // SVG overlay for axes
+    const names = VISUALIZATION_DATA.residue_names;
+    const svg = d3.select(container).append('svg')
+        .attr('width', width)
+        .attr('height', height)
+        .style('position', 'absolute')
+        .style('top', '0')
+        .style('left', '0')
+        .style('pointer-events', 'none');
+
+    // Only show labels if cells are large enough
+    if (cellSize >= 12) {
+        const g = svg.append('g')
+            .attr('transform', `translate(${margin.left}, ${margin.top})`);
+
+        // Top labels
+        activeResidues.forEach((resIdx, i) => {
+            const label = (names && resIdx < names.length) ? names[resIdx] : `${resIdx + 1}`;
+            g.append('text')
+                .attr('x', i * cellSize + cellSize / 2)
+                .attr('y', -4)
+                .attr('text-anchor', 'middle')
+                .attr('font-size', Math.min(10, cellSize * 0.6))
+                .attr('fill', 'var(--text-muted)')
+                .text(label.length > 5 ? label.substring(0, 5) : label);
+        });
+
+        // Left labels
+        activeResidues.forEach((resIdx, i) => {
+            const label = (names && resIdx < names.length) ? names[resIdx] : `${resIdx + 1}`;
+            g.append('text')
+                .attr('x', -4)
+                .attr('y', i * cellSize + cellSize / 2)
+                .attr('text-anchor', 'end')
+                .attr('dominant-baseline', 'middle')
+                .attr('font-size', Math.min(10, cellSize * 0.6))
+                .attr('fill', 'var(--text-muted)')
+                .text(label.length > 5 ? label.substring(0, 5) : label);
+        });
+    }
+
+    // Tooltip on canvas hover
+    canvas.style.pointerEvents = 'auto';
+    canvas.addEventListener('mousemove', (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = event.clientX - rect.left;
+        const my = event.clientY - rect.top;
+        const ci = Math.floor(mx / cellSize);
+        const ri = Math.floor(my / cellSize);
+
+        if (ri >= 0 && ri < activeResidues.length && ci >= 0 && ci < activeResidues.length) {
+            const srcIdx = activeResidues[ri];
+            const tgtIdx = activeResidues[ci];
+            const val = matrix[srcIdx][tgtIdx];
+            const srcName = (names && srcIdx < names.length) ? names[srcIdx] : `R${srcIdx + 1}`;
+            const tgtName = (names && tgtIdx < names.length) ? names[tgtIdx] : `R${tgtIdx + 1}`;
+            showTooltip(event, `${srcName} → ${tgtName}<br/>Attention: ${val.toFixed(4)}`);
+        }
+    });
+    canvas.addEventListener('mouseout', hideTooltip);
+}
+
+// --- Top contacts table ---
+
+function updateAttContactsTable() {
+    const container = document.getElementById('att-contacts-container');
+    if (!container || state.attTabSelectedState === null) {
+        if (container) container.innerHTML = '';
+        return;
+    }
+
+    const data = getEdgeAttentionMatrix(state.attTabSelectedState);
+    if (!data) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const {triples} = data;
+    const threshold = parseFloat(document.getElementById('att-heatmap-threshold').value) / 1000;
+    const names = VISUALIZATION_DATA.residue_names;
+
+    const filtered = triples
+        .filter(([r, c, v]) => v >= threshold)
+        .sort((a, b) => b[2] - a[2])
+        .slice(0, 100);
+
+    let html = '<table><thead><tr><th>#</th><th>Source</th><th>Target</th><th>Attention</th></tr></thead><tbody>';
+    filtered.forEach(([r, c, v], i) => {
+        const srcName = (names && r < names.length) ? names[r] : `R${r + 1}`;
+        const tgtName = (names && c < names.length) ? names[c] : `R${c + 1}`;
+        html += `<tr><td>${i + 1}</td><td>${srcName}</td><td>${tgtName}</td><td>${v.toFixed(4)}</td></tr>`;
+    });
+    html += '</tbody></table>';
+
+    container.innerHTML = html;
+}
+
+// --- Download functions ---
+
+function downloadFile(content, filename, mimeType) {
+    const blob = new Blob([content], {type: mimeType});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function svgToPng(svgElement, filename, scale) {
+    scale = scale || 2;
+    const svgData = new XMLSerializer().serializeToString(svgElement);
+    const svgBlob = new Blob([svgData], {type: 'image/svg+xml;charset=utf-8'});
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.onload = function() {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(function(blob) {
+            const dlUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = dlUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(dlUrl);
+        }, 'image/png');
+    };
+    img.src = url;
+}
+
+function downloadAttResiduePng() {
+    const svg = document.querySelector('#att-residue-container svg');
+    if (svg) svgToPng(svg, 'residue_attention_heatmap.png', 3);
+}
+
+function downloadAttResidueCsv() {
+    const allStates = getAllStatesResidueAttention();
+    if (!allStates) return;
+    const nStates = allStates.length;
+    const nResidues = allStates[0].length;
+
+    let csv = 'Residue';
+    for (let si = 0; si < nStates; si++) csv += `,State${si}_raw,State${si}_normalized`;
+    csv += '\n';
+
+    for (let ri = 0; ri < nResidues; ri++) {
+        csv += allStates[0][ri].name;
+        for (let si = 0; si < nStates; si++) {
+            csv += `,${allStates[si][ri].value.toFixed(6)},${allStates[si][ri].normalized.toFixed(6)}`;
+        }
+        csv += '\n';
+    }
+    downloadFile(csv, 'residue_attention_all_states.csv', 'text/csv');
+}
+
+function downloadAttHeatmapPng() {
+    const canvas = document.querySelector('#att-heatmap-container canvas');
+    if (!canvas) return;
+    canvas.toBlob(function(blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'edge_attention_heatmap.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 'image/png');
+}
+
+function downloadAttHeatmapCsv() {
+    if (state.attTabSelectedState === null) return;
+    const data = getEdgeAttentionMatrix(state.attTabSelectedState);
+    if (!data) return;
+    const {triples} = data;
+    const names = VISUALIZATION_DATA.residue_names;
+    let csv = 'Source,Target,Attention\n';
+    const sorted = [...triples].sort((a, b) => b[2] - a[2]);
+    sorted.forEach(([r, c, v]) => {
+        const srcName = (names && r < names.length) ? names[r] : `R${r + 1}`;
+        const tgtName = (names && c < names.length) ? names[c] : `R${c + 1}`;
+        csv += `${srcName},${tgtName},${v.toFixed(6)}\n`;
+    });
+    downloadFile(csv, 'edge_attention.csv', 'text/csv');
+}
+
+function downloadAttContactsCsv() {
+    if (state.attTabSelectedState === null) return;
+    const data = getEdgeAttentionMatrix(state.attTabSelectedState);
+    if (!data) return;
+    const {triples} = data;
+    const threshold = parseFloat(document.getElementById('att-heatmap-threshold').value) / 1000;
+    const names = VISUALIZATION_DATA.residue_names;
+    const filtered = triples.filter(([r, c, v]) => v >= threshold).sort((a, b) => b[2] - a[2]);
+    let csv = 'Rank,Source,Target,Attention\n';
+    filtered.forEach(([r, c, v], i) => {
+        const srcName = (names && r < names.length) ? names[r] : `R${r + 1}`;
+        const tgtName = (names && c < names.length) ? names[c] : `R${c + 1}`;
+        csv += `${i + 1},${srcName},${tgtName},${v.toFixed(6)}\n`;
+    });
+    downloadFile(csv, 'top_contacts.csv', 'text/csv');
 }
 
 // =============================================================================

@@ -44,14 +44,57 @@ body {
     width: 100vw;
     height: 100vh;
     display: grid;
-    grid-template-columns: 260px 1fr 1fr 1fr;
-    grid-template-rows: 60px 1fr 1fr 1fr 1fr;
+    grid-template-columns: 260px 1fr;
+    grid-template-rows: 60px 1fr;
     grid-template-areas:
-        "header    header         header         header"
-        "sidebar   embedding      vamp-embedding attention"
-        "sidebar   embedding      vamp-embedding attention"
-        "sidebar   matrix         alluvial       protein"
-        "sidebar   matrix         alluvial       protein";
+        "header  header"
+        "sidebar content";
+    gap: 0;
+}
+
+/* Content area (holds both tab content divs) */
+#content-area {
+    grid-area: content;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Tab content panels */
+.tab-content {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+.tab-content.active {
+    z-index: 1;
+}
+
+/* Tab 1: States & Structures (same grid as before) */
+#tab-content-states {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr 1fr 1fr;
+    grid-template-areas:
+        "embedding      vamp-embedding attention"
+        "embedding      vamp-embedding attention"
+        "matrix         alluvial       protein"
+        "matrix         alluvial       protein";
+    gap: 0;
+}
+
+/* Tab 2: Attention Analysis */
+#tab-content-attention {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr auto 1fr;
+    grid-template-areas:
+        "att-residue   att-residue   att-residue"
+        "att-chips     att-chips     att-chips"
+        "att-heatmap   att-heatmap   att-contacts";
     gap: 0;
 }
 
@@ -63,7 +106,7 @@ body {
     padding: 0 20px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 24px;
     box-shadow: 0 2px 4px var(--shadow);
     z-index: 100;
 }
@@ -74,12 +117,42 @@ body {
     color: var(--text-primary);
 }
 
+/* Main tab bar */
+#main-tabs {
+    display: flex;
+    gap: 4px;
+    align-self: stretch;
+    align-items: flex-end;
+}
+
+.main-tab {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    transition: all 0.2s;
+}
+
+.main-tab:hover {
+    color: var(--text-primary);
+}
+
+.main-tab.active {
+    color: var(--accent-color);
+    border-bottom-color: var(--accent-color);
+}
+
 #header-info {
     display: flex;
     gap: 20px;
     align-items: center;
     font-size: 14px;
     color: var(--text-secondary);
+    margin-left: auto;
 }
 
 .info-badge {
@@ -612,14 +685,13 @@ body {
 /* Responsive adjustments */
 @media (max-width: 1400px) {
     #app {
-        grid-template-columns: 240px 1fr 340px;
+        grid-template-columns: 240px 1fr;
     }
 }
 
 @media (max-width: 1200px) {
     #app {
-        grid-template-columns: 220px 1fr 300px;
-        grid-template-rows: 60px 1fr 1fr 260px;
+        grid-template-columns: 220px 1fr;
     }
 
     #header h1 {
@@ -884,4 +956,161 @@ body {
 .residue-info .residue-attention {
     float: right;
     font-weight: 600;
+}
+
+/* ============================================================
+   Tab 2: Attention Analysis panels
+   ============================================================ */
+
+#att-residue-panel {
+    grid-area: att-residue;
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+#att-residue-container {
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+}
+
+#att-residue-container svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+#att-tab-chips {
+    grid-area: att-chips;
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 10px 15px;
+    position: relative;
+}
+
+#att-tab-chip-container {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding-top: 28px;
+}
+
+#att-heatmap-panel {
+    grid-area: att-heatmap;
+    background-color: var(--bg-secondary);
+    border-top: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-color);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+#att-heatmap-container {
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+    position: relative;
+}
+
+#att-contacts-panel {
+    grid-area: att-contacts;
+    background-color: var(--bg-secondary);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+#att-contacts-container {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+#att-contacts-container table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+#att-contacts-container th,
+#att-contacts-container td {
+    padding: 5px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+#att-contacts-container th {
+    position: sticky;
+    top: 0;
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    z-index: 1;
+}
+
+#att-contacts-container td {
+    color: var(--text-primary);
+}
+
+/* Controls row for sliders & download buttons */
+.att-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 36px 15px 8px 15px;
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.att-controls label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.att-controls input[type="range"] {
+    width: 100px;
+    cursor: pointer;
+}
+
+.att-checkbox {
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.att-download-btn {
+    background-color: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.att-download-btn:hover {
+    background-color: var(--bg-primary);
+    border-color: var(--accent-color);
+}
+
+#att-tab-placeholder {
+    grid-column: 1 / -1;
+    grid-row: 2 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 14px;
 }

@@ -68,6 +68,7 @@ class MDTrajectoryVisualizer:
         self.frame_coordinates = None
         self.pdb_template = None
         self.residue_mapping = None
+        self.residue_names = None
 
         # Default configuration
         self.config = {
@@ -117,6 +118,7 @@ class MDTrajectoryVisualizer:
         state_structures: Optional[Dict] = None,
         state_attention_avg: Optional[np.ndarray] = None,
         trajectory_frame_indices: Optional[np.ndarray] = None,
+        state_edge_attention: Optional[Dict] = None,
     ):
         """
         Add data for one timescale/lagtime.
@@ -184,6 +186,7 @@ class MDTrajectoryVisualizer:
             'metadata': metadata or {},
             'state_structures': state_structures or {},
             'trajectory_frame_indices': trajectory_frame_indices,
+            'state_edge_attention': state_edge_attention,
         }
 
         self.timescales_data.append(timescale_data)
@@ -247,6 +250,18 @@ class MDTrajectoryVisualizer:
             entry is the PDB residue number for attention index i.
         """
         self.residue_mapping = list(residue_mapping)
+
+    def set_residue_names(self, names: List[str]):
+        """
+        Set human-readable residue names for the attention analysis tab.
+
+        Parameters
+        ----------
+        names : list of str
+            List of residue name strings (e.g. ["ALA126", "GLN127", ...]),
+            one per attention dimension.
+        """
+        self.residue_names = list(names)
 
     def set_protein_structure(
         self,
@@ -333,6 +348,7 @@ class MDTrajectoryVisualizer:
             'protein_structure': self.protein_structure,
             'protein_source': self.protein_source,
             'residue_mapping': self.residue_mapping,
+            'residue_names': self.residue_names,
         }
 
         # Add per-frame coordinate data if available
@@ -384,6 +400,8 @@ class MDTrajectoryVisualizer:
             }
             if ts_data.get('trajectory_frame_indices') is not None:
                 ts_export['trajectory_frame_indices'] = ts_data['trajectory_frame_indices']
+            if ts_data.get('state_edge_attention') is not None:
+                ts_export['state_edge_attention'] = ts_data['state_edge_attention']
             export_data['timescales'].append(ts_export)
 
         return DataProcessor.prepare_json_data(export_data)
