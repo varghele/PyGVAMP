@@ -25,6 +25,9 @@ const state = {
     attDistancePairs: [],        // [{res1idx, res2idx}, ...]
     attProteinViewer: null,      // 3Dmol viewer instance (lazy)
     attProteinInitialized: false,
+    // Tab 2: RMSD coloring
+    attProbeShowRmsd: false,
+    attRmsdCache: {},            // timescaleIndex → [{resiIdx, resi, rmsd}, ...]
 };
 
 // Helper: map attention index to PDB residue number (resi).
@@ -2601,6 +2604,17 @@ function initAttProteinViewer() {
         });
     }
 
+    // RMSD toggle
+    const rmsdToggle = document.getElementById('att-rmsd-toggle');
+    if (rmsdToggle) {
+        rmsdToggle.addEventListener('change', () => {
+            state.attProbeShowRmsd = rmsdToggle.checked;
+            const legend = document.getElementById('att-rmsd-legend');
+            if (legend) legend.style.display = rmsdToggle.checked ? 'flex' : 'none';
+            updateAttProteinViewer();
+        });
+    }
+
     // Load first state if available
     updateAttProteinViewer();
 }
@@ -2727,6 +2741,54 @@ function updateAttDistanceTable() {
     table.innerHTML = html;
 }
 
+function computePerResidueRmsd() {
+    const tsIdx = state.currentTimescaleIndex;
+    if (state.attRmsdCache[tsIdx]) return state.attRmsdCache[tsIdx];
+
+    const ts = VISUALIZATION_DATA.timescales[tsIdx];
+    if (!ts.state_structures) return [];
+
+    const names = VISUALIZATION_DATA.residue_names;
+    const nResidues = names ? names.length : 0;
+    if (nResidues === 0) return [];
+
+    // Collect all available state PDBs
+    const pdbs = [];
+    for (let si = 0; si < ts.n_states; si++) {
+        const sd = ts.state_structures[si];
+        if (sd && sd.average) pdbs.push(sd.average);
+    }
+    if (pdbs.length < 2) return [];
+
+    const result = [];
+    for (let ri = 0; ri < nResidues; ri++) {
+        const resi = attentionIndexToResi(ri);
+        const coords = [];
+        for (const pdb of pdbs) {
+            const c = getCACoordFromPdb(pdb, resi);
+            if (c) coords.push(c);
+        }
+        if (coords.length < 2) {
+            result.push({resiIdx: ri, resi, rmsd: 0});
+            continue;
+        }
+        // Centroid
+        let cx = 0, cy = 0, cz = 0;
+        for (const c of coords) { cx += c.x; cy += c.y; cz += c.z; }
+        cx /= coords.length; cy /= coords.length; cz /= coords.length;
+        // RMSD from centroid
+        let sumSq = 0;
+        for (const c of coords) {
+            const dx = c.x - cx, dy = c.y - cy, dz = c.z - cz;
+            sumSq += dx * dx + dy * dy + dz * dz;
+        }
+        result.push({resiIdx: ri, resi, rmsd: Math.sqrt(sumSq / coords.length)});
+    }
+
+    state.attRmsdCache[tsIdx] = result;
+    return result;
+}
+
 function updateAttProteinViewer() {
     const viewer = state.attProteinViewer;
     if (!viewer) return;
@@ -2765,9 +2827,29 @@ function updateAttProteinViewer() {
         viewer.addModel(stateData.average, 'pdb');
 
         const rep = VISUALIZATION_DATA.config.protein.representation || 'cartoon';
-        const style = {};
-        style[rep] = {color: 'spectrum'};
-        viewer.setStyle({}, style);
+
+        if (state.attProbeShowRmsd) {
+            const rmsdData = computePerResidueRmsd();
+            if (rmsdData.length > 0) {
+                const vals = rmsdData.map(r => r.rmsd);
+                const minV = Math.min(...vals);
+                const maxV = Math.max(...vals);
+                const range = maxV - minV || 1;
+                const colorScale = d3.scaleLinear()
+                    .domain([0, 0.5, 1])
+                    .range(['#00CC66', '#FFDD00', '#CC00CC']);
+                viewer.setStyle({}, {});
+                rmsdData.forEach(r => {
+                    const norm = (r.rmsd - minV) / range;
+                    const color = colorScale(norm);
+                    viewer.setStyle({resi: r.resi}, {[rep]: {color: color}});
+                });
+            } else {
+                viewer.setStyle({}, {[rep]: {color: 'spectrum'}});
+            }
+        } else {
+            viewer.setStyle({}, {[rep]: {color: 'spectrum'}});
+        }
 
         // Draw distance probe lines
         const stateColors = VISUALIZATION_DATA.config.colors.states;

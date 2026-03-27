@@ -217,6 +217,18 @@
                         <div id="att-protein-viewer-container"></div>
                     </div>
                     <div id="att-protein-controls">
+                        <div class="rmsd-toggle-row">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="att-rmsd-toggle"> Color by CA RMSD across states
+                            </label>
+                            <div id="att-rmsd-legend" class="rmsd-legend" style="display: none;">
+                                <div class="rmsd-gradient"></div>
+                                <div class="rmsd-legend-labels">
+                                    <span>Rigid</span>
+                                    <span>Mobile</span>
+                                </div>
+                            </div>
+                        </div>
                         <div class="pair-row">
                             <select id="att-pair-res1"></select>
                             <span style="color: var(--text-muted);">&harr;</span>
