@@ -4,6 +4,11 @@ from ..model_configs import SchNetConfig, MetaConfig, ML3Config, GINConfig
 
 class LargeSchNetConfig(SchNetConfig):
     """Large SchNet configuration for large molecular graphs (proteins)"""
+    # State discovery
+    g2v_max_degree: int = 6
+    g2v_min_count: int = 10
+    g2v_min_count_decay: float = 0.5
+
     # Dataset
     stride: int = 5
     batch_size: int = 16
@@ -33,6 +38,11 @@ class LargeSchNetConfig(SchNetConfig):
 
 class LargeMetaConfig(MetaConfig):
     """Large Meta configuration for large molecular graphs (proteins)"""
+    # State discovery
+    g2v_max_degree: int = 6
+    g2v_min_count: int = 10
+    g2v_min_count_decay: float = 0.5
+
     # Dataset
     stride: int = 5
     batch_size: int = 16
@@ -63,6 +73,11 @@ class LargeMetaConfig(MetaConfig):
 
 class LargeML3Config(ML3Config):
     """Large ML3 configuration for large molecular graphs (proteins)"""
+    # State discovery
+    g2v_max_degree: int = 6
+    g2v_min_count: int = 10
+    g2v_min_count_decay: float = 0.5
+
     # Dataset
     stride: int = 5
     batch_size: int = 16
@@ -93,6 +108,11 @@ class LargeML3Config(ML3Config):
 
 class LargeGINConfig(GINConfig):
     """Large GIN configuration for large molecular graphs (proteins)"""
+    # State discovery
+    g2v_max_degree: int = 6
+    g2v_min_count: int = 10
+    g2v_min_count_decay: float = 0.5
+
     # Dataset
     stride: int = 5
     batch_size: int = 16

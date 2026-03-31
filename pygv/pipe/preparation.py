@@ -161,6 +161,7 @@ def run_state_discovery(dataset, args, paths):
         max_degree=args.g2v_max_degree,
         g2v_epochs=args.g2v_epochs,
         g2v_min_count=getattr(args, 'g2v_min_count', 5),
+        g2v_min_count_decay=getattr(args, 'g2v_min_count_decay', None),
         umap_dims=getattr(args, 'g2v_umap_dim', [2]),
         max_k=args.max_states,
         min_k=args.min_states,

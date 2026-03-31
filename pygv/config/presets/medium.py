@@ -4,6 +4,11 @@ from ..model_configs import SchNetConfig, MetaConfig, ML3Config, GINConfig
 
 class MediumSchNetConfig(SchNetConfig):
     """Medium SchNet configuration for medium-sized molecular graphs"""
+    # State discovery
+    g2v_max_degree: int = 4
+    g2v_min_count: int = 10
+    g2v_min_count_decay: float = 0.5
+
     # Dataset
     stride: int = 10
     batch_size: int = 32
@@ -30,6 +35,11 @@ class MediumSchNetConfig(SchNetConfig):
 
 class MediumMetaConfig(MetaConfig):
     """Medium Meta configuration for medium-sized molecular graphs"""
+    # State discovery
+    g2v_max_degree: int = 4
+    g2v_min_count: int = 10
+    g2v_min_count_decay: float = 0.5
+
     # Dataset
     stride: int = 10
     batch_size: int = 32
@@ -56,6 +66,11 @@ class MediumMetaConfig(MetaConfig):
 
 class MediumML3Config(ML3Config):
     """Medium ML3 configuration for medium-sized molecular graphs"""
+    # State discovery
+    g2v_max_degree: int = 4
+    g2v_min_count: int = 10
+    g2v_min_count_decay: float = 0.5
+
     # Dataset
     stride: int = 10
     batch_size: int = 32
@@ -82,6 +97,11 @@ class MediumML3Config(ML3Config):
 
 class MediumGINConfig(GINConfig):
     """Medium GIN configuration for medium-sized molecular graphs"""
+    # State discovery
+    g2v_max_degree: int = 4
+    g2v_min_count: int = 10
+    g2v_min_count_decay: float = 0.5
+
     # Dataset
     stride: int = 10
     batch_size: int = 32

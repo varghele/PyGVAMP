@@ -4,6 +4,10 @@ from ..model_configs import SchNetConfig, MetaConfig, ML3Config, GINConfig
 
 class SmallSchNetConfig(SchNetConfig):
     """Small SchNet configuration for small molecular graphs"""
+    # State discovery
+    g2v_max_degree: int = 2
+    g2v_min_count: int = 5
+
     # Dataset
     stride: int = 20
     batch_size: int = 64
@@ -25,6 +29,10 @@ class SmallSchNetConfig(SchNetConfig):
 
 class SmallMetaConfig(MetaConfig):
     """Small Meta configuration for small molecular graphs"""
+    # State discovery
+    g2v_max_degree: int = 2
+    g2v_min_count: int = 5
+
     # Dataset
     stride: int = 20
     batch_size: int = 64
@@ -46,6 +54,10 @@ class SmallMetaConfig(MetaConfig):
 
 class SmallML3Config(ML3Config):
     """Small ML3 configuration for small molecular graphs"""
+    # State discovery
+    g2v_max_degree: int = 2
+    g2v_min_count: int = 5
+
     # Dataset
     stride: int = 20
     batch_size: int = 64
@@ -67,6 +79,10 @@ class SmallML3Config(ML3Config):
 
 class SmallGINConfig(GINConfig):
     """Small GIN configuration for small molecular graphs"""
+    # State discovery
+    g2v_max_degree: int = 2
+    g2v_min_count: int = 5
+
     # Dataset
     stride: int = 20
     batch_size: int = 64

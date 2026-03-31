@@ -34,6 +34,11 @@ def add_prep_args(parser: argparse.ArgumentParser):
                                   help='Graph2Vec training epochs')
     discovery_group.add_argument('--g2v_min_count', type=int, default=10,
                                   help='Minimum subgraph frequency to be included in Graph2Vec vocabulary')
+    discovery_group.add_argument('--g2v_min_count_decay', type=float, default=None,
+                                  help='Exponential decay factor for per-degree min_count. '
+                                       'Threshold for degree d = max(1, floor(min_count * decay^d)). '
+                                       'E.g. 0.5 with min_count=10 gives d0:10, d1:5, d2:2, d3:1. '
+                                       'If not set, uniform min_count is used for all degrees.')
     discovery_group.add_argument('--min_states', type=int, default=2,
                                   help='Minimum number of states to test in clustering')
     discovery_group.add_argument('--max_states', type=int, default=10,
