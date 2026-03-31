@@ -30,6 +30,8 @@ const state = {
     attRmsdCache: {},            // timescaleIndex → [{resiIdx, resi, rmsd}, ...]
     // Tab 2: dirty flag — set when timescale changes while tab 2 is hidden
     attTabDirty: false,
+    // Tab 1: dirty flag — set when timescale changes while tab 1 is hidden
+    statesTabDirty: false,
 };
 
 // Helper: map attention index to PDB residue number (resi).
@@ -1613,14 +1615,21 @@ function loadTimescale(index) {
             ? ts.state_assignments[state.selectedFrameIndex] : null;
     }
 
-    // Update timescale-dependent panels
-    updateVampEmbeddingColors();
-    updateAlluvialPlot();
-    updateTransitionMatrix(ts);
+    // Update timescale-dependent panels.
+    // SVG/canvas panels that depend on container dimensions are only updated
+    // when their tab is visible; otherwise they are marked dirty.
     updateStateLegend(ts);
     updateAttentionPanel();
     updateDiagnosticsPanel(ts);
-    updateProteinViewer();
+
+    if (state.activeMainTab === 'states') {
+        updateVampEmbeddingColors();
+        updateAlluvialPlot();
+        updateTransitionMatrix(ts);
+        updateProteinViewer();
+    } else {
+        state.statesTabDirty = true;
+    }
 
     // If tab 2 is initialized, refresh it — but only if it's currently visible.
     // Hidden elements have zero dimensions, so D3/canvas renders would break.
@@ -1946,8 +1955,16 @@ function initMainTabs() {
                 refreshAttTab();
             }
 
-            // Resize viewers when switching back to tab 1
+            // Refresh tab 1 if timescale changed while it was hidden
             if (tabName === 'states') {
+                if (state.statesTabDirty) {
+                    state.statesTabDirty = false;
+                    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+                    updateVampEmbeddingColors();
+                    updateAlluvialPlot();
+                    updateTransitionMatrix(ts);
+                    updateProteinViewer();
+                }
                 if (proteinViewer) proteinViewer.resize();
                 if (attentionViewer) attentionViewer.resize();
             }
