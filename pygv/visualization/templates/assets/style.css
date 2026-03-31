@@ -1195,12 +1195,6 @@ body {
     background: linear-gradient(to right, #00CC66, #FFDD00, #CC00CC);
 }
 
-.rmsd-legend-labels {
-    display: flex;
-    justify-content: space-between;
-    width: 60px;
-    font-size: 9px;
-}
 
 #att-protein-controls .pair-row {
     display: flex;
