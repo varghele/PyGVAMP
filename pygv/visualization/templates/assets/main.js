@@ -28,6 +28,8 @@ const state = {
     // Tab 2: RMSD coloring
     attProbeShowRmsd: false,
     attRmsdCache: {},            // timescaleIndex → [{resiIdx, resi, rmsd}, ...]
+    // Tab 2: dirty flag — set when timescale changes while tab 2 is hidden
+    attTabDirty: false,
 };
 
 // Helper: map attention index to PDB residue number (resi).
@@ -1584,6 +1586,16 @@ function updateStateLegend(timescale) {
 // Timescale loading
 // =============================================================================
 
+function refreshAttTab() {
+    state.attEdgeMatrixCache = {};
+    state.attRmsdCache = {};
+    updateAttResidueHeatmap();
+    updateAttTabChips();
+    updateAttTab();
+    updateAttDistanceTable();
+    updateAttProteinViewer();
+}
+
 function loadTimescale(index) {
     state.currentTimescaleIndex = index;
     const ts = VISUALIZATION_DATA.timescales[index];
@@ -1610,19 +1622,20 @@ function loadTimescale(index) {
     updateDiagnosticsPanel(ts);
     updateProteinViewer();
 
-    // If tab 2 is initialized, refresh it
+    // If tab 2 is initialized, refresh it — but only if it's currently visible.
+    // Hidden elements have zero dimensions, so D3/canvas renders would break.
     if (state.attTabInitialized) {
         state.attEdgeMatrixCache = {};
         // Reset selected state if new timescale has different state count
         if (state.attTabSelectedState !== null && state.attTabSelectedState >= ts.n_states) {
             state.attTabSelectedState = null;
         }
-        updateAttResidueHeatmap();
-        updateAttTabChips();
-        updateAttTab();
-        // Recompute distances for new timescale
-        updateAttDistanceTable();
-        updateAttProteinViewer();
+
+        if (state.activeMainTab === 'attention') {
+            refreshAttTab();
+        } else {
+            state.attTabDirty = true;
+        }
     }
 }
 
@@ -1927,6 +1940,12 @@ function initMainTabs() {
                 initAttTab();
             }
 
+            // Refresh tab 2 if timescale changed while it was hidden
+            if (tabName === 'attention' && state.attTabInitialized && state.attTabDirty) {
+                state.attTabDirty = false;
+                refreshAttTab();
+            }
+
             // Resize viewers when switching back to tab 1
             if (tabName === 'states') {
                 if (proteinViewer) proteinViewer.resize();
@@ -2144,7 +2163,15 @@ function updateAttResidueHeatmap() {
 
     const nStates = allStates.length;
     const nResidues = allStates[0].length;
-    const topN = Math.min(parseInt(document.getElementById('att-residue-topn').value) || 30, nResidues);
+    const topnSlider = document.getElementById('att-residue-topn');
+    const topnLabel = document.getElementById('att-residue-topn-val');
+    // Clamp slider max to actual residue count and sync the label
+    if (topnSlider) {
+        topnSlider.max = nResidues;
+        if (parseInt(topnSlider.value) > nResidues) topnSlider.value = nResidues;
+    }
+    const topN = Math.min(parseInt(topnSlider ? topnSlider.value : 30) || 30, nResidues);
+    if (topnLabel) topnLabel.textContent = topN;
 
     // Find top-N residues by max normalized attention across any state
     const maxPerResidue = allStates[0].map((r, i) => {
@@ -2628,6 +2655,74 @@ function downloadAttContactsCsv() {
         csv += `${i + 1},${srcName},${tgtName},${v.toFixed(6)}\n`;
     });
     downloadFile(csv, 'top_contacts.csv', 'text/csv');
+}
+
+function downloadAlluvialPng() {
+    const svgEl = document.querySelector('#alluvial-plot svg');
+    if (!svgEl) return;
+    svgToPng(svgEl, 'prep_vamp_state_mapping.png', 3);
+}
+
+function downloadAlluvialCsv() {
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    if (!ts) return;
+    const prepLabels = VISUALIZATION_DATA.prep ? VISUALIZATION_DATA.prep.labels : null;
+    const vampAssignments = ts.state_assignments;
+    if (!prepLabels || !vampAssignments) return;
+
+    const nFrames = Math.min(prepLabels.length, vampAssignments.length);
+    const nPrepStates = VISUALIZATION_DATA.prep.n_states;
+    const nVampStates = ts.n_states;
+
+    // Build co-occurrence matrix
+    const cooc = Array.from({length: nPrepStates}, () => new Array(nVampStates).fill(0));
+    for (let i = 0; i < nFrames; i++) {
+        const p = prepLabels[i];
+        const v = vampAssignments[i];
+        if (p >= 0 && p < nPrepStates && v >= 0 && v < nVampStates) {
+            cooc[p][v]++;
+        }
+    }
+
+    // Header
+    let csv = 'Prep \\ VAMP,' + Array.from({length: nVampStates}, (_, j) => `VAMP ${j}`).join(',') + ',Total\n';
+    for (let p = 0; p < nPrepStates; p++) {
+        const rowTotal = cooc[p].reduce((a, b) => a + b, 0);
+        csv += `Prep ${p},` + cooc[p].join(',') + `,${rowTotal}\n`;
+    }
+    // Totals row
+    csv += 'Total';
+    for (let v = 0; v < nVampStates; v++) {
+        let colTotal = 0;
+        for (let p = 0; p < nPrepStates; p++) colTotal += cooc[p][v];
+        csv += `,${colTotal}`;
+    }
+    csv += `,${nFrames}\n`;
+
+    downloadFile(csv, 'prep_vamp_state_mapping.csv', 'text/csv');
+}
+
+function downloadTransitionMatrixPng() {
+    const svgEl = document.querySelector('#matrix-container svg');
+    if (!svgEl) return;
+    svgToPng(svgEl, 'transition_matrix.png', 3);
+}
+
+function downloadTransitionMatrixCsv() {
+    const ts = VISUALIZATION_DATA.timescales[state.currentTimescaleIndex];
+    if (!ts || !ts.transition_matrix) return;
+    const matrix = ts.transition_matrix;
+    const n = matrix.length;
+    // Header row
+    let csv = ',' + Array.from({length: n}, (_, j) => `State ${j}`).join(',') + '\n';
+    for (let i = 0; i < n; i++) {
+        csv += `State ${i}`;
+        for (let j = 0; j < n; j++) {
+            csv += `,${matrix[i][j].toFixed(6)}`;
+        }
+        csv += '\n';
+    }
+    downloadFile(csv, 'transition_matrix.csv', 'text/csv');
 }
 
 // =============================================================================

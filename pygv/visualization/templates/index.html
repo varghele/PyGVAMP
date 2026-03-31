@@ -142,7 +142,12 @@
 
                 <!-- Alluvial diagram panel -->
                 <div id="alluvial-panel">
-                    <div class="viewer-label">Prep &rarr; VAMP State Mapping</div>
+                    <div class="viewer-label">Prep &rarr; VAMP State Mapping
+                        <span class="alluvial-controls">
+                            <button class="att-download-btn" onclick="downloadAlluvialPng()">PNG</button>
+                            <button class="att-download-btn" onclick="downloadAlluvialCsv()">CSV</button>
+                        </span>
+                    </div>
                     <div id="alluvial-plot"></div>
                 </div>
 
@@ -166,6 +171,10 @@
 
                 <!-- Transition matrix -->
                 <div id="transition-matrix">
+                    <div class="transition-matrix-controls">
+                        <button class="att-download-btn" onclick="downloadTransitionMatrixPng()">PNG</button>
+                        <button class="att-download-btn" onclick="downloadTransitionMatrixCsv()">CSV</button>
+                    </div>
                     <div id="matrix-container"></div>
                 </div>
             </div>
