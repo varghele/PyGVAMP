@@ -21,6 +21,7 @@ from pygv.encoder.ml3 import GNNML3
 from pygv.encoder.meta import Meta
 from pygv.encoder.meta_att import Meta as MetaAtt
 from pygv.encoder.gat import GAT
+from pygv.encoder.gin import GINEncoder
 
 
 # =============================================================================
@@ -754,6 +755,168 @@ class TestGATEncoder:
 
 
 # =============================================================================
+# GIN Encoder Tests
+# =============================================================================
+
+class TestGINEncoder:
+    """Tests for GINEncoder (GINEConv with edge features and bolt-on attention)."""
+
+    def test_forward_single_graph(self, single_graph_data, device):
+        """Test forward pass on a single graph."""
+        data = single_graph_data
+        node_dim = data.x.size(1)
+        edge_dim = data.edge_attr.size(1)
+        output_dim = 32
+
+        model = GINEncoder(
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            hidden_dim=64,
+            output_dim=output_dim,
+            n_interactions=2,
+            use_attention=True
+        ).to(device)
+
+        model.eval()
+        with torch.no_grad():
+            output, aux = model(data.x, data.edge_index, data.edge_attr, data.batch)
+
+        assert output.shape == (1, output_dim), f"Expected (1, {output_dim}), got {output.shape}"
+        assert not torch.isnan(output).any(), "Output contains NaN values"
+
+    def test_forward_batched(self, batched_graph_data, device):
+        """Test forward pass on batched graphs."""
+        batch, num_graphs = batched_graph_data
+        node_dim = batch.x.size(1)
+        edge_dim = batch.edge_attr.size(1)
+        output_dim = 32
+
+        model = GINEncoder(
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            hidden_dim=64,
+            output_dim=output_dim,
+            n_interactions=2,
+            use_attention=True
+        ).to(device)
+
+        output, aux = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+
+        assert output.shape == (num_graphs, output_dim), f"Expected ({num_graphs}, {output_dim}), got {output.shape}"
+        assert not torch.isnan(output).any(), "Output contains NaN values"
+
+    def test_gradient_flow(self, batched_graph_data, device):
+        """Test that gradients flow through all parameters."""
+        batch, num_graphs = batched_graph_data
+        node_dim = batch.x.size(1)
+        edge_dim = batch.edge_attr.size(1)
+
+        model = GINEncoder(
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            hidden_dim=64,
+            output_dim=32,
+            n_interactions=2,
+            use_attention=True
+        ).to(device)
+
+        output, aux = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+        loss = output.sum()
+
+        assert_gradients_flow(model, loss, "GINEncoder")
+
+    def test_gradient_flow_to_inputs(self, batched_graph_data, device):
+        """Test that gradients flow back to input tensors."""
+        batch, num_graphs = batched_graph_data
+
+        model = GINEncoder(
+            node_dim=batch.x.size(1),
+            edge_dim=batch.edge_attr.size(1),
+            hidden_dim=64,
+            output_dim=32,
+            n_interactions=2,
+            use_attention=True
+        ).to(device)
+
+        output, aux = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+        loss = output.sum()
+        loss.backward()
+
+        assert batch.x.grad is not None, "No gradient for node features (x)"
+        assert not torch.all(batch.x.grad == 0), "Zero gradient for node features (x)"
+        assert batch.edge_attr.grad is not None, "No gradient for edge features"
+        assert not torch.all(batch.edge_attr.grad == 0), "Zero gradient for edge features"
+
+    def test_attention_disabled(self, batched_graph_data, device):
+        """Test encoder works with attention disabled."""
+        batch, num_graphs = batched_graph_data
+
+        model = GINEncoder(
+            node_dim=batch.x.size(1),
+            edge_dim=batch.edge_attr.size(1),
+            hidden_dim=64,
+            output_dim=32,
+            n_interactions=2,
+            use_attention=False
+        ).to(device)
+
+        output, aux = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+
+        assert output.shape == (num_graphs, 32)
+        assert not torch.isnan(output).any()
+
+    def test_attention_weights_returned(self, batched_graph_data, device):
+        """Test that attention weights are returned with correct shapes."""
+        batch, num_graphs = batched_graph_data
+        n_interactions = 2
+
+        model = GINEncoder(
+            node_dim=batch.x.size(1),
+            edge_dim=batch.edge_attr.size(1),
+            hidden_dim=64,
+            output_dim=32,
+            n_interactions=n_interactions,
+            use_attention=True
+        ).to(device)
+
+        output, (h, attentions) = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+
+        assert len(attentions) == n_interactions, \
+            f"Expected {n_interactions} attention tensors, got {len(attentions)}"
+
+        num_edges = batch.edge_index.size(1)
+        for i, att in enumerate(attentions):
+            assert att.shape == (num_edges,), \
+                f"Attention layer {i}: expected ({num_edges},), got {att.shape}"
+
+    def test_attention_sums_to_one(self, batched_graph_data, device):
+        """Test that attention weights sum to ~1 for each target node."""
+        batch, num_graphs = batched_graph_data
+
+        model = GINEncoder(
+            node_dim=batch.x.size(1),
+            edge_dim=batch.edge_attr.size(1),
+            hidden_dim=64,
+            output_dim=32,
+            n_interactions=2,
+            use_attention=True
+        ).to(device)
+
+        output, (h, attentions) = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
+
+        # Check first layer's attention weights
+        att = attentions[0]
+        edge_index = batch.edge_index
+        target_nodes = edge_index[1]
+
+        for target in torch.unique(target_nodes)[:10]:
+            mask = target_nodes == target
+            att_sum = att[mask].sum().item()
+            assert abs(att_sum - 1.0) < 1e-4, \
+                f"Attention for target node {target} sums to {att_sum:.6f}, expected ~1.0"
+
+
+# =============================================================================
 # Cross-Encoder Integration Tests
 # =============================================================================
 
@@ -791,6 +954,10 @@ class TestEncoderIntegration:
                 num_layers=2, num_encoder_layers=2, num_global_mlp_layers=2,
                 heads=4, dropout=0.0, shift_predictor_hidden_dim=32,
                 shift_predictor_layers=2, embedding_type="combined"
+            ),
+            'GIN': GINEncoder(
+                node_dim=node_dim, edge_dim=edge_dim, hidden_dim=64,
+                output_dim=32, n_interactions=2, use_attention=True
             ),
         }
 

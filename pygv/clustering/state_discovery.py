@@ -82,6 +82,7 @@ class StateDiscovery:
         max_degree: int = 2,
         g2v_epochs: int = 50,
         g2v_min_count: int = 5,
+        g2v_min_count_decay: float = None,
         umap_dims: Optional[List[int]] = None,
         min_k: int = 2,
         max_k: int = 15,
@@ -91,6 +92,7 @@ class StateDiscovery:
         self.max_degree = max_degree
         self.g2v_epochs = g2v_epochs
         self.g2v_min_count = g2v_min_count
+        self.g2v_min_count_decay = g2v_min_count_decay
         self.umap_dims = umap_dims if umap_dims is not None else [2]
         self.min_k = min_k
         self.max_k = max_k
@@ -143,6 +145,7 @@ class StateDiscovery:
             max_degree=self.max_degree,
             epochs=self.g2v_epochs,
             min_count=self.g2v_min_count,
+            min_count_decay=self.g2v_min_count_decay,
             batch_size=64,
             num_workers=4,
         )
@@ -936,6 +939,7 @@ class StateDiscovery:
                 'max_degree': self.max_degree,
                 'epochs': self.g2v_epochs,
                 'min_count': self.g2v_min_count,
+                'min_count_decay': self.g2v_min_count_decay,
                 'umap_dims': self.umap_dims,
             },
             'n_frames': len(self.embeddings),

@@ -29,6 +29,7 @@ from pygv.pipe.training import run_training
 from pygv.pipe.analysis import run_analysis
 from pygv.config import get_config, list_presets
 from pygv.pipe.args import parse_pipeline_args
+from pygv.utils.logging_utils import PipelineLogger
 
 class PipelineOrchestrator:
     """
@@ -541,72 +542,80 @@ class PipelineOrchestrator:
     def run_complete_pipeline(self, skip_preparation=False, skip_training=False,
                               only_analysis=False, resume=None):
         """Run the complete pipeline with optional phase skipping and resume support."""
-        print("=" * 60)
-        print("STARTING PYGVAMP PIPELINE")
-        print("=" * 60)
-        print(f"Protein: {self.config.protein_name}")
-        print(f"Model: {self.config.encoder_type}")
-        print(f"Preset: {getattr(self.config, 'preset', 'custom')}")
-        print(f"Cache: {self.config.cache}")
-        print(f"Hurry mode: {self.config.hurry}")
-
-        # Setup dirs: resume existing or create new
+        # Setup dirs early so we have the logs directory
         if resume:
             dirs = self.resume_experiment_directory(resume)
         else:
             dirs = self.setup_experiment_directory()
 
-        dataset_path = None
-        trained_models = {}
+        # Start logging
+        self._logger = PipelineLogger(log_dir=str(dirs['logs']))
+        self._logger.start()
 
-        # Phase 1: Preparation
-        if not skip_preparation and not only_analysis:
-            dataset_path, recommended_n_states = self.run_preparation_phase(dirs)
-            # Use discovered n_states if no explicit list was provided
-            if recommended_n_states is not None and not hasattr(self.config, '_n_states_from_cli'):
-                print(f"Using discovered n_states = {recommended_n_states}")
-                self.config.n_states_list = [recommended_n_states]
-        else:
-            print("Skipping preparation phase.")
-            dataset_path = self._discover_dataset_path(dirs)
+        try:
+            print("=" * 60)
+            print("STARTING PYGVAMP PIPELINE")
+            print("=" * 60)
+            print(f"Protein: {self.config.protein_name}")
+            print(f"Model: {self.config.encoder_type}")
+            print(f"Preset: {getattr(self.config, 'preset', 'custom')}")
+            print(f"Cache: {self.config.cache}")
+            print(f"Hurry mode: {self.config.hurry}")
 
-        # Phase 2: Training
-        if not skip_training and not only_analysis:
-            if dataset_path is None:
-                print("Error: No dataset found. Run preparation first or provide --cache.")
-                return None
-            trained_models = self.run_training_phase(dirs, dataset_path)
-        else:
-            print("Skipping training phase.")
+            dataset_path = None
+            trained_models = {}
 
-        # Discover all trained models (merges with any just-trained ones)
-        discovered = self._discover_trained_models(dirs)
-        trained_models = {**discovered, **trained_models}  # just-trained wins on conflict
+            # Phase 1: Preparation
+            if not skip_preparation and not only_analysis:
+                dataset_path, recommended_n_states = self.run_preparation_phase(dirs)
+                # Use discovered n_states if no explicit list was provided
+                if recommended_n_states is not None and not hasattr(self.config, '_n_states_from_cli'):
+                    print(f"Using discovered n_states = {recommended_n_states}")
+                    self.config.n_states_list = [recommended_n_states]
+            else:
+                print("Skipping preparation phase.")
+                dataset_path = self._discover_dataset_path(dirs)
 
-        # Phase 3: Analysis
-        if trained_models:
-            analysis_results = self.run_analysis_phase(dirs, trained_models)
-        else:
-            print("No trained models found. Run training first.")
-            analysis_results = {}
+            # Phase 2: Training
+            if not skip_training and not only_analysis:
+                if dataset_path is None:
+                    print("Error: No dataset found. Run preparation first or provide --cache.")
+                    return None
+                trained_models = self.run_training_phase(dirs, dataset_path)
+            else:
+                print("Skipping training phase.")
 
-        # Phase 3b: Automatic retraining (skip when only running analysis)
-        if analysis_results and dataset_path and not only_analysis:
-            self._run_retrain_loop(dirs, dataset_path, trained_models, analysis_results)
+            # Discover all trained models (merges with any just-trained ones)
+            discovered = self._discover_trained_models(dirs)
+            trained_models = {**discovered, **trained_models}  # just-trained wins on conflict
 
-        # Save summary
-        self._save_pipeline_summary(dirs, trained_models, analysis_results)
+            # Phase 3: Analysis
+            if trained_models:
+                analysis_results = self.run_analysis_phase(dirs, trained_models)
+            else:
+                print("No trained models found. Run training first.")
+                analysis_results = {}
 
-        print("\n" + "=" * 60)
-        print("PIPELINE COMPLETED")
-        print("=" * 60)
-        print(f"Results saved to: {self.experiment_dir}")
+            # Phase 3b: Automatic retraining (skip when only running analysis)
+            if analysis_results and dataset_path and not only_analysis:
+                self._run_retrain_loop(dirs, dataset_path, trained_models, analysis_results)
 
-        return {
-            'experiment_dir': self.experiment_dir,
-            'trained_models': trained_models,
-            'analysis_results': analysis_results
-        }
+            # Save summary
+            self._save_pipeline_summary(dirs, trained_models, analysis_results)
+
+            print("\n" + "=" * 60)
+            print("PIPELINE COMPLETED")
+            print("=" * 60)
+            print(f"Results saved to: {self.experiment_dir}")
+            print(f"Log file: {self._logger.log_path}")
+
+            return {
+                'experiment_dir': self.experiment_dir,
+                'trained_models': trained_models,
+                'analysis_results': analysis_results
+            }
+        finally:
+            self._logger.stop()
 
     def _save_pipeline_summary(self, dirs, trained_models, analysis_results):
         """Save pipeline execution summary"""

@@ -28,9 +28,11 @@ from pygv.utils.nn_utils import init_for_vamp
 from pygv.vampnet import VAMPNet
 from pygv.encoder.schnet import SchNetEncoderNoEmbed
 from pygv.encoder.meta_att import Meta
+from pygv.encoder.gin import GINEncoder
 
 from pygv.scores.vamp_score_v0 import VAMPScore
 from pygv.classifier.SoftmaxMLP import SoftmaxMLP
+from pygv.utils.logging_utils import PipelineLogger
 
 from torch_geometric.nn.models import MLP
 
@@ -190,6 +192,16 @@ def create_model(args):
             norm=args.meta_norm,
             dropout=args.meta_dropout
         )
+    elif args.encoder_type.lower() == 'gin':
+        encoder = GINEncoder(
+            node_dim=args.node_dim,
+            edge_dim=args.edge_dim,
+            hidden_dim=args.hidden_dim,
+            output_dim=args.output_dim,
+            n_interactions=args.n_interactions,
+            activation=args.activation,
+            use_attention=args.use_attention
+        )
     elif args.encoder_type.lower() == 'ml3':
         encoder = None
         #TODO: IMPLEMENT
@@ -203,10 +215,10 @@ def create_model(args):
         )"""
     else:
         raise ValueError(f"Unsupported encoder type: {args.encoder_type}. "
-                         f"Choose from 'schnet', 'meta', or 'ml3'.")
+                         f"Choose from 'schnet', 'meta', 'gin', or 'ml3'.")
 
     # Get output dimension based on encoder type
-    if args.encoder_type.lower() == 'schnet':
+    if args.encoder_type.lower() in ('schnet', 'gin'):
         output_dim = args.output_dim
     elif args.encoder_type.lower() == 'meta':
         output_dim = args.meta_output_dim
@@ -219,7 +231,7 @@ def create_model(args):
     # Create classifier if requested
     classifier = None
     if args.n_states > 0:
-        if args.encoder_type == 'schnet':
+        if args.encoder_type in ('schnet', 'gin'):
             classifier = SoftmaxMLP(
                 in_channels=args.output_dim,
                 hidden_channels=args.clf_hidden_dim,
@@ -466,4 +478,7 @@ if __name__ == "__main__":
     # Parse arguments
     args = parse_train_args()
 
-    run_training(args)
+    # Start logging to output directory
+    log_dir = os.path.join(args.output_dir, "logs")
+    with PipelineLogger(log_dir=log_dir):
+        run_training(args)

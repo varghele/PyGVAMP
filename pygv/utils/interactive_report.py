@@ -609,18 +609,16 @@ def generate_merged_interactive_report(
     for lag_time, entries in lag_groups.items():
         retrained_entries = [e for e in entries if e[3]]
         if retrained_entries:
-            # Pick the newest retrained entry as final
+            # Pick only the newest retrained entry (final model)
             final = max(retrained_entries, key=lambda e: e[4])
-            for e in entries:
-                is_final = (e is final)
-                subdirs.append((e[0], e[1], e[2], is_final))
+            subdirs.append((final[0], final[1], final[2], True))
         else:
-            # No retrained — all originals are final
+            # No retrained — original is final
             for e in entries:
                 subdirs.append((e[0], e[1], e[2], True))
 
-    # Sort by lag time, then non-final first so final comes last
-    subdirs.sort(key=lambda x: (x[0], x[3]))
+    # Sort by lag time
+    subdirs.sort(key=lambda x: x[0])
 
     if not subdirs:
         print("  No analysis subdirectories found matching lag*ns_*states pattern.")
@@ -653,6 +651,7 @@ def generate_merged_interactive_report(
     # When the visualization uses full protein but attention is per training-selection
     # residue, we need to tell the JS frontend which resSeq each attention index maps to.
     residue_mapping = None
+    residue_names = None
     if training_selection and topology_file:
         try:
             import mdtraj as md
@@ -661,12 +660,16 @@ def generate_merged_interactive_report(
             # Get unique resSeq values in order of first appearance
             seen = set()
             resseq_list = []
+            resname_list = []
             for ai in sel_indices:
-                rs = full_top.atom(ai).residue.resSeq
+                res = full_top.atom(ai).residue
+                rs = res.resSeq
                 if rs not in seen:
                     seen.add(rs)
                     resseq_list.append(rs)
+                    resname_list.append(f"{res.name}{rs}")
             residue_mapping = resseq_list
+            residue_names = resname_list
             print(f"  Residue mapping: {len(residue_mapping)} training residues → resSeq values")
         except Exception as e:
             print(f"  Warning: could not compute residue mapping: {e}")
@@ -801,6 +804,24 @@ def generate_merged_interactive_report(
                 entry['representatives'].append(rep_str)
             state_structures[state_idx] = entry
 
+        # Load edge attention maps for interactive attention analysis tab
+        state_edge_attention = None
+        att_map_path = os.path.join(subdir, f'{protein_name}_state_attention_maps.npy')
+        if os.path.isfile(att_map_path):
+            try:
+                raw_maps = np.load(att_map_path)  # shape: (n_states, n_atoms, n_atoms)
+                state_edge_attention = {}
+                for si in range(raw_maps.shape[0]):
+                    mat = np.round(raw_maps[si], 3)
+                    mat[mat < 0.001] = 0.0
+                    rows, cols = np.nonzero(mat)
+                    triples = [[int(r), int(c), float(mat[r, c])] for r, c in zip(rows, cols)]
+                    state_edge_attention[si] = triples
+                print(f"    Loaded edge attention maps: {raw_maps.shape[0]} states, "
+                      f"{raw_maps.shape[1]}x{raw_maps.shape[2]} matrix")
+            except Exception as e:
+                print(f"    Warning: could not load edge attention maps: {e}")
+
         # Load diagnostic data if available
         diagnostics = _load_diagnostic_data(subdir, protein_name)
         metadata = {'is_final': is_final}
@@ -817,6 +838,7 @@ def generate_merged_interactive_report(
             state_structures=state_structures,
             metadata=metadata,
             trajectory_frame_indices=selected_indices,
+            state_edge_attention=state_edge_attention,
         )
         timescales_added += 1
         n_loaded = sum(1 for s in state_structures.values() if s['average'])
@@ -842,6 +864,10 @@ def generate_merged_interactive_report(
     # Pass residue mapping so the JS frontend can map attention indices to resSeq
     if residue_mapping is not None:
         viz.set_residue_mapping(residue_mapping)
+
+    # Pass residue names for the attention analysis tab
+    if residue_names is not None:
+        viz.set_residue_names(residue_names)
 
     output_path = os.path.join(experiment_dir, f"{protein_name}_interactive_report.html")
     viz.generate(

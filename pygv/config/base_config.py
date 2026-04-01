@@ -59,6 +59,7 @@ class BaseConfig:
     g2v_max_degree: int = 3
     g2v_epochs: int = 50
     g2v_min_count: int = 10
+    g2v_min_count_decay: Optional[float] = None  # per-degree decay; None = uniform min_count
     g2v_umap_dim: Optional[list] = None  # defaults to [2,3,5,6,7,10] in StateDiscovery
     min_states: int = 2
     max_states: int = 10
@@ -136,4 +137,4 @@ class BaseConfig:
 
 
 # Import encoder-specific configs for backward compatibility
-from .model_configs import SchNetConfig, MetaConfig, ML3Config
+from .model_configs import SchNetConfig, MetaConfig, ML3Config, GINConfig

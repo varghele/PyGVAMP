@@ -166,6 +166,7 @@ class Graph2Vec:
                  min_learning_rate: float = 0.0001,
                  epochs: int = 10,
                  min_count: int = 5,
+                 min_count_decay: Optional[float] = None,
                  batch_size: int = 32,
                  num_workers: int = 4,
                  vocab_cache_path: Optional[str] = None,
@@ -181,7 +182,12 @@ class Graph2Vec:
             learning_rate: Initial learning rate for optimization
             min_learning_rate: Minimum learning rate (for decay)
             epochs: Number of training epochs
-            min_count: Minimum frequency for subgraph to be included in vocabulary
+            min_count: Minimum frequency for subgraph to be included in vocabulary.
+                Acts as the base (degree-0) threshold when min_count_decay is set.
+            min_count_decay: If set, apply exponential decay to min_count per WL
+                degree. Threshold for degree d = max(1, floor(min_count * decay^d)).
+                E.g. min_count=10, decay=0.5 → d0:10, d1:5, d2:2, d3:1.
+                If None (default), a uniform min_count is used for all degrees.
             batch_size: Batch size for processing graphs
             num_workers: Number of workers for DataLoader
             vocab_cache_path: Path to cache vocabulary
@@ -195,11 +201,21 @@ class Graph2Vec:
         self.min_learning_rate = min_learning_rate
         self.epochs = epochs
         self.min_count = min_count
+        self.min_count_decay = min_count_decay
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.vocab_cache_path = vocab_cache_path
         self.window = window
         self.dm = dm
+
+        # Compute per-degree min_count thresholds
+        # degree 0 = node labels, degree 1..max_degree = WL iterations
+        self.min_count_per_degree = {}
+        for d in range(max_degree + 1):
+            if min_count_decay is not None:
+                self.min_count_per_degree[d] = max(1, int(min_count * (min_count_decay ** d)))
+            else:
+                self.min_count_per_degree[d] = min_count
 
         # Will be initialized after vocabulary creation
         self.subgraph_vocab = {}
@@ -222,6 +238,11 @@ class Graph2Vec:
             Self for method chaining
         """
         print("Extracting subgraphs and building vocabulary...")
+        if self.min_count_decay is not None:
+            thresholds = ", ".join(f"d{d}={t}" for d, t in sorted(self.min_count_per_degree.items()))
+            print(f"  Per-degree min_count (decay={self.min_count_decay}): {thresholds}")
+        else:
+            print(f"  Uniform min_count={self.min_count} for all degrees")
 
         # Build vocabulary and extract subgraphs using PyTorch Geometric
         dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False)
@@ -400,8 +421,9 @@ class Graph2Vec:
 
             # Process each graph in the batch
             for graph_subgraphs in batch_subgraphs:
-                # Filter subgraphs that exist in vocabulary
-                known_subgraphs = [sg for sg in graph_subgraphs if sg in self.subgraph_vocab]
+                # Filter subgraphs that exist in vocabulary (unpack degree)
+                known_subgraphs = [sg_hash for _degree, sg_hash in graph_subgraphs
+                                   if sg_hash in self.subgraph_vocab]
 
                 if known_subgraphs:
                     # Infer document vector for new graph
@@ -414,7 +436,7 @@ class Graph2Vec:
         return torch.stack(all_embeddings)
 
     # Keep all your existing PyTorch Geometric helper methods unchanged
-    def _extract_subgraphs_batch(self, batch: Batch) -> List[List[str]]:
+    def _extract_subgraphs_batch(self, batch: Batch) -> List[List[Tuple[int, str]]]:
         """Extract subgraphs using WL algorithm from PyTorch Geometric batch."""
         batch_subgraphs = []
 
@@ -455,17 +477,23 @@ class Graph2Vec:
 
     def _get_wl_subgraphs(self, adj_list: List[List[int]],
                           initial_features: Dict[int, str],
-                          num_nodes: int) -> List[str]:
-        """WL implementation matching the original NetworkX version."""
+                          num_nodes: int) -> List[Tuple[int, str]]:
+        """
+        WL subgraph extraction.
+
+        Returns a list of (degree, subgraph_hash) tuples, where degree indicates
+        the WL iteration that produced the subgraph (0 = node labels).
+        """
         all_subgraphs = []
         current_features = initial_features.copy()
 
         # Add degree 0 subgraphs (just node labels)
         for node in range(num_nodes):
-            all_subgraphs.append(current_features[node])
+            all_subgraphs.append((0, current_features[node]))
 
         # Iterative WL relabeling
         for iteration in range(self.max_degree):
+            degree = iteration + 1
             new_features = {}
 
             for node in range(num_nodes):
@@ -482,7 +510,7 @@ class Graph2Vec:
 
             # Add all subgraphs from this iteration
             for node in range(num_nodes):
-                all_subgraphs.append(new_features[node])
+                all_subgraphs.append((degree, new_features[node]))
 
             current_features = new_features
 
@@ -508,16 +536,17 @@ class Graph2Vec:
             # Store subgraphs for each graph in the batch
             for i, graph_subgraphs in enumerate(batch_subgraphs):
                 if graph_idx < num_graphs:
-                    # Convert subgraph strings to indices
-                    subgraph_indices = [self.subgraph_vocab[sg] for sg in graph_subgraphs
-                                        if sg in self.subgraph_vocab]
+                    # Convert subgraph (degree, hash) tuples to vocab indices
+                    subgraph_indices = [self.subgraph_vocab[sg_hash]
+                                        for _degree, sg_hash in graph_subgraphs
+                                        if sg_hash in self.subgraph_vocab]
                     cached_subgraphs[graph_idx] = subgraph_indices
                     graph_idx += 1
 
         return cached_subgraphs
 
     def _build_vocabulary(self, dataloader: DataLoader) -> Dict[str, int]:
-        """Build vocabulary with proper contiguous indexing."""
+        """Build vocabulary with per-degree min_count filtering."""
         # Try to load cached vocabulary
         if self.vocab_cache_path and os.path.exists(self.vocab_cache_path):
             print(f"Loading cached vocabulary from {self.vocab_cache_path}")
@@ -525,20 +554,33 @@ class Graph2Vec:
                 return pickle.load(f)
 
         print("Building vocabulary from dataset...")
-        subgraph_counter = Counter()
+        # Count subgraphs per degree: {degree: {subgraph_hash: count}}
+        degree_counters = defaultdict(Counter)
 
         for batch in tqdm(dataloader, desc="Processing batches for vocabulary"):
             batch_subgraphs = self._extract_subgraphs_batch(batch)
 
-            # Count subgraphs
             for graph_subgraphs in batch_subgraphs:
-                for subgraph in graph_subgraphs:
-                    subgraph_counter[subgraph] += 1
+                for degree, sg_hash in graph_subgraphs:
+                    degree_counters[degree][sg_hash] += 1
 
-        # Create vocabulary with proper contiguous indexing
-        filtered_subgraphs = [(sg, count) for sg, count in subgraph_counter.items()
-                              if count >= self.min_count]
-        vocab = {sg: idx for idx, (sg, count) in enumerate(filtered_subgraphs)}
+        # Filter each degree with its own threshold
+        vocab = {}
+        idx = 0
+        per_degree_stats = []
+        for degree in sorted(degree_counters.keys()):
+            threshold = self.min_count_per_degree.get(degree, self.min_count)
+            counter = degree_counters[degree]
+            kept = 0
+            for sg_hash, count in counter.items():
+                if count >= threshold and sg_hash not in vocab:
+                    vocab[sg_hash] = idx
+                    idx += 1
+                    kept += 1
+            per_degree_stats.append(
+                f"d{degree}: {kept}/{len(counter)} (min_count={threshold})")
+
+        print(f"Vocabulary per degree: {', '.join(per_degree_stats)}")
 
         # Cache vocabulary if path provided
         if self.vocab_cache_path:
@@ -568,6 +610,7 @@ class Graph2Vec:
                 'max_degree': self.max_degree,
                 'negative_samples': self.negative_samples,
                 'min_count': self.min_count,
+                'min_count_decay': self.min_count_decay,
                 'window': self.window,
                 'dm': self.dm
             }
@@ -595,8 +638,17 @@ class Graph2Vec:
         self.max_degree = config['max_degree']
         self.negative_samples = config['negative_samples']
         self.min_count = config['min_count']
+        self.min_count_decay = config.get('min_count_decay', None)
         self.window = config['window']
         self.dm = config['dm']
+
+        # Rebuild per-degree thresholds
+        self.min_count_per_degree = {}
+        for d in range(self.max_degree + 1):
+            if self.min_count_decay is not None:
+                self.min_count_per_degree[d] = max(1, int(self.min_count * (self.min_count_decay ** d)))
+            else:
+                self.min_count_per_degree[d] = self.min_count
 
     # TODO: Redo evaluation
     def evaluate_model_quality(self, test_graphs=None, num_test_graphs=100):
