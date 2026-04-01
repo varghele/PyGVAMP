@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
-from torch_geometric.nn import MessagePassing
 from torch_geometric.nn import MLP
 from torch_geometric.utils import softmax
 from torch_geometric.nn import global_mean_pool
+from pygv.utils.alternative_torch_scatter import scatter_add
 
 
 def init_weights(m):
@@ -12,18 +12,36 @@ def init_weights(m):
         m.bias.data.fill_(0.0)
 
 
-class GINEConvWithAttention(MessagePassing):
+class GINEConvWithAttention(nn.Module):
     """
-    GIN-E convolution with edge features and bolt-on attention.
+    GIN-E convolution with edge features and parallel attention.
 
-    Implements the GIN message-passing rule with edge feature injection
-    (like GINEConv) plus a learnable attention mechanism identical to
-    SchNet's CFConv attention.
+    Runs sum aggregation and attention aggregation in parallel, then
+    combines them. This preserves GIN's WL expressiveness (degree info
+    via the sum branch) while adding learned neighbor re-weighting
+    (via the attention branch).
 
-    Message:  m_ij = activation(x_j + edge_proj(edge_attr))
-    Attention: a_ij = softmax_j(m_ij @ attention_vector)
-    Aggregate: agg_i = sum(a_ij * m_ij)
-    Update:   h_i = update_mlp((1 + eps) * x_i + agg_i)
+    Message:    m_ij = activation(x_j + edge_proj(edge_attr))
+    Sum agg:    sum_i = Σ_j m_ij
+    Att agg:    att_i = Σ_j softmax_j(m_ij @ a) * m_ij
+    Combined:   agg_i = sum_i + att_i
+    Update:     h_i = MLP((1 + eps) * x_i + agg_i)
+
+    Design note (for paper):
+        Standard bolt-on attention replaces sum aggregation with a
+        softmax-weighted mean. With constant (e.g. one-hot) node features
+        this destroys degree information: softmax assigns equal weight to
+        every neighbor, so structurally different graphs (star vs path)
+        produce identical embeddings — breaking 1-WL expressiveness.
+
+        Our fix treats attention as an *additive parallel pathway* rather
+        than a replacement for sum aggregation. The sum branch alone is
+        equivalent to standard GIN and retains full 1-WL power. The
+        attention branch adds a learned soft re-weighting on top. Because
+        the two are summed, the combined aggregation is at least as
+        expressive as the sum branch alone, so WL guarantees are preserved
+        while the network gains the capacity to up/down-weight specific
+        neighbor contributions.
     """
 
     def __init__(self,
@@ -35,7 +53,7 @@ class GINEConvWithAttention(MessagePassing):
                  use_attention=True,
                  aggr='add'):
 
-        super(GINEConvWithAttention, self).__init__(aggr=aggr)
+        super(GINEConvWithAttention, self).__init__()
 
         if hidden_channels is None:
             hidden_channels = out_channels
@@ -89,10 +107,11 @@ class GINEConvWithAttention(MessagePassing):
         return activations.get(activation_name.lower(), nn.Tanh())
 
     def forward(self, x, edge_index, edge_attr):
-        # Normalize edge attributes for numerical stability
         edge_attr_norm = edge_attr / (edge_attr.norm(dim=-1, keepdim=True) + 1e-8)
 
         self._attention_weights = None
+        n_nodes = x.size(0)
+        src, dst = edge_index[0], edge_index[1]
 
         # Project input if dimensions differ
         if self.has_node_projection:
@@ -100,8 +119,23 @@ class GINEConvWithAttention(MessagePassing):
         else:
             x_proj = x
 
-        # Message passing aggregation
-        agg = self.propagate(edge_index, x=x, edge_attr=edge_attr_norm)
+        # Compute messages (source node features + projected edge features)
+        edge_proj = self.edge_projection(edge_attr_norm)
+        messages = self.activation(x[src] + edge_proj)
+
+        # Branch 1: Pure sum aggregation (preserves degree / WL expressiveness)
+        sum_agg = scatter_add(messages, dst, dim=0, dim_size=n_nodes)
+
+        # Branch 2: Attention-weighted aggregation (learned re-weighting)
+        if self.use_attention:
+            attention = torch.matmul(messages, self.attention_vector).squeeze(-1)
+            normalized_attention = softmax(attention, dst)
+            self._attention_weights = normalized_attention
+            att_messages = messages * normalized_attention.view(-1, 1)
+            att_agg = scatter_add(att_messages, dst, dim=0, dim_size=n_nodes)
+            agg = sum_agg + att_agg
+        else:
+            agg = sum_agg
 
         # Project aggregated messages if needed
         if self.has_node_projection:
@@ -111,23 +145,6 @@ class GINEConvWithAttention(MessagePassing):
         out = self.update_mlp((1 + self.eps) * x_proj + agg)
 
         return out, self._attention_weights
-
-    def message(self, x_j, edge_attr, edge_index_i):
-        # Project edge features and add to source node features
-        edge_proj = self.edge_projection(edge_attr)
-        messages = self.activation(x_j + edge_proj)
-
-        # Bolt-on attention (identical to SchNet's CFConv)
-        if self.use_attention:
-            attention = torch.matmul(messages, self.attention_vector).squeeze(-1)
-            normalized_attention = softmax(attention, edge_index_i)
-            self._attention_weights = normalized_attention
-            messages = messages * normalized_attention.view(-1, 1)
-
-        return messages
-
-    def update(self, aggr_out):
-        return aggr_out
 
 
 class GINInteraction(nn.Module):
