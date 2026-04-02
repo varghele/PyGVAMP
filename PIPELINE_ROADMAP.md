@@ -220,7 +220,7 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 | CK Tests | ✅ Complete | Chapman-Kolmogorov |
 | Visualization | ✅ Complete | 2133 lines in plotting.py |
 | Documentation | ⚠️ Minimal | Sphinx setup exists |
-| Tests | ⚠️ Incomplete | Tests exist but not in CI |
+| Tests | ⚠️ Partial | 398+ tests passing, not in CI |
 
 ---
 
@@ -266,34 +266,35 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 
 #### 2.3 Testing
 - [ ] Create integration tests for full pipeline
-- [ ] Add unit tests for VAMP score calculation
-- [ ] Add unit tests for dataset creation
-- [ ] Clean up existing tests in `testdata/` and `area51_testing_grounds/`
+- [x] Add unit tests for VAMP score calculation (25 tests in `test_vamp_score.py`)
+- [x] Add unit tests for dataset creation (40+ tests in `test_dataset.py`)
+- [x] Clean up existing tests in `testdata/` and `area51_testing_grounds/` (deleted)
 - [ ] Set up CI/CD with automated testing
 
 ### Phase 3: Feature Completion
 
 #### 3.1 Complete Encoder Options
-- [ ] Integrate ML3 encoder into pipeline (working separately, needs integration)
-- [ ] Complete Meta encoder configuration (MetaConfig)
-- [ ] Add encoder selection validation
+- [ ] Integrate ML3 encoder into pipeline (encoder class + config + args exist, but `create_model()` still sets `encoder = None`)
+- [x] Complete Meta encoder configuration (MetaConfig in `model_configs/meta.py`, fully integrated)
+- [x] Add encoder selection validation (type check with ValueError for unknown types)
 
 #### 3.2 Trajectory Handling
-- [ ] Add `continuous` flag for trajectory loading (currently all trajectories concatenated)
-- [ ] Implement non-continuous trajectory support (treat each file as separate trajectory)
-- [ ] Add trajectory boundary detection and handling
+- [x] Add `continuous` flag for trajectory loading (`base_config.py` and `vampnet_dataset.py`)
+- [x] Implement non-continuous trajectory support (boundary tracking and pair filtering)
+- [x] Add trajectory boundary detection and handling
+- [x] **Bug fix**: `continuous` flag now passed to dataset in `training.py`, `analysis.py`, and `preparation.py`
 
 #### 3.3 State Count Selection
-- [ ] Implement automatic n_states selection method
-- [ ] Ensure comparable state counts across different lag times
-- [ ] Add state count validation/recommendation system
+- [x] Implement automatic n_states selection method (`state_diagnostics.py`: eigenvalue gap, population, JSD analysis)
+- [x] Ensure comparable state counts across different lag times
+- [x] Add state count validation/recommendation system (`recommend_state_reduction()` with confidence scoring, integrated in `analysis.py`)
 
 #### 3.4 Enhanced Analysis
 - [ ] Add cross-validation for model selection
 - [ ] Add ensemble model support
 
 #### 3.5 Visualization Improvements
-- [ ] Add interactive plots (Plotly/Bokeh option)
+- [x] Add interactive plots (`MDTrajectoryVisualizer` with web-based 3D interface)
 - [ ] Add comparison plots across lag times
 - [ ] Add trajectory projection onto learned states
 - [ ] Add video/animation generation for state transitions
@@ -340,7 +341,7 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 | One-hot node features | `vampnet_dataset.py` | Creates N×N matrix for N atoms (memory inefficient) | Learned embeddings exist but had issues; document tradeoffs |
 | Magic numbers | Various | Epsilon values, thresholds hardcoded | Move to configuration |
 | NaN masking | `vampnet.py` | NaN outputs replaced with zeros | Fix root cause of NaN generation |
-| Commented code | `analysis.py:266-272` | TODO comment with dead code | Remove or implement |
+| ~~Commented code~~ | ~~`analysis.py:266-272`~~ | ~~TODO comment with dead code~~ | ✅ Cleaned up |
 | Batch size sensitivity | `vamp_score_v0.py` | VAMP score varies with batch composition | Document limitation or implement batch-invariant version |
 
 ### Low Priority (Improvements)
@@ -384,7 +385,7 @@ In `analysis.py:212-326` (Analysis phase):
 | Complete preset system | Add missing preset files (`medium.py`, `large.py`) and uncomment MetaConfig/ML3Config in `base_config.py`. Currently `__init__.py` imports them but they're commented out (will cause ImportError). | Medium |
 | ML3 pipeline integration | Integrate working ML3 encoder (`pygv/encoder/ml3.py` - GNNML3 class) into training pipeline. Currently `training.py:194` returns `None` for ML3. | Medium |
 | HTML report generation | Combine all analysis outputs into single HTML file for sharing | Medium |
-| Unit test cleanup | Existing tests need cleanup and CI integration | Medium |
+| ~~Unit test cleanup~~ | ~~Existing tests need cleanup and CI integration~~ | ✅ Done — legacy test snippets deleted, 398+ tests passing |
 
 ### Architecture Considerations
 

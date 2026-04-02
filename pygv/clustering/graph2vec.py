@@ -260,9 +260,7 @@ class Graph2Vec:
         print("Converting graphs to Doc2Vec documents...")
         self.graph_documents = self._create_doc2vec_documents(num_graphs)
 
-        # Create training callback
-        #training_callback = TrainingCallback()
-        training_callback = TrainingCallback() # TODO: Decide on one, delete the other
+        training_callback = TrainingCallback()
 
         # Train Doc2Vec model
         print("Training Doc2Vec model...")
@@ -287,43 +285,6 @@ class Graph2Vec:
 
         print(f"Training completed. Vocabulary size: {len(self.doc2vec_model.wv)}")
         return self
-
-    # TODO: Check and remove
-    def _create_doc2vec_documents_o(self, num_graphs: int) -> List[TaggedDocument]:
-        """
-        Convert cached subgraphs to Doc2Vec TaggedDocument format.
-
-        Args:
-            num_graphs: Number of graphs
-
-        Returns:
-            List of TaggedDocument objects for Doc2Vec training
-        """
-        documents = []
-
-        for graph_id in tqdm(range(num_graphs), desc="Creating Doc2Vec documents"):
-            if graph_id in self.cached_subgraphs:
-                # Get subgraph strings for this graph
-                subgraph_indices = self.cached_subgraphs[graph_id]
-
-                # Convert indices back to subgraph strings
-                subgraph_strings = []
-                idx_to_subgraph = {idx: sg for sg, idx in self.subgraph_vocab.items()}
-
-                for idx in subgraph_indices:
-                    if idx in idx_to_subgraph:
-                        subgraph_strings.append(idx_to_subgraph[idx])
-
-                # Create TaggedDocument (words=subgraphs, tags=graph_id)
-                if subgraph_strings:  # Only add if graph has subgraphs
-                    doc = TaggedDocument(
-                        words=subgraph_strings,
-                        tags=[f"graph_{graph_id}"]
-                    )
-                    documents.append(doc)
-
-        print(f"Created {len(documents)} documents for Doc2Vec training")
-        return documents
 
     def _create_doc2vec_documents(self, num_graphs: int) -> List[TaggedDocument]:
         """

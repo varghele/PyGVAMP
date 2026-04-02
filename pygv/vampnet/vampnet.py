@@ -243,78 +243,6 @@ class VAMPNet(nn.Module):
         else:
             return torch.empty(1), features
 
-    def forward_old(
-        self,
-        data,
-        return_features: bool = False,
-        apply_classifier: bool = True
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        """
-        Transform input data and optionally apply classifier.
-
-        Args:
-            data: Input data (can be graph data or tensor)
-            return_features: Whether to return encoder features
-            apply_classifier: Whether to apply classifier to get class probabilities
-
-        Returns:
-            If apply_classifier is True:
-                If return_features is True: (class_probs, features)
-                Else: class_probs
-            Else:
-                features
-        """
-        # Check if data is a PyTorch Geometric Data object
-        if hasattr(data, 'x') and hasattr(data, 'edge_index'):
-            # Extract graph components
-            x = data.x
-            edge_index = data.edge_index
-            edge_attr = data.edge_attr if hasattr(data, 'edge_attr') else None
-            batch = data.batch if hasattr(data, 'batch') else None
-
-            # Apply embedding module to node and edge features if provided
-            if self.embedding_module is not None:
-                if hasattr(self.embedding_module, 'node_embedding') and hasattr(self.embedding_module,
-                                                                                'edge_embedding'):
-                    # Module has separate functions for node and edge embeddings
-                    x = self.embedding_module.node_embedding(x)
-                    if edge_attr is not None and self.embedding_module.edge_embedding is not None:
-                        edge_attr = self.embedding_module.edge_embedding(edge_attr)
-                else:
-                    # Assume single embedding function for nodes
-                    x = self.embedding_module(x)
-
-            # Reconstruct PyG data object with embedded features
-            embedded_data = type(data)(x=x, edge_index=edge_index)
-            if edge_attr is not None:
-                embedded_data.edge_attr = edge_attr
-            if batch is not None:
-                embedded_data.batch = batch
-
-            # Pass through encoder
-            # If encoder returns a tuple (like SchNet), extract the first element (graph embeddings)
-            features = self.encoder(embedded_data.x, embedded_data.edge_index, embedded_data.edge_attr, embedded_data.batch)
-            if isinstance(features, tuple):
-                features = features[0]
-        else:
-            # For non-graph tensor data #TODO: Note: This is probably redundant/not wanted
-            if self.embedding_module is not None:
-                # Apply embedding then encoder
-                return self.encoder(self.embedding_module(data))
-            else:
-                # Apply encoder directly
-                return self.encoder(data)
-
-        # Apply classifier if requested
-        if apply_classifier and self.classifier_module is not None:
-            probs = self.classifier_module(features)
-            if return_features:
-                return probs, features
-            else:
-                return probs, torch.empty(1)
-        else:
-            return torch.empty(1), features
-
     def get_attention(self, data, device=None):
         """
         Extract attention maps from the encoder for the given data.
@@ -412,7 +340,6 @@ class VAMPNet(nn.Module):
 
         return self.forward(data, return_features=return_features, apply_classifier=True)
 
-    # TODO: Implement correctly (not working yet)
     def get_embeddings(self, data):
         """
         Get just the embeddings without passing through the encoder.

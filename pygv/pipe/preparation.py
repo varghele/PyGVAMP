@@ -247,6 +247,7 @@ def create_and_analyze_dataset(args, paths):
         use_amino_acid_encoding=use_amino_acid_encoding,
         amino_acid_feature_type=amino_acid_feature_type,
         timestep=getattr(args, 'timestep', None),
+        continuous=getattr(args, 'continuous', True),
     )
 
     print(f"Dataset created with {len(dataset)} samples")

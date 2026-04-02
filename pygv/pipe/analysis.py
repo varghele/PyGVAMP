@@ -118,6 +118,7 @@ def create_dataset_and_loader(args):
         cache_dir=args.cache_dir,
         use_cache=True if args.cache_dir is not None else False,
         timestep=getattr(args, 'timestep', None),
+        continuous=getattr(args, 'continuous', True),
     )
 
     # Get frames dataset instead of time-lagged pairs dataset
