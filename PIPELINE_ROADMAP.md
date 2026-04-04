@@ -241,9 +241,9 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 - [ ] Add proper error handling when model loading fails in analysis
 
 #### 1.3 Verify VAMP Score Calculation
-- [ ] Validate covariance matrix calculations against reference implementation
-- [ ] Test eigenvalue truncation/regularization strategies
-- [ ] Confirm score maximization (higher = better) throughout codebase
+- [ ] Validate covariance matrix calculations against reference implementation (properties tested, but no comparison against deeptime or manual NumPy)
+- [x] Test eigenvalue truncation/regularization strategies (trunc/regularize modes, stability with near-zero variance)
+- [x] Confirm score maximization (higher = better) throughout codebase (`loss()` returns `-score`, training loop verified)
 
 #### 1.4 Test Multi-Lag Pipeline
 - [ ] Verify lag time compatibility check with trajectory timestep
@@ -295,9 +295,9 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 
 #### 3.5 Visualization Improvements
 - [x] Add interactive plots (`MDTrajectoryVisualizer` with web-based 3D interface)
-- [ ] Add comparison plots across lag times
-- [ ] Add trajectory projection onto learned states
-- [ ] Add video/animation generation for state transitions
+- [x] Add comparison plots across lag times (`plot_state_populations_newrec`, `plot_state_evolution_newrec`)
+- [x] ~~Add trajectory projection onto learned states~~ (covered by existing MD tools)
+- [x] ~~Add video/animation generation for state transitions~~ (not needed)
 
 ### Phase 4: Documentation & Usability
 
@@ -308,15 +308,15 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 - [ ] Document hyperparameter tuning guidelines
 
 #### 4.2 Report Generation
-- [ ] Integrate HTML report generation (code exists, needs integration)
-- [ ] Combine all analysis outputs into single shareable HTML file
-- [ ] Add interactive elements to HTML report (collapsible sections, tooltips)
+- [x] Integrate HTML report generation (`MDTrajectoryVisualizer` in `pygv/visualization/visualizer.py`)
+- [x] Combine all analysis outputs into single shareable HTML file (Three.js-based interactive viewer)
+- [x] Add interactive elements to HTML report (3D structure, attention mapping, state coloring, transition matrices)
 
 #### 4.3 CLI Improvements
-- [ ] Add `--dry-run` option to preview pipeline
-- [ ] Add `--resume` option to continue failed runs
-- [ ] Add progress persistence for long-running jobs
-- [ ] Add `--validate-only` mode for configuration checking
+- [x] Add `--dry_run` option to preview pipeline (shows config, trajectories, planned experiments)
+- [x] Add `--resume` option to continue failed runs (resumes from existing experiment directory)
+- [x] Add progress persistence for long-running jobs (`PipelineLogger` + `pipeline_summary.json`)
+- [x] Add `--validate_only` mode for configuration checking (validates topology, trajectories, lag times)
 
 ---
 

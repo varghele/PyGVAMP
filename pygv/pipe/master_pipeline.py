@@ -770,6 +770,79 @@ def validate_lag_times(config):
           f"(timestep={effective_timestep_ns:.1f} ns, stride={stride})")
 
 
+def _print_dry_run_summary(config, args):
+    """Print a summary of what the pipeline would do without running anything."""
+    from pygv.utils.pipe_utils import find_trajectory_files
+
+    print("\n" + "=" * 60)
+    print("DRY RUN — Pipeline Preview")
+    print("=" * 60)
+
+    # Data
+    traj_files = find_trajectory_files(config.traj_dir, file_pattern=config.file_pattern)
+    print(f"\nData:")
+    print(f"  Topology:          {config.top}")
+    print(f"  Trajectory dir:    {config.traj_dir}")
+    print(f"  File pattern:      {config.file_pattern}")
+    print(f"  Trajectories found: {len(traj_files)}")
+    for f in traj_files[:5]:
+        print(f"    {f}")
+    if len(traj_files) > 5:
+        print(f"    ... and {len(traj_files) - 5} more")
+
+    # Configuration
+    print(f"\nConfiguration:")
+    print(f"  Preset:            {getattr(args, 'preset', None) or 'custom'}")
+    print(f"  Encoder:           {config.encoder_type}")
+    print(f"  Selection:         {config.selection}")
+    print(f"  Stride:            {config.stride}")
+    print(f"  Continuous:        {config.continuous}")
+    print(f"  N neighbors:       {config.n_neighbors}")
+    print(f"  Epochs:            {config.epochs}")
+    print(f"  Device:            {'CPU' if config.cpu else 'CUDA if available'}")
+    print(f"  Cache:             {config.cache}")
+    print(f"  Hurry mode:        {config.hurry}")
+
+    # Planned experiments
+    lag_times = config.lag_times if isinstance(config.lag_times, list) else [config.lag_times]
+    n_states_list = config.n_states_list if hasattr(config, 'n_states_list') else [config.n_states]
+    total = len(lag_times) * len(n_states_list)
+
+    print(f"\nPlanned experiments ({total} total):")
+    print(f"  Lag times:         {lag_times}")
+    print(f"  N states:          {n_states_list}")
+    for lag in lag_times:
+        for ns in n_states_list:
+            print(f"    lag{lag:g}ns_{ns}states")
+
+    # State discovery
+    discover = getattr(config, 'discover_states', True)
+    print(f"\nState discovery:     {'enabled' if discover else 'disabled'}")
+    if discover:
+        print(f"  Min states:        {getattr(config, 'min_states', 2)}")
+        print(f"  Max states:        {getattr(config, 'max_states', 10)}")
+
+    # Phases
+    print(f"\nPhases to run:")
+    if args.only_analysis:
+        print(f"  [skip] Preparation")
+        print(f"  [skip] Training")
+        print(f"  [ ok ] Analysis")
+    else:
+        print(f"  [{'skip' if args.skip_preparation else ' ok '}] Preparation")
+        print(f"  [{'skip' if args.skip_training else ' ok '}] Training")
+        print(f"  [ ok ] Analysis")
+
+    # Output
+    print(f"\nOutput directory:    {config.output_dir}")
+    if args.resume:
+        print(f"  Resuming from:     {args.resume}")
+
+    print(f"\n{'=' * 60}")
+    print("No actions taken. Remove --dry_run to execute.")
+    print("=" * 60)
+
+
 def main():
     """Main entry point for pipeline"""
     args = parse_pipeline_args()
@@ -838,6 +911,16 @@ def main():
     # Validate lag times against trajectory timestep before any work begins
     if not args.only_analysis:
         validate_lag_times(config)
+
+    # --validate_only: run all validations above, then exit
+    if args.validate_only:
+        print("\nAll validations passed.")
+        return None
+
+    # --dry_run: preview planned experiments without running anything
+    if args.dry_run:
+        _print_dry_run_summary(config, args)
+        return None
 
     # Create orchestrator and run pipeline
     orchestrator = PipelineOrchestrator(config)

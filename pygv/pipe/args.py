@@ -95,4 +95,10 @@ Examples:
     parser.add_argument('--only_analysis', action='store_true',
                         help='Only run analysis phase')
 
+    # Preview / validation modes
+    parser.add_argument('--dry_run', action='store_true',
+                        help='Preview the pipeline configuration and planned experiments without running anything')
+    parser.add_argument('--validate_only', action='store_true',
+                        help='Validate configuration (topology, trajectories, lag times) then exit')
+
     return parser.parse_args()
