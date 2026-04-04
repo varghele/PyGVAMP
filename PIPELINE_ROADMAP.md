@@ -235,10 +235,10 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 - [ ] Test with multiple trajectory formats (.xtc, .dcd)
 
 #### 1.2 Fix Known Issues
-- [ ] Address hardcoded `model.to('cuda')` in `training.py:268` (should use device variable)
-- [ ] Remove unused `from pymol.querying import distance` import in `training.py:10`
-- [ ] Handle case when encoder is `None` for ML3 type in `create_model()`
-- [ ] Add proper error handling when model loading fails in analysis
+- [x] Address hardcoded `model.to('cuda')` in `training.py` (now uses `device` variable with `--cpu` flag support)
+- [x] Remove unused `from pymol.querying import distance` import in `training.py` (removed)
+- [ ] Handle case when encoder is `None` for ML3 type in `create_model()` (`training.py:207` still sets `encoder = None`)
+- [x] Add proper error handling when model loading fails in analysis (`load_model()` with try/except)
 
 #### 1.3 Verify VAMP Score Calculation
 - [ ] Validate covariance matrix calculations against reference implementation (properties tested, but no comparison against deeptime or manual NumPy)
@@ -253,10 +253,10 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 ### Phase 2: Robustness & Quality
 
 #### 2.1 Error Handling
-- [ ] Add input validation for trajectory files (existence, format)
-- [ ] Add configuration validation (compatible parameters)
-- [ ] Improve error messages with actionable guidance
-- [ ] Add graceful failure modes with partial results saved
+- [x] Add input validation for trajectory files (existence, format) — `analysis.py` validates paths, `validate_topology_file()` checks format
+- [x] Add configuration validation (compatible parameters) — `validate_lag_times()` checks timestep/stride/lag compatibility, `--validate_only` mode
+- [x] Improve error messages with actionable guidance — topology gives conversion commands, lag times suggest closest valid values, timestep warns with `--timestep` hint
+- [x] Add graceful failure modes with partial results saved — training/analysis/retrain phases catch per-experiment exceptions and continue
 
 #### 2.2 Gradient Flow & Numerical Stability
 - [ ] Review and document gradient workarounds (jitter, skip connections)
@@ -379,12 +379,12 @@ In `analysis.py:212-326` (Analysis phase):
 | Feature | Description | Priority |
 |---------|-------------|----------|
 | ~~Non-continuous trajectories~~ | ~~Add `continuous` flag to handle trajectories that aren't continuous.~~ | ✅ Done - `continuous` parameter in `vampnet_dataset.py` and `BaseConfig` |
-| Automatic n_states selection | Find correct/comparable number of states for each timescale | High |
-| Comparable state counts | Ensure consistent state definitions across different lag times | High |
+| ~~Automatic n_states selection~~ | ~~Find correct/comparable number of states for each timescale~~ | ✅ Done - `state_diagnostics.py` with eigenvalue gap, population, JSD analysis |
+| ~~Comparable state counts~~ | ~~Ensure consistent state definitions across different lag times~~ | ✅ Done - `recommend_state_reduction()` integrated in `analysis.py` |
 | ~~Dataset encoding flag~~ | ~~Clean up dual dataset system (one-hot vs amino acid encoding).~~ | ✅ Done - unified `vampnet_dataset.py` with `use_amino_acid_encoding` parameter |
-| Complete preset system | Add missing preset files (`medium.py`, `large.py`) and uncomment MetaConfig/ML3Config in `base_config.py`. Currently `__init__.py` imports them but they're commented out (will cause ImportError). | Medium |
-| ML3 pipeline integration | Integrate working ML3 encoder (`pygv/encoder/ml3.py` - GNNML3 class) into training pipeline. Currently `training.py:194` returns `None` for ML3. | Medium |
-| HTML report generation | Combine all analysis outputs into single HTML file for sharing | Medium |
+| ~~Complete preset system~~ | ~~Add missing preset files and configs~~ | ✅ Done - `small.py`, `medium.py`, `large.py` with all 4 encoder variants (16 presets) |
+| ML3 pipeline integration | Integrate working ML3 encoder (`pygv/encoder/ml3.py` - GNNML3 class) into training pipeline. Currently `training.py:207` sets `encoder = None`. | Medium |
+| ~~HTML report generation~~ | ~~Combine all analysis outputs into single HTML file for sharing~~ | ✅ Done - `MDTrajectoryVisualizer` with Three.js interactive viewer |
 | ~~Unit test cleanup~~ | ~~Existing tests need cleanup and CI integration~~ | ✅ Done — legacy test snippets deleted, 398+ tests passing |
 
 ### Architecture Considerations
