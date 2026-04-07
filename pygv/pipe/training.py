@@ -149,16 +149,19 @@ def create_dataset_and_loader(args,
         test_loader = None  # Frame loader is typically used for inference only
     else:
         # Create data loaders for training and testing
+        # drop_last=True avoids single-sample batches that crash BatchNorm
         train_loader = DataLoader(
             train_dataset,
             shuffle=True,
             batch_size=args.batch_size,
+            drop_last=True,
             pin_memory=torch.cuda.is_available() and not args.cpu
         )
         test_loader = DataLoader(
             test_dataset,
             shuffle=True,
             batch_size=args.batch_size,
+            drop_last=True,
             pin_memory=torch.cuda.is_available() and not args.cpu
         )
 

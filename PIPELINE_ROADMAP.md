@@ -104,7 +104,7 @@ exp_{protein_name}_{timestamp}/
 | One-hot node features | `vampnet_dataset.py` | N×N matrix for N atoms; learned embeddings exist but had issues |
 | NaN masking | `vampnet.py` | NaN outputs replaced with zeros instead of fixing root cause |
 | Batch size sensitivity | `vamp_score_v0.py` | VAMP score varies with batch composition |
-| BatchNorm single-sample | training pipeline | `drop_last=True` not set in DataLoader; last batch can have 1 sample |
+| ~~BatchNorm single-sample~~ | ~~training pipeline~~ | ~~`drop_last=True` not set in DataLoader~~ — fixed, train/val loaders now drop incomplete last batches |
 
 ### Low Priority
 
