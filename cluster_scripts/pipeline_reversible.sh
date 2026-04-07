@@ -114,6 +114,7 @@ fi
 
 # Training overrides
 CMD+=" --epochs ${EPOCHS}"
+CMD+=" --batch_size ${BATCH_SIZE}"
 CMD+=" --stride ${STRIDE}"
 CMD+=" --selection '${SELECTION}'"
 [ -n "${CACHE}" ] && CMD+=" ${CACHE}"

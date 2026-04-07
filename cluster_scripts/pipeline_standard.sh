@@ -113,6 +113,7 @@ fi
 
 # Training overrides
 CMD+=" --epochs ${EPOCHS}"
+CMD+=" --batch_size ${BATCH_SIZE}"
 CMD+=" --stride ${STRIDE}"
 CMD+=" --selection '${SELECTION}'"
 [ -n "${FILE_PATTERN}" ] && true  # file_pattern is set via config/preset

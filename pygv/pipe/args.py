@@ -51,6 +51,8 @@ Examples:
     # Training overrides
     parser.add_argument('--epochs', type=int, default=None,
                         help='Number of training epochs (overrides preset)')
+    parser.add_argument('--batch_size', type=int, default=None,
+                        help='Batch size for training and inference (overrides preset)')
     parser.add_argument('--clip_grad', type=float, default=None,
                         help='Gradient clipping max norm (default: disabled)')
     parser.add_argument('--stride', type=int, default=None,
