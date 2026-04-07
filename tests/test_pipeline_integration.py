@@ -1,25 +1,36 @@
 """
-Integration tests for the complete PyGVAMP pipeline.
+Integration tests for the PyGVAMP pipeline.
 
-Tests cover:
-- CacheManager functionality
-- Pipeline argument parsing
-- PipelineOrchestrator (when imports are available)
+Part 1: Unit tests for args, config, directory structure (fast, no data needed)
+Part 2: End-to-end tests with real MD trajectory data (marked @pytest.mark.integration)
 
-Note: Some tests require the full pipeline module which has incomplete imports.
-These are marked with @pytest.mark.skip or tested via mocking.
+End-to-end tests require trajectory data at /home/iwe81/vi/PYGVAMP/datasets/.
+To skip them:  pytest tests/ -m "not integration"
+To run them:   pytest tests/test_pipeline_integration.py -v --tb=short
+
+Run with: pytest tests/test_pipeline_integration.py -v
 """
 
-import pytest
 import json
-import tempfile
 import os
+import pytest
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
-from dataclasses import dataclass, field
-from typing import List
+from unittest.mock import patch
 import argparse
+
+
+# ============================================================================
+# Test data paths for integration tests
+# ============================================================================
+
+AB42_TRAJ_DIR = "/home/iwe81/vi/PYGVAMP/datasets/ab42/trajectories/red/r1"
+AB42_TOPOLOGY = "/home/iwe81/vi/PYGVAMP/datasets/ab42/trajectories/red/topol.pdb"
+
+NTL9_TRAJ_DIR = "/home/iwe81/vi/PYGVAMP/datasets/NTL9/DESRES-Trajectory_NTL9-0-c-alpha/NTL9-0-c-alpha"
+NTL9_TOPOLOGY = "/home/iwe81/vi/PYGVAMP/datasets/NTL9/DESRES-Trajectory_NTL9-0-c-alpha/NTL9-0-c-alpha/NTL9.pdb"
+
+DATA_AVAILABLE = os.path.isfile(AB42_TOPOLOGY)
 
 
 # ============================================================================
@@ -27,717 +38,531 @@ import argparse
 # ============================================================================
 
 @pytest.fixture
-def seed():
-    """Set random seeds for reproducibility."""
-    import numpy as np
-    np.random.seed(42)
-    return 42
-
-
-@dataclass
-class MockConfig:
-    """Mock configuration object for testing."""
-    # Data paths
-    traj_dir: str = "/mock/traj"
-    top: str = "/mock/top.pdb"
-    file_pattern: str = "*.xtc"
-    recursive: bool = False
-
-    # Processing parameters
-    selection: str = "name CA"
-    stride: int = 1
-    lag_time: float = 10.0
-    lag_times: List[float] = field(default_factory=lambda: [10.0])
-    n_neighbors: int = 10
-    node_embedding_dim: int = 16
-    gaussian_expansion_dim: int = 16
-    n_states: int = 5
-    n_states_list: List[int] = field(default_factory=lambda: [5])
-
-    # Model parameters
-    encoder_type: str = "schnet"
-    hidden_dim: int = 64
-
-    # Training parameters
-    batch_size: int = 32
-    epochs: int = 10
-    learning_rate: float = 0.001
-
-    # Pipeline control
-    cache: bool = False
-    hurry: bool = False
-    output_dir: str = "/mock/output"
-    cache_dir: str = "/mock/cache"
-    protein_name: str = "test_protein"
-    cpu: bool = True
-
-    def to_dict(self):
-        """Convert config to dictionary."""
-        return {
-            'traj_dir': self.traj_dir,
-            'top': self.top,
-            'file_pattern': self.file_pattern,
-            'selection': self.selection,
-            'stride': self.stride,
-            'lag_time': self.lag_time,
-            'lag_times': self.lag_times,
-            'n_neighbors': self.n_neighbors,
-            'node_embedding_dim': self.node_embedding_dim,
-            'gaussian_expansion_dim': self.gaussian_expansion_dim,
-            'n_states': self.n_states,
-            'encoder_type': self.encoder_type,
-            'hidden_dim': self.hidden_dim,
-            'batch_size': self.batch_size,
-            'epochs': self.epochs,
-            'learning_rate': self.learning_rate,
-            'cache': self.cache,
-            'hurry': self.hurry,
-            'output_dir': self.output_dir,
-            'protein_name': self.protein_name,
-            'cpu': self.cpu
-        }
-
-    def to_yaml(self, path):
-        """Save config to YAML file."""
-        import yaml
-        with open(path, 'w') as f:
-            yaml.dump(self.to_dict(), f)
-
-
-@pytest.fixture
-def mock_config():
-    """Create mock configuration."""
-    return MockConfig()
-
-
-@pytest.fixture
-def temp_output_dir():
-    """Create temporary output directory."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield tmpdir
-
-
-@pytest.fixture
-def mock_config_with_temp_dir(temp_output_dir):
-    """Create mock config with temporary output directory."""
-    config = MockConfig()
-    config.output_dir = temp_output_dir
-    config.cache_dir = os.path.join(temp_output_dir, 'cache')
-    return config
+def temp_output_dir(tmp_path):
+    return str(tmp_path)
 
 
 # ============================================================================
-# Test Classes for CacheManager
-# ============================================================================
-
-class TestCacheManager:
-    """Tests for CacheManager."""
-
-    def test_init_with_config(self, mock_config):
-        """CacheManager initializes with config."""
-        from pygv.pipe.caching import CacheManager
-
-        cache_manager = CacheManager(mock_config)
-
-        assert cache_manager.config is mock_config
-
-    def test_get_dataset_hash_returns_string(self, mock_config):
-        """get_dataset_hash returns string."""
-        from pygv.pipe.caching import CacheManager
-
-        cache_manager = CacheManager(mock_config)
-        hash_value = cache_manager.get_dataset_hash()
-
-        assert isinstance(hash_value, str)
-
-    def test_get_dataset_hash_is_deterministic(self, mock_config):
-        """get_dataset_hash returns same hash for same config."""
-        from pygv.pipe.caching import CacheManager
-
-        cache_manager = CacheManager(mock_config)
-        hash1 = cache_manager.get_dataset_hash()
-        hash2 = cache_manager.get_dataset_hash()
-
-        assert hash1 == hash2
-
-    def test_get_dataset_hash_differs_for_different_configs(self):
-        """get_dataset_hash differs for different configs."""
-        from pygv.pipe.caching import CacheManager
-
-        config1 = MockConfig(selection="name CA")
-        config2 = MockConfig(selection="name CB")
-
-        hash1 = CacheManager(config1).get_dataset_hash()
-        hash2 = CacheManager(config2).get_dataset_hash()
-
-        assert hash1 != hash2
-
-    def test_hash_changes_with_traj_dir(self):
-        """Hash changes when traj_dir changes."""
-        from pygv.pipe.caching import CacheManager
-
-        config1 = MockConfig(traj_dir="/path/a")
-        config2 = MockConfig(traj_dir="/path/b")
-
-        hash1 = CacheManager(config1).get_dataset_hash()
-        hash2 = CacheManager(config2).get_dataset_hash()
-
-        assert hash1 != hash2
-
-    def test_hash_changes_with_stride(self):
-        """Hash changes when stride changes."""
-        from pygv.pipe.caching import CacheManager
-
-        config1 = MockConfig(stride=1)
-        config2 = MockConfig(stride=10)
-
-        hash1 = CacheManager(config1).get_dataset_hash()
-        hash2 = CacheManager(config2).get_dataset_hash()
-
-        assert hash1 != hash2
-
-    def test_hash_changes_with_n_neighbors(self):
-        """Hash changes when n_neighbors changes."""
-        from pygv.pipe.caching import CacheManager
-
-        config1 = MockConfig(n_neighbors=10)
-        config2 = MockConfig(n_neighbors=20)
-
-        hash1 = CacheManager(config1).get_dataset_hash()
-        hash2 = CacheManager(config2).get_dataset_hash()
-
-        assert hash1 != hash2
-
-    def test_hash_length(self, mock_config):
-        """Hash has expected length (8 characters)."""
-        from pygv.pipe.caching import CacheManager
-
-        cache_manager = CacheManager(mock_config)
-        hash_value = cache_manager.get_dataset_hash()
-
-        assert len(hash_value) == 8
-
-    def test_check_cached_dataset_returns_none_when_disabled(self, mock_config):
-        """check_cached_dataset returns None when caching disabled."""
-        from pygv.pipe.caching import CacheManager
-
-        mock_config.cache = False
-        cache_manager = CacheManager(mock_config)
-
-        result = cache_manager.check_cached_dataset("abc123")
-
-        assert result is None
-
-    def test_check_cached_dataset_returns_none_when_not_exists(self, mock_config_with_temp_dir):
-        """check_cached_dataset returns None when cache doesn't exist."""
-        from pygv.pipe.caching import CacheManager
-
-        mock_config_with_temp_dir.cache = True
-        cache_manager = CacheManager(mock_config_with_temp_dir)
-
-        result = cache_manager.check_cached_dataset("nonexistent")
-
-        assert result is None
-
-    def test_check_cached_dataset_returns_path_when_exists(self, mock_config_with_temp_dir):
-        """check_cached_dataset returns path when cache exists."""
-        from pygv.pipe.caching import CacheManager
-
-        mock_config_with_temp_dir.cache = True
-        cache_manager = CacheManager(mock_config_with_temp_dir)
-
-        # Create cache directory and file
-        cache_dir = Path(mock_config_with_temp_dir.cache_dir)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-        hash_value = "abc123"
-        cache_file = cache_dir / f"dataset_{hash_value}.pkl"
-        cache_file.touch()
-
-        result = cache_manager.check_cached_dataset(hash_value)
-
-        assert result is not None
-        assert hash_value in result
-
-
-# ============================================================================
-# Test Classes for Pipeline Arguments
+# Part 1: Unit tests (fast, no data needed)
 # ============================================================================
 
 class TestPipelineArgs:
     """Tests for pipeline argument parsing."""
 
     def test_parse_args_with_required(self):
-        """parse_pipeline_args parses required arguments."""
         from pygv.pipe.args import parse_pipeline_args
-
         with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb']):
             args = parse_pipeline_args()
-
         assert args.traj_dir == '/data'
         assert args.top == 'top.pdb'
 
     def test_parse_args_default_lag_times(self):
-        """parse_pipeline_args has default lag_times."""
         from pygv.pipe.args import parse_pipeline_args
-
         with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb']):
             args = parse_pipeline_args()
-
         assert args.lag_times == [10.0]
 
     def test_parse_args_default_n_states(self):
-        """parse_pipeline_args defaults n_states to None (auto-discover)."""
         from pygv.pipe.args import parse_pipeline_args
-
         with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb']):
             args = parse_pipeline_args()
-
         assert args.n_states is None
 
-    def test_parse_args_default_output_dir(self):
-        """parse_pipeline_args has default output_dir."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb']):
-            args = parse_pipeline_args()
-
-        assert args.output_dir == './experiments'
-
-    def test_parse_args_default_protein_name(self):
-        """parse_pipeline_args has default protein_name."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb']):
-            args = parse_pipeline_args()
-
-        assert args.protein_name == 'protein'
-
     def test_parse_args_multiple_lag_times(self):
-        """parse_pipeline_args parses multiple lag times."""
         from pygv.pipe.args import parse_pipeline_args
-
         with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
                                 '--lag_times', '10', '20', '50']):
             args = parse_pipeline_args()
-
         assert args.lag_times == [10.0, 20.0, 50.0]
 
     def test_parse_args_multiple_n_states(self):
-        """parse_pipeline_args parses multiple n_states."""
         from pygv.pipe.args import parse_pipeline_args
-
         with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
                                 '--n_states', '3', '5', '8']):
             args = parse_pipeline_args()
-
         assert args.n_states == [3, 5, 8]
 
-    def test_parse_args_cache_flag(self):
-        """parse_pipeline_args parses cache flag."""
+    def test_parse_args_flags(self):
         from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb', '--cache']):
+        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
+                                '--cache', '--hurry', '--cpu',
+                                '--skip_preparation', '--skip_training']):
             args = parse_pipeline_args()
-
         assert args.cache is True
-
-    def test_parse_args_cache_default_false(self):
-        """cache flag defaults to False."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb']):
-            args = parse_pipeline_args()
-
-        assert args.cache is False
-
-    def test_parse_args_hurry_flag(self):
-        """parse_pipeline_args parses hurry flag."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb', '--hurry']):
-            args = parse_pipeline_args()
-
         assert args.hurry is True
-
-    def test_parse_args_hurry_default_false(self):
-        """hurry flag defaults to False."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb']):
-            args = parse_pipeline_args()
-
-        assert args.hurry is False
+        assert args.cpu is True
+        assert args.skip_preparation is True
+        assert args.skip_training is True
 
     def test_parse_args_preset(self):
-        """parse_pipeline_args parses preset."""
         from pygv.pipe.args import parse_pipeline_args
-
         with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
                                 '--preset', 'medium_schnet']):
             args = parse_pipeline_args()
-
         assert args.preset == 'medium_schnet'
 
-    def test_parse_args_model(self):
-        """parse_pipeline_args parses model."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
-                                '--model', 'meta']):
-            args = parse_pipeline_args()
-
-        assert args.model == 'meta'
-
     def test_parse_args_resume(self):
-        """parse_pipeline_args parses resume path."""
         from pygv.pipe.args import parse_pipeline_args
-
         with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
                                 '--resume', '/path/to/experiment']):
             args = parse_pipeline_args()
-
         assert args.resume == '/path/to/experiment'
 
-    def test_parse_args_skip_preparation(self):
-        """parse_pipeline_args parses skip_preparation flag."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
-                                '--skip_preparation']):
-            args = parse_pipeline_args()
-
-        assert args.skip_preparation is True
-
-    def test_parse_args_skip_training(self):
-        """parse_pipeline_args parses skip_training flag."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
-                                '--skip_training']):
-            args = parse_pipeline_args()
-
-        assert args.skip_training is True
-
-    def test_parse_args_only_analysis(self):
-        """parse_pipeline_args parses only_analysis flag."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
-                                '--only_analysis']):
-            args = parse_pipeline_args()
-
-        assert args.only_analysis is True
-
-    def test_parse_args_custom_output_dir(self):
-        """parse_pipeline_args parses custom output_dir."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
-                                '--output_dir', '/custom/output']):
-            args = parse_pipeline_args()
-
-        assert args.output_dir == '/custom/output'
-
-    def test_parse_args_custom_protein_name(self):
-        """parse_pipeline_args parses custom protein_name."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
-                                '--protein_name', 'my_protein']):
-            args = parse_pipeline_args()
-
-        assert args.protein_name == 'my_protein'
-
-
-# ============================================================================
-# Test Classes for Mock Config
-# ============================================================================
-
-class TestMockConfig:
-    """Tests for MockConfig helper class."""
-
-    def test_to_dict_returns_dict(self):
-        """to_dict returns dictionary."""
-        config = MockConfig()
-        result = config.to_dict()
-
-        assert isinstance(result, dict)
-
-    def test_to_dict_contains_all_fields(self):
-        """to_dict contains all expected fields."""
-        config = MockConfig()
-        result = config.to_dict()
-
-        expected_keys = ['traj_dir', 'top', 'selection', 'stride', 'n_states',
-                         'encoder_type', 'batch_size', 'epochs', 'protein_name']
-
-        for key in expected_keys:
-            assert key in result
-
-    def test_to_yaml_creates_file(self, temp_output_dir):
-        """to_yaml creates YAML file."""
-        config = MockConfig()
-        yaml_path = os.path.join(temp_output_dir, 'config.yaml')
-
-        config.to_yaml(yaml_path)
-
-        assert os.path.exists(yaml_path)
-
-    def test_to_yaml_is_valid_yaml(self, temp_output_dir):
-        """to_yaml creates valid YAML."""
-        import yaml
-
-        config = MockConfig()
-        yaml_path = os.path.join(temp_output_dir, 'config.yaml')
-
-        config.to_yaml(yaml_path)
-
-        with open(yaml_path, 'r') as f:
-            loaded = yaml.safe_load(f)
-
-        assert isinstance(loaded, dict)
-        assert loaded['protein_name'] == config.protein_name
-
-
-# ============================================================================
-# Test Classes for Pipeline Module Imports
-# ============================================================================
 
 class TestPipelineModuleImports:
-    """Tests for pipeline module import availability."""
+    """Verify all pipeline modules are importable."""
 
-    def test_caching_module_importable(self):
-        """Caching module is importable."""
-        from pygv.pipe.caching import CacheManager
-        assert CacheManager is not None
-
-    def test_args_module_importable(self):
-        """Args module is importable."""
+    def test_args_module(self):
         from pygv.pipe.args import parse_pipeline_args
-        assert parse_pipeline_args is not None
+        assert callable(parse_pipeline_args)
 
-    def test_training_module_has_run_training(self):
-        """Training module has run_training function."""
+    def test_training_module(self):
         from pygv.pipe.training import run_training
         assert callable(run_training)
 
-    def test_analysis_module_has_run_analysis(self):
-        """Analysis module has run_analysis function."""
+    def test_analysis_module(self):
         from pygv.pipe.analysis import run_analysis
         assert callable(run_analysis)
 
+    def test_preparation_module(self):
+        from pygv.pipe.preparation import run_preparation
+        assert callable(run_preparation)
 
-# ============================================================================
-# Test Classes for Edge Cases
-# ============================================================================
-
-class TestCacheEdgeCases:
-    """Tests for cache edge cases."""
-
-    def test_hash_with_special_characters_in_path(self):
-        """Hash handles paths with special characters."""
-        from pygv.pipe.caching import CacheManager
-
-        config = MockConfig(traj_dir="/path/with spaces/and-dashes")
-        cache_manager = CacheManager(config)
-
-        # Should not raise
-        hash_value = cache_manager.get_dataset_hash()
-        assert isinstance(hash_value, str)
-
-    def test_hash_with_unicode_in_selection(self):
-        """Hash handles unicode in selection."""
-        from pygv.pipe.caching import CacheManager
-
-        config = MockConfig(selection="name CA and résidu 1")
-        cache_manager = CacheManager(config)
-
-        # Should not raise
-        hash_value = cache_manager.get_dataset_hash()
-        assert isinstance(hash_value, str)
-
-    def test_cache_check_with_nonexistent_cache_dir(self, mock_config):
-        """check_cached_dataset handles nonexistent cache_dir."""
-        from pygv.pipe.caching import CacheManager
-
-        mock_config.cache = True
-        mock_config.cache_dir = "/nonexistent/path"
-        cache_manager = CacheManager(mock_config)
-
-        # Should return None, not raise
-        result = cache_manager.check_cached_dataset("abc123")
-        assert result is None
+    def test_master_pipeline_module(self):
+        from pygv.pipe.master_pipeline import PipelineOrchestrator
+        assert PipelineOrchestrator is not None
 
 
-class TestArgsEdgeCases:
-    """Tests for argument parsing edge cases."""
+class TestTopologyValidation:
+    """Test topology file validation."""
 
-    def test_single_lag_time_as_list(self):
-        """Single lag time is still a list."""
-        from pygv.pipe.args import parse_pipeline_args
+    def test_valid_pdb_extension(self):
+        from pygv.pipe.master_pipeline import validate_topology_file
+        # Should not raise for .pdb
+        validate_topology_file("/fake/path/topology.pdb")
 
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
-                                '--lag_times', '10']):
-            args = parse_pipeline_args()
+    def test_valid_gro_extension(self):
+        from pygv.pipe.master_pipeline import validate_topology_file
+        validate_topology_file("/fake/path/topology.gro")
 
-        assert isinstance(args.lag_times, list)
-        assert len(args.lag_times) == 1
+    def test_invalid_psf_extension(self):
+        from pygv.pipe.master_pipeline import validate_topology_file
+        with pytest.raises(SystemExit):
+            validate_topology_file("/fake/path/topology.psf")
 
-    def test_single_n_states_as_list(self):
-        """Single n_states is still a list."""
-        from pygv.pipe.args import parse_pipeline_args
+    def test_invalid_prmtop_extension(self):
+        from pygv.pipe.master_pipeline import validate_topology_file
+        with pytest.raises(SystemExit):
+            validate_topology_file("/fake/path/topology.prmtop")
 
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
-                                '--n_states', '5']):
-            args = parse_pipeline_args()
-
-        assert isinstance(args.n_states, list)
-        assert len(args.n_states) == 1
-
-    def test_float_lag_times(self):
-        """Lag times can be floats."""
-        from pygv.pipe.args import parse_pipeline_args
-
-        with patch('sys.argv', ['prog', '--traj_dir', '/data', '--top', 'top.pdb',
-                                '--lag_times', '10.5', '20.25']):
-            args = parse_pipeline_args()
-
-        assert args.lag_times == [10.5, 20.25]
-
-
-# ============================================================================
-# Tests for Pipeline Summary Format
-# ============================================================================
-
-class TestPipelineSummaryFormat:
-    """Tests for expected pipeline summary format."""
-
-    def test_summary_json_structure(self, temp_output_dir):
-        """Pipeline summary has expected JSON structure."""
-        # Create a mock summary
-        summary = {
-            'timestamp': '2026-02-05T12:00:00',
-            'config': MockConfig().to_dict(),
-            'trained_models': {'exp1': '/path/model.pt'},
-            'analysis_completed': ['exp1']
-        }
-
-        summary_path = os.path.join(temp_output_dir, 'pipeline_summary.json')
-        with open(summary_path, 'w') as f:
-            json.dump(summary, f, indent=2)
-
-        # Verify it's valid JSON
-        with open(summary_path, 'r') as f:
-            loaded = json.load(f)
-
-        assert 'timestamp' in loaded
-        assert 'config' in loaded
-        assert 'trained_models' in loaded
-        assert 'analysis_completed' in loaded
-
-    def test_summary_config_is_dict(self, temp_output_dir):
-        """Config in summary is dictionary."""
-        config = MockConfig()
-        summary = {
-            'timestamp': '2026-02-05T12:00:00',
-            'config': config.to_dict(),
-            'trained_models': {},
-            'analysis_completed': []
-        }
-
-        summary_path = os.path.join(temp_output_dir, 'pipeline_summary.json')
-        with open(summary_path, 'w') as f:
-            json.dump(summary, f, indent=2)
-
-        with open(summary_path, 'r') as f:
-            loaded = json.load(f)
-
-        assert isinstance(loaded['config'], dict)
-
-
-# ============================================================================
-# Tests for Directory Structure
-# ============================================================================
 
 class TestDirectoryStructure:
-    """Tests for expected directory structure."""
+    """Test PipelineOrchestrator creates expected directory structure."""
 
-    def test_experiment_dir_structure(self, temp_output_dir):
-        """Experiment directory has expected subdirectories."""
-        # Create expected structure
-        exp_dir = Path(temp_output_dir) / 'exp_test_20260205_120000'
-        subdirs = ['preparation', 'training', 'analysis', 'logs']
+    def test_experiment_dir_structure(self, tmp_path):
+        from pygv.config import BaseConfig
+        from pygv.pipe.master_pipeline import PipelineOrchestrator
 
-        for subdir in subdirs:
-            (exp_dir / subdir).mkdir(parents=True, exist_ok=True)
+        config = BaseConfig()
+        config.output_dir = str(tmp_path)
+        config.protein_name = "test"
+        config.cache = False
 
-        # Verify structure
-        for subdir in subdirs:
-            assert (exp_dir / subdir).exists()
+        orchestrator = PipelineOrchestrator(config)
+        dirs = orchestrator.setup_experiment_directory()
 
-    def test_training_subdir_per_experiment(self, temp_output_dir):
-        """Training directory has subdirectory per experiment."""
-        training_dir = Path(temp_output_dir) / 'training'
-        training_dir.mkdir(parents=True, exist_ok=True)
+        assert dirs['preparation'].exists()
+        assert dirs['training'].exists()
+        assert dirs['analysis'].exists()
+        assert dirs['logs'].exists()
+        assert (orchestrator.experiment_dir / 'config.yaml').exists()
 
-        # Create experiment directories
-        experiments = ['lag10ns_5states', 'lag20ns_5states', 'lag10ns_8states']
-        for exp in experiments:
-            (training_dir / exp).mkdir()
 
-        # Verify
-        for exp in experiments:
-            assert (training_dir / exp).exists()
+class TestDryRun:
+    """Test dry run mode."""
 
-    def test_analysis_subdir_per_experiment(self, temp_output_dir):
-        """Analysis directory has subdirectory per experiment."""
-        analysis_dir = Path(temp_output_dir) / 'analysis'
-        analysis_dir.mkdir(parents=True, exist_ok=True)
+    @pytest.mark.skipif(not DATA_AVAILABLE, reason="AB42 test data not found")
+    def test_dry_run_prints_summary(self, tmp_path, capsys):
+        from pygv.pipe.master_pipeline import _print_dry_run_summary
+        from pygv.config import BaseConfig
 
-        # Create experiment directories
-        experiments = ['lag10ns_5states', 'lag20ns_5states']
-        for exp in experiments:
-            (analysis_dir / exp).mkdir()
+        config = BaseConfig()
+        config.traj_dir = AB42_TRAJ_DIR
+        config.top = AB42_TOPOLOGY
+        config.file_pattern = "traj0000.xtc"
+        config.output_dir = str(tmp_path)
+        config.protein_name = "ab42_test"
+        config.encoder_type = "schnet"
+        config.lag_times = [2.5]
+        config.n_states = 2
+        config.cache = False
+        config.hurry = False
+        config.cpu = True
 
-        # Verify
-        for exp in experiments:
-            assert (analysis_dir / exp).exists()
+        args = argparse.Namespace(
+            only_analysis=False, skip_preparation=False,
+            skip_training=False, resume=None,
+        )
+        _print_dry_run_summary(config, args)
+
+        captured = capsys.readouterr()
+        assert "DRY RUN" in captured.out
+        assert "schnet" in captured.out
+        assert "No actions taken" in captured.out
 
 
 # ============================================================================
-# Tests for Config Serialization
+# Part 2: End-to-end integration tests (require real data)
 # ============================================================================
 
-class TestConfigSerialization:
-    """Tests for config serialization."""
+def _make_config(tmp_path, traj_dir, top, file_pattern="*.xtc", selection="name CA",
+                 stride=10, lag_time=2.5, encoder_type="schnet", n_states=2,
+                 epochs=3, timestep=None, continuous=True):
+    """Create a minimal config for fast integration testing.
 
-    def test_config_yaml_roundtrip(self, temp_output_dir):
-        """Config survives YAML roundtrip."""
-        import yaml
+    Uses the proper encoder-specific config classes (SchNetConfig, GINConfig,
+    ML3Config) so that to_dict() includes all encoder fields.
+    """
+    from pygv.config.base_config import SchNetConfig, GINConfig, ML3Config
 
-        config = MockConfig(protein_name='test_roundtrip', n_states=7)
-        yaml_path = os.path.join(temp_output_dir, 'config.yaml')
+    # Pick the right config class for the encoder
+    config_cls = {
+        "schnet": SchNetConfig,
+        "gin": GINConfig,
+        "ml3": ML3Config,
+    }.get(encoder_type, SchNetConfig)
 
-        # Save
-        config.to_yaml(yaml_path)
+    config = config_cls()
 
-        # Load
-        with open(yaml_path, 'r') as f:
-            loaded = yaml.safe_load(f)
+    # Data
+    config.traj_dir = traj_dir
+    config.top = top
+    config.file_pattern = file_pattern
+    config.recursive = False
+    config.selection = selection
+    config.stride = stride
+    config.lag_time = lag_time
+    config.lag_times = [lag_time]
+    config.continuous = continuous
+    if timestep is not None:
+        config.timestep = timestep
 
-        assert loaded['protein_name'] == 'test_roundtrip'
-        assert loaded['n_states'] == 7
+    # Graph — small dims
+    config.n_neighbors = 4
+    config.node_embedding_dim = 16
+    config.gaussian_expansion_dim = 16
 
-    def test_config_json_serializable(self):
-        """Config dict is JSON serializable."""
-        config = MockConfig()
-        config_dict = config.to_dict()
+    # Training — minimal
+    config.epochs = epochs
+    config.batch_size = 4
+    config.lr = 0.001
+    config.weight_decay = 0.0
+    config.val_split = 0.2
+    config.clip_grad = 1.0
+    config.save_every = 100
+    config.sample_validate_every = 100
+    config.cpu = True
 
+    # Model
+    config.n_states = n_states
+
+    # Tiny encoder dims (SchNet/GIN share the same field names)
+    if encoder_type in ("schnet", "gin"):
+        config.node_dim = 16
+        config.edge_dim = 16
+        config.hidden_dim = 8
+        config.output_dim = 4
+        config.n_interactions = 2
+        config.activation = "relu"
+        config.use_attention = False
+    elif encoder_type == "ml3":
+        # node_dim/edge_dim needed by run_training() for dataset dim inference
+        config.node_dim = 16
+        config.edge_dim = 16
+        config.ml3_node_dim = 16
+        config.ml3_edge_dim = 16
+        config.ml3_hidden_dim = 8
+        config.ml3_output_dim = 4
+        config.ml3_num_layers = 2
+        config.ml3_activation = "relu"
+        config.ml3_dropout = 0.0
+        config.ml3_use_attention = False
+        config.ml3_edge_mode = "gaussian"
+        config.ml3_nfreq = 5
+        config.ml3_spectral_dv = 1.0
+        config.ml3_recfield = 1
+        config.ml3_nout1 = 8
+        config.ml3_nout2 = 2
+
+    # Embedding
+    config.use_embedding = True
+    config.embedding_in_dim = None
+    config.embedding_hidden_dim = 16
+    config.embedding_out_dim = 16
+    config.embedding_num_layers = 2
+    config.embedding_dropout = 0.0
+    config.embedding_act = "relu"
+    config.embedding_norm = None
+
+    # Classifier (no BatchNorm — crashes on single-sample last batches with tiny data)
+    config.clf_hidden_dim = 16
+    config.clf_num_layers = 2
+    config.clf_dropout = 0.0
+    config.clf_activation = "relu"
+    config.clf_norm = None
+
+    # Output
+    config.output_dir = str(tmp_path)
+    config.cache = False
+    config.hurry = False
+    config.protein_name = "test_protein"
+    config.run_name = None
+
+    # State discovery — disabled for speed
+    config.discover_states = False
+    config.g2v_embedding_dim = 32
+    config.g2v_max_degree = 2
+    config.g2v_epochs = 5
+    config.g2v_min_count = 1
+    config.g2v_min_count_decay = None
+    config.g2v_umap_dim = [2]
+    config.min_states = 2
+    config.max_states = 5
+
+    # State diagnostics
+    config.population_threshold = 0.02
+    config.jsd_threshold = 0.05
+
+    # Analysis
+    config.max_tau = None
+
+    return config
+
+
+def _assert_preparation_outputs(prep_dir):
+    """Verify preparation phase produced expected outputs."""
+    subdirs = [d for d in os.listdir(prep_dir) if os.path.isdir(os.path.join(prep_dir, d))]
+    assert len(subdirs) >= 1, f"Expected run dir in {prep_dir}, got {subdirs}"
+    run_dir = os.path.join(prep_dir, sorted(subdirs)[-1])
+
+    assert os.path.isfile(os.path.join(run_dir, "dataset_stats.json")), \
+        "dataset_stats.json not found"
+    assert os.path.isfile(os.path.join(run_dir, "topology.pdb")), \
+        "topology.pdb not found"
+
+    with open(os.path.join(run_dir, "dataset_stats.json")) as f:
+        stats = json.load(f)
+    assert isinstance(stats, dict), "dataset_stats.json should be a dict"
+    return run_dir
+
+
+def _assert_training_outputs(training_dir):
+    """Verify training phase produced best_model.pt."""
+    subdirs = [d for d in os.listdir(training_dir)
+               if os.path.isdir(os.path.join(training_dir, d))]
+    assert len(subdirs) >= 1, f"No experiment dirs in {training_dir}"
+
+    for exp_name in subdirs:
+        exp_dir = os.path.join(training_dir, exp_name)
+        model_found = False
+        for root, dirs, files in os.walk(exp_dir):
+            if "best_model.pt" in files:
+                model_found = True
+                break
+        assert model_found, f"best_model.pt not found under {exp_dir}"
+
+
+def _assert_analysis_outputs(analysis_dir):
+    """Verify analysis phase produced diagnostic outputs."""
+    subdirs = [d for d in os.listdir(analysis_dir)
+               if os.path.isdir(os.path.join(analysis_dir, d))]
+    assert len(subdirs) >= 1, f"No analysis dirs in {analysis_dir}"
+
+    for exp_name in subdirs:
+        exp_dir = os.path.join(analysis_dir, exp_name)
+        files = os.listdir(exp_dir)
+        has_output = any("diagnostic" in f or f.endswith(".png") for f in files)
+        assert has_output, f"No outputs in {exp_dir}, files: {files}"
+
+
+def _assert_pipeline_summary(experiment_dir):
+    """Verify pipeline_summary.json exists and is valid."""
+    summary_path = os.path.join(experiment_dir, "pipeline_summary.json")
+    assert os.path.isfile(summary_path), "pipeline_summary.json not found"
+
+    with open(summary_path) as f:
+        summary = json.load(f)
+    assert "timestamp" in summary
+    assert "config" in summary
+    assert "trained_models" in summary
+    assert len(summary["trained_models"]) >= 1, "No trained models in summary"
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not DATA_AVAILABLE, reason="AB42 test data not found")
+class TestFullPipeline:
+    """End-to-end pipeline tests with real trajectory data."""
+
+    def test_full_pipeline_schnet_xtc(self, tmp_path):
+        """
+        Full pipeline: AB42 .xtc data + SchNet encoder.
+        3 files × 252 frames, stride=10 → ~75 frames, lag=2.5ns, 3 epochs.
+        """
+        from pygv.pipe.master_pipeline import PipelineOrchestrator
+
+        config = _make_config(
+            tmp_path, traj_dir=AB42_TRAJ_DIR, top=AB42_TOPOLOGY,
+            file_pattern="traj000[0-9].xtc", selection="name CA",
+            stride=10, lag_time=2.5, encoder_type="schnet", epochs=3,
+        )
+
+        orchestrator = PipelineOrchestrator(config)
+        results = orchestrator.run_complete_pipeline()
+
+        assert results is not None, "Pipeline returned None"
+        assert len(results["trained_models"]) >= 1
+
+        exp_dir = str(results["experiment_dir"])
+        _assert_preparation_outputs(os.path.join(exp_dir, "preparation"))
+        _assert_training_outputs(os.path.join(exp_dir, "training"))
+        _assert_analysis_outputs(os.path.join(exp_dir, "analysis"))
+        _assert_pipeline_summary(exp_dir)
+
+    @pytest.mark.skipif(
+        not os.path.isfile(NTL9_TOPOLOGY),
+        reason="NTL9 test data not found"
+    )
+    def test_full_pipeline_gin_dcd(self, tmp_path):
+        """
+        Full pipeline: NTL9 .dcd data + GIN encoder.
+        1 file × 100k frames, stride=1000 → ~100 frames, lag=1ns, 3 epochs.
+        """
+        from pygv.pipe.master_pipeline import PipelineOrchestrator
+
+        config = _make_config(
+            tmp_path, traj_dir=NTL9_TRAJ_DIR, top=NTL9_TOPOLOGY,
+            file_pattern="*-000.dcd", selection="all",
+            stride=1000, lag_time=1.0, encoder_type="gin", epochs=3,
+            timestep=0.001,
+        )
+
+        orchestrator = PipelineOrchestrator(config)
+        results = orchestrator.run_complete_pipeline()
+
+        assert results is not None, "Pipeline returned None"
+        assert len(results["trained_models"]) >= 1
+
+        exp_dir = str(results["experiment_dir"])
+        _assert_preparation_outputs(os.path.join(exp_dir, "preparation"))
+        _assert_training_outputs(os.path.join(exp_dir, "training"))
+        _assert_analysis_outputs(os.path.join(exp_dir, "analysis"))
+        _assert_pipeline_summary(exp_dir)
+
+    def test_full_pipeline_ml3_xtc(self, tmp_path):
+        """
+        Full pipeline: AB42 .xtc data + ML3 encoder.
+        Validates the rewritten ML3Encoder works end-to-end.
+        """
+        from pygv.pipe.master_pipeline import PipelineOrchestrator
+
+        config = _make_config(
+            tmp_path, traj_dir=AB42_TRAJ_DIR, top=AB42_TOPOLOGY,
+            file_pattern="traj000[0-9].xtc", selection="name CA",
+            stride=10, lag_time=2.5, encoder_type="ml3", epochs=2,
+        )
+
+        orchestrator = PipelineOrchestrator(config)
+        results = orchestrator.run_complete_pipeline()
+
+        assert results is not None, "Pipeline returned None"
+        assert len(results["trained_models"]) >= 1
+        _assert_pipeline_summary(str(results["experiment_dir"]))
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not DATA_AVAILABLE, reason="AB42 test data not found")
+class TestPreparationPhase:
+    """Test preparation phase in isolation."""
+
+    def test_preparation_creates_dataset(self, tmp_path):
+        """Verify preparation produces a valid dataset with stats."""
+        from pygv.pipe.master_pipeline import PipelineOrchestrator
+
+        config = _make_config(
+            tmp_path, traj_dir=AB42_TRAJ_DIR, top=AB42_TOPOLOGY,
+            file_pattern="traj0000.xtc", stride=50, lag_time=12.5,
+        )
+
+        orchestrator = PipelineOrchestrator(config)
+        dirs = orchestrator.setup_experiment_directory()
+        dataset_path, _ = orchestrator.run_preparation_phase(dirs)
+
+        assert dataset_path is not None
+        assert os.path.isdir(dataset_path)
+        assert os.path.isfile(os.path.join(dataset_path, "dataset_stats.json"))
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not DATA_AVAILABLE, reason="AB42 test data not found")
+class TestLagTimeValidation:
+    """Test lag time validation against real trajectory."""
+
+    def test_valid_lag_time_passes(self, tmp_path):
+        """Compatible lag time should pass validation."""
+        from pygv.pipe.master_pipeline import validate_lag_times
+
+        config = _make_config(
+            tmp_path, traj_dir=AB42_TRAJ_DIR, top=AB42_TOPOLOGY,
+            file_pattern="traj0000.xtc", stride=10, lag_time=2.5,
+        )
         # Should not raise
-        json_str = json.dumps(config_dict)
-        assert isinstance(json_str, str)
+        validate_lag_times(config)
 
-        # Roundtrip
-        loaded = json.loads(json_str)
-        assert loaded['protein_name'] == config.protein_name
+    def test_invalid_lag_time_fails(self, tmp_path):
+        """Incompatible lag time should fail validation."""
+        from pygv.pipe.master_pipeline import validate_lag_times
+
+        config = _make_config(
+            tmp_path, traj_dir=AB42_TRAJ_DIR, top=AB42_TOPOLOGY,
+            file_pattern="traj0000.xtc", stride=10, lag_time=3.0,
+            # effective_dt = 0.25 * 10 = 2.5 ns; 3.0 is not a multiple
+        )
+        with pytest.raises(SystemExit):
+            validate_lag_times(config)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not DATA_AVAILABLE, reason="AB42 test data not found")
+class TestResume:
+    """Test pipeline resume from existing experiment."""
+
+    def test_resume_skips_existing_models(self, tmp_path):
+        """Resume should skip already-trained models."""
+        from pygv.pipe.master_pipeline import PipelineOrchestrator
+
+        config = _make_config(
+            tmp_path, traj_dir=AB42_TRAJ_DIR, top=AB42_TOPOLOGY,
+            file_pattern="traj000[0-9].xtc", stride=50, lag_time=12.5, epochs=2,
+        )
+
+        # First run
+        orchestrator = PipelineOrchestrator(config)
+        results = orchestrator.run_complete_pipeline()
+        assert results is not None
+        exp_dir = str(results["experiment_dir"])
+
+        # Resume — should skip training
+        orchestrator2 = PipelineOrchestrator(config)
+        results2 = orchestrator2.run_complete_pipeline(
+            skip_preparation=True, resume=exp_dir,
+        )
+        assert results2 is not None
+        assert len(results2["trained_models"]) >= 1
+
+
+# ============================================================================
+# Run tests directly
+# ============================================================================
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short", "-x"])

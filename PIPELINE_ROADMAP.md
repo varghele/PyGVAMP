@@ -230,10 +230,10 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 ### Phase 1: Critical Path (Required for Publication)
 
 #### 1.1 Validate End-to-End Pipeline Execution
-- [ ] Run complete pipeline on test dataset
-- [ ] Verify all phases execute without errors
-- [ ] Confirm all expected outputs are generated
-- [ ] Test with multiple trajectory formats (.xtc, .dcd)
+- [x] Run complete pipeline on test dataset (automated integration tests in `test_pipeline_integration.py`)
+- [x] Verify all phases execute without errors (SchNet, GIN, ML3 all pass end-to-end)
+- [x] Confirm all expected outputs are generated (checkpoints, plots, analysis artifacts verified)
+- [x] Test with multiple trajectory formats (.xtc, .dcd) (AB42 .xtc + NTL9 .dcd)
 
 #### 1.2 Fix Known Issues
 - [x] Address hardcoded `model.to('cuda')` in `training.py` (now uses `device` variable with `--cpu` flag support)
@@ -266,7 +266,7 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 - [ ] Add automatic learning rate adjustment on gradient explosion
 
 #### 2.3 Testing
-- [ ] Create integration tests for full pipeline
+- [x] Create integration tests for full pipeline (7 tests in `test_pipeline_integration.py`: SchNet+XTC, GIN+DCD, ML3+XTC, preparation, lag time validation, resume)
 - [x] Add unit tests for VAMP score calculation (25 tests in `test_vamp_score.py`)
 - [x] Add unit tests for dataset creation (40+ tests in `test_dataset.py`)
 - [x] Clean up existing tests in `testdata/` and `area51_testing_grounds/` (deleted)
@@ -349,10 +349,10 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 
 | Issue | Location | Description | Suggested Fix |
 |-------|----------|-------------|---------------|
-| WIP configs | `base_config.py:135-169` | MetaConfig and ML3Config commented out | Complete implementations |
-| Empty viz module | `viz/` | Directory exists but is empty | Either populate or remove |
-| Inconsistent naming | Various | Mix of `n_states` and `n_states_list` | Standardize parameter names |
-| Redundant analysis | `training.py` | Pre-analysis duplicates analysis phase | Consider consolidating (see details below) |
+| ~~WIP configs~~ | ~~`base_config.py:135-169`~~ | ~~MetaConfig and ML3Config commented out~~ | ✅ Fixed — both live in `pygv/config/model_configs/` and import correctly |
+| ~~Empty viz module~~ | ~~`viz/`~~ | ~~Directory exists but is empty~~ | ✅ Resolved — `viz/` removed; visualization lives in `pygv/visualization/` with `MDTrajectoryVisualizer` |
+| Inconsistent naming | Various | Mix of `n_states` and `n_states_list` | Compatibility pattern: `master_pipeline.py` checks for `n_states_list`, falls back to `[n_states]` |
+| Redundant analysis | `training.py` | Pre-analysis duplicates analysis phase | Intentional: training does quick CK/ITS validation, analysis does comprehensive output |
 | Type hints | Various | Incomplete type annotations | Add comprehensive type hints |
 
 ### Pre-Analysis Duplication Details
@@ -401,11 +401,11 @@ In `analysis.py:212-326` (Analysis phase):
 
 ## Recommended Priority Order
 
-1. **Week 1**: Fix high-priority technical debt (especially CUDA hardcoding)
-2. **Week 2**: Run and validate end-to-end pipeline on test data
-3. **Week 3**: Add critical error handling and input validation
-4. **Week 4**: Complete ML3/Meta encoder implementations
-5. **Ongoing**: Add tests incrementally as issues are fixed
+1. ~~**Week 1**: Fix high-priority technical debt (especially CUDA hardcoding)~~ ✅ All 6 items fixed
+2. ~~**Next**: Run and validate end-to-end pipeline on test data (1.1)~~ ✅ 7 integration tests passing (SchNet/GIN/ML3, .xtc/.dcd)
+3. **Next**: Multi-lag pipeline edge cases (1.4)
+4. **Ongoing**: Gradient flow & numerical stability (2.2), CI/CD (2.3)
+5. **Future**: Documentation (4.1), cross-validation & ensemble (3.4)
 
 ---
 
@@ -426,20 +426,14 @@ These questions have been clarified:
 
 2. **Memory Constraints**: For large trajectories, should the pipeline support streaming/chunked processing?
 
-### n_states Selection Methods (Suggestions to Investigate)
+### n_states Selection Methods — ✅ Implemented
 
-Since graph2vec didn't work well for determining optimal state count, here are alternative approaches to consider:
+Implemented in `pygv/utils/state_diagnostics.py` with three approaches:
+- **Eigenvalue gap analysis** (`eigenvalue_gap_suggestion`) — standard MSM approach
+- **Population-based analysis** (`underpopulated_states`) — detects sparse states
+- **JSD merge group detection** (`merge_groups`) — identifies redundant states
 
-| Method | Description | Pros | Cons |
-|--------|-------------|------|------|
-| **VAMP-2 Score Comparison** | Train models with different n_states, compare validation VAMP-2 scores. Optimal n_states maximizes score without overfitting. | Direct optimization target; theoretically grounded | Requires training multiple models |
-| **Eigenvalue Gap Analysis** | Analyze VAMP eigenvalues: large gap after k eigenvalues suggests k slow processes (states) | Fast; no retraining needed; MSM-standard approach | May not align with interpretable states |
-| **ITS Plateau Count** | Count number of implied timescales that plateau (converge) across lag times | Physically meaningful; validated approach | Requires multiple lag time runs |
-| **Silhouette Score** | Cluster state assignments, compute silhouette score for different k values | Measures cluster quality | May not capture kinetic relevance |
-| **Cross-Validation** | Hold out trajectories, measure state assignment consistency | Tests generalization | Computationally expensive |
-| **Bayesian Model Selection** | Use BIC/AIC to penalize model complexity | Automatic complexity penalty | Requires likelihood formulation |
-
-**Recommended approach**: Start with **eigenvalue gap analysis** (fast, standard in MSM literature) combined with **ITS plateau counting** (physically interpretable). Use VAMP-2 score comparison for final validation.
+Integrated in `analysis.py` via `recommend_state_reduction()` with confidence scoring.
 
 ---
 

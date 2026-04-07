@@ -160,18 +160,19 @@ class TestEncoderConfigs:
         """ML3Config has correct encoder-specific defaults."""
         config = ML3Config()
         assert config.encoder_type == "ml3"
+        assert config.node_dim == 16
+        assert config.edge_dim == 16
         assert config.ml3_node_dim == 16
         assert config.ml3_edge_dim == 16
-        assert config.ml3_global_dim == 0
         assert config.ml3_hidden_dim == 30
         assert config.ml3_output_dim == 32
         assert config.ml3_num_layers == 4
-        assert config.ml3_num_encoder_layers == 2
-        assert config.ml3_shift_predictor_hidden_dim == 32
-        assert config.ml3_shift_predictor_layers == 1
-        assert config.ml3_embedding_type == "node"
+        assert config.ml3_nout1 == 30
+        assert config.ml3_nout2 == 2
+        assert config.ml3_use_attention is True
+        assert config.ml3_edge_mode == "gaussian"
+        assert config.ml3_nfreq == 10
         assert config.ml3_activation == "relu"
-        assert config.ml3_norm == "batch_norm"
         assert config.ml3_dropout == 0.0
 
 

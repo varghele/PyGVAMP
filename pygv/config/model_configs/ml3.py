@@ -17,6 +17,10 @@ class ML3Config(BaseConfig):
     """
     encoder_type: str = "ml3"
 
+    # Generic dims (required by run_training() for auto-inference)
+    node_dim: int = 16
+    edge_dim: int = 16
+
     # Core dimensions
     ml3_node_dim: int = 16          # Dimension of input node features
     ml3_edge_dim: int = 16          # Dimension of input edge features

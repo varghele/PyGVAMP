@@ -387,12 +387,20 @@ def run_training(args):
         print(f"Auto-inferred edge_dim={inferred_edge_dim} from dataset (was {args.edge_dim})")
         args.edge_dim = inferred_edge_dim
 
+    # Sync to encoder-specific dim fields if they exist
+    if hasattr(args, 'ml3_node_dim'):
+        args.ml3_node_dim = args.node_dim
+    if hasattr(args, 'ml3_edge_dim'):
+        args.ml3_edge_dim = args.edge_dim
+
     # Infer num atoms for later embedding
     args.embedding_in_dim = dataset.n_atoms
 
     # When using embedding, the encoder receives embedding output, not raw features
     if args.use_embedding:
         args.node_dim = args.embedding_out_dim
+        if hasattr(args, 'ml3_node_dim'):
+            args.ml3_node_dim = args.embedding_out_dim
 
     # Create model
     model = create_model(args)
