@@ -89,8 +89,8 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 ║  │                                                                         │  ║
 ║  │  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌────────────┐  │  ║
 ║  │  │  Embedding  │ → │   Encoder   │ → │ Classifier  │ → │  Softmax   │  │  ║
-║  │  │   (MLP)     │   │  (SchNet/   │   │  (MLP)      │   │  Output    │  │  ║
-║  │  │  optional   │   │   Meta)     │   │             │   │            │  │  ║
+║  │  │   (MLP)     │   │ (SchNet/GIN │   │  (MLP)      │   │  Output    │  │  ║
+║  │  │  optional   │   │  /Meta/ML3) │   │             │   │            │  │  ║
 ║  │  └─────────────┘   └─────────────┘   └─────────────┘   └────────────┘  │  ║
 ║  │                                                                         │  ║
 ║  │  Input: PyG Graph (node_feat, edge_index, edge_attr)                   │  ║
@@ -208,7 +208,7 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 | VAMPNet Model | ✅ Complete | Embedding + Encoder + Classifier |
 | SchNet Encoder | ✅ Complete | With attention mechanism |
 | Meta Encoder | ⚠️ Partial | Config WIP, encoder exists |
-| ML3 Encoder | ⚠️ Separate | Working independently, needs pipeline integration |
+| ML3 Encoder | ✅ Complete | Rewritten with parallel attention, spectral mode, pipeline integrated |
 | VAMP Score | ✅ Complete | VAMP1, VAMP2, VAMPE modes |
 | SoftmaxMLP Classifier | ✅ Complete | |
 | Master Pipeline | ✅ Complete | 3-phase orchestration |
@@ -220,7 +220,8 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 | CK Tests | ✅ Complete | Chapman-Kolmogorov |
 | Visualization | ✅ Complete | 2133 lines in plotting.py |
 | Documentation | ⚠️ Minimal | Sphinx setup exists |
-| Tests | ⚠️ Partial | 398+ tests passing, not in CI |
+| GIN Encoder | ✅ Complete | With parallel attention, WL-expressive |
+| Tests | ⚠️ Partial | 428+ tests passing, not in CI |
 
 ---
 
@@ -237,7 +238,7 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 #### 1.2 Fix Known Issues
 - [x] Address hardcoded `model.to('cuda')` in `training.py` (now uses `device` variable with `--cpu` flag support)
 - [x] Remove unused `from pymol.querying import distance` import in `training.py` (removed)
-- [ ] Handle case when encoder is `None` for ML3 type in `create_model()` (`training.py:207` still sets `encoder = None`)
+- [x] Handle case when encoder is `None` for ML3 type in `create_model()` (ML3Encoder now instantiated with full config)
 - [x] Add proper error handling when model loading fails in analysis (`load_model()` with try/except)
 
 #### 1.3 Verify VAMP Score Calculation
@@ -274,7 +275,7 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 ### Phase 3: Feature Completion
 
 #### 3.1 Complete Encoder Options
-- [ ] Integrate ML3 encoder into pipeline (encoder class + config + args exist, but `create_model()` still sets `encoder = None`)
+- [x] Integrate ML3 encoder into pipeline (full rewrite with SpectConvWithAttention, parallel attention, spectral/gaussian edge modes, equivalence-tested against original)
 - [x] Complete Meta encoder configuration (MetaConfig in `model_configs/meta.py`, fully integrated)
 - [x] Add encoder selection validation (type check with ValueError for unknown types)
 
@@ -328,7 +329,7 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 |-------|----------|-------------|---------------|
 | Hardcoded CUDA | `training.py:268` | `model.to('cuda')` ignores `--cpu` flag | Use `device` variable from args |
 | Unused import | `training.py:10` | `from pymol.querying import distance` never used | Remove import |
-| None encoder | `training.py:194` | ML3 encoder returns `None`, causes crash | Import and instantiate `GNNML3` from `pygv/encoder/ml3.py` |
+| ~~None encoder~~ | ~~`training.py:194`~~ | ~~ML3 encoder returns `None`, causes crash~~ | ✅ Fixed — `ML3Encoder` instantiated in `create_model()` |
 | Device inconsistency | `training.py:268,276` | Model moved to CUDA before device is determined | Move `model.to(device)` after device determination |
 | Broken imports | `pygv/config/__init__.py:4` | Imports `MetaConfig`, `ML3Config` which are commented out in `base_config.py` | Either uncomment configs or remove from imports |
 | Missing preset files | `pygv/config/presets/` | `medium.py` and `large.py` imported but don't exist | Create these files or update imports |
@@ -383,7 +384,7 @@ In `analysis.py:212-326` (Analysis phase):
 | ~~Comparable state counts~~ | ~~Ensure consistent state definitions across different lag times~~ | ✅ Done - `recommend_state_reduction()` integrated in `analysis.py` |
 | ~~Dataset encoding flag~~ | ~~Clean up dual dataset system (one-hot vs amino acid encoding).~~ | ✅ Done - unified `vampnet_dataset.py` with `use_amino_acid_encoding` parameter |
 | ~~Complete preset system~~ | ~~Add missing preset files and configs~~ | ✅ Done - `small.py`, `medium.py`, `large.py` with all 4 encoder variants (16 presets) |
-| ML3 pipeline integration | Integrate working ML3 encoder (`pygv/encoder/ml3.py` - GNNML3 class) into training pipeline. Currently `training.py:207` sets `encoder = None`. | Medium |
+| ~~ML3 pipeline integration~~ | ~~Integrate working ML3 encoder into training pipeline~~ | ✅ Done — rewritten as `ML3Encoder` with parallel attention, spectral mode, 30 tests (encoder + equivalence) |
 | ~~HTML report generation~~ | ~~Combine all analysis outputs into single HTML file for sharing~~ | ✅ Done - `MDTrajectoryVisualizer` with Three.js interactive viewer |
 | ~~Unit test cleanup~~ | ~~Existing tests need cleanup and CI integration~~ | ✅ Done — legacy test snippets deleted, 398+ tests passing |
 
@@ -456,7 +457,7 @@ Key files for understanding the pipeline:
 | `pygv/vampnet/vampnet.py` | 1184 | VAMPNet model |
 | `pygv/scores/vamp_score_v0.py` | 341 | VAMP loss calculation |
 | `pygv/encoder/schnet_wo_embed_v2.py` | 300+ | SchNet encoder |
-| `pygv/encoder/ml3.py` | 414 | ML3/GNNML3 encoder (working, needs integration) |
+| `pygv/encoder/ml3.py` | ~350 | ML3Encoder with SpectConvWithAttention, parallel attention, spectral/gaussian modes |
 | `pygv/encoder/meta_att.py` | - | Meta encoder |
 | `pygv/config/base_config.py` | 169 | Configuration classes |
 | `pygv/config/__init__.py` | 99 | Config registry and presets |

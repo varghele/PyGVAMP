@@ -1,3 +1,4 @@
+import warnings
 import torch
 import torch.nn as nn
 from torch_geometric.nn import MetaLayer, MLP, global_mean_pool
@@ -101,6 +102,11 @@ class Meta(torch.nn.Module):
             dropout: float = 0.0,
     ):
         super().__init__()
+        warnings.warn(
+            "Meta encoder is experimental and not production-ready. "
+            "Use SchNet, GIN, or ML3 encoders for reliable results.",
+            stacklevel=2,
+        )
         self.num_meta_layers = num_meta_layers
         self.embedding_type = embedding_type
 

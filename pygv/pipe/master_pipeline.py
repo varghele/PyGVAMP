@@ -20,9 +20,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-# Import CacheManager
-from pygv.pipe.caching import CacheManager
-
 # Import pipeline components
 from pygv.pipe.preparation import run_preparation
 from pygv.pipe.training import run_training
@@ -47,7 +44,6 @@ class PipelineOrchestrator:
         """
         self.config = config
         self.experiment_dir = None
-        self.cache_manager = CacheManager(config)
 
     def setup_experiment_directory(self):
         """Create experiment directory structure"""
@@ -91,14 +87,6 @@ class PipelineOrchestrator:
         print("PHASE 1: DATA PREPARATION")
         print("=" * 60)
 
-        # Check if cached dataset exists
-        dataset_hash = self.cache_manager.get_dataset_hash()
-        cached_dataset = self.cache_manager.check_cached_dataset(dataset_hash)
-
-        if cached_dataset and self.config.cache:
-            print(f"Found cached dataset: {cached_dataset}")
-            return cached_dataset, None
-
         # Calculate optimal stride based on hurry mode
         if self.config.hurry:
             optimal_stride = self._calculate_optimal_stride()
@@ -120,10 +108,6 @@ class PipelineOrchestrator:
                     recommended_n_states = stats['state_discovery'].get('recommended_n_states')
                     if recommended_n_states is not None:
                         print(f"State discovery recommended n_states = {recommended_n_states}")
-
-        # Cache dataset if requested
-        if self.config.cache:
-            self.cache_manager.cache_dataset(dataset_path, dataset_hash)
 
         return dataset_path, recommended_n_states
 

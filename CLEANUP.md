@@ -14,8 +14,8 @@
 - [x] **`pygv/utils/metrics.py`** — empty file (0 bytes)
 
 ## Medium priority — unfinished stubs & TODOs
-- [ ] **`pygv/pipe/caching.py:31`** — `cache_dataset()` stub with `TODO: Implement this`
-- [ ] **`pygv/pipe/training.py:207`** — `TODO: IMPLEMENT` for ML3 encoder integration
+- [x] **`pygv/pipe/caching.py:31`** — `cache_dataset()` stub with `TODO: Implement this` — deleted; `VAMPNetDataset` handles its own caching
+- [x] **`pygv/pipe/training.py:207`** — `TODO: IMPLEMENT` for ML3 encoder integration — done, `ML3Encoder` fully wired
 - [x] **`pygv/vampnet/vampnet.py:415`** — `get_embeddings()` works fine, removed misleading TODO
 - [x] **`experimental_area/compare_states.py`** — standalone script, not integrated into pipeline
 
