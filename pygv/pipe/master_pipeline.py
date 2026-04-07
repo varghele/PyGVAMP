@@ -875,6 +875,8 @@ def main():
     # Override training parameters only if explicitly provided
     if args.epochs is not None:
         config.epochs = args.epochs
+    if args.batch_size is not None:
+        config.batch_size = args.batch_size
     if args.clip_grad is not None:
         config.clip_grad = args.clip_grad
     if args.stride is not None:
@@ -885,6 +887,10 @@ def main():
         config.continuous = False
     if args.timestep is not None:
         config.timestep = args.timestep
+
+    # Reversible training
+    if args.reversible:
+        config.reversible = True
 
     # State diagnostics overrides
     if args.population_threshold is not None:

@@ -22,7 +22,7 @@ set -euo pipefail
 #   pygvamp --help
 # ============================================================================
 
-VERSION="0.9.0"
+VERSION="1.0.0"
 PYTHON_VERSION="3.12"
 CUDA_VERSION="12.4"
 TORCH_VERSION="2.5.1"

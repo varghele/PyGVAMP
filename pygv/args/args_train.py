@@ -75,6 +75,8 @@ def add_training_args(parser: argparse.ArgumentParser):
                              help='Run validation every N batches')
     train_group.add_argument('--save_every', type=int, default=0,
                              help='Save checkpoint every N epochs (0 to disable)')
+    train_group.add_argument('--reversible', action='store_true',
+                             help='Use RevGraphVAMP (reversible likelihood-based training)')
     return train_group
 
 

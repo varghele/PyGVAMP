@@ -260,6 +260,34 @@ def analyze_vampnet_outputs(
     return probs, embeddings, edge_attentions, edge_indices
 
 
+def extract_learned_transition_matrix(model) -> tuple:
+    """
+    Extract the learned transition matrix and stationary distribution
+    from a RevVAMPNet model.
+
+    Parameters
+    ----------
+    model : RevVAMPNet
+        Trained reversible VAMPNet model
+
+    Returns
+    -------
+    tuple (transition_matrix, stationary_distribution)
+        Both as numpy arrays
+    """
+    from pygv.vampnet.rev_vampnet import RevVAMPNet
+
+    if not isinstance(model, RevVAMPNet):
+        raise TypeError("Model must be a RevVAMPNet instance")
+
+    model.eval()
+    with torch.no_grad():
+        K = model.get_transition_matrix().cpu().numpy()
+        pi = model.get_stationary_distribution().cpu().numpy()
+
+    return K, pi
+
+
 def calculate_transition_matrices(probs: np.ndarray, lag_time: float = 1, stride: int = 1, timestep: float = 0.001) -> \
 tuple[np.ndarray, np.ndarray]:
     """

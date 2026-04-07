@@ -26,12 +26,14 @@ from pygv.utils.its import analyze_implied_timescales
 from pygv.utils.nn_utils import init_for_vamp
 
 from pygv.vampnet import VAMPNet
+from pygv.vampnet.rev_vampnet import RevVAMPNet
 from pygv.encoder.schnet import SchNetEncoderNoEmbed
 from pygv.encoder.meta_att import Meta
 from pygv.encoder.gin import GINEncoder
 from pygv.encoder.ml3 import ML3Encoder
 
 from pygv.scores.vamp_score_v0 import VAMPScore
+from pygv.scores.reversible_score import ReversibleVAMPScore
 from pygv.classifier.SoftmaxMLP import SoftmaxMLP
 from pygv.utils.logging_utils import PipelineLogger
 
@@ -288,15 +290,29 @@ def create_model(args):
     else:
         embedding_module = None
 
-    # Create VAMPNet model
-    model = VAMPNet(
-        embedding_module=embedding_module,
-        encoder=encoder,
-        vamp_score=vamp_score,
-        classifier_module=classifier,
-        lag_time=args.lag_time,
-        training_jitter=args.training_jitter
-    )
+    # Create model (RevVAMPNet or standard VAMPNet)
+    if getattr(args, 'reversible', False):
+        rev_score = ReversibleVAMPScore(
+            n_states=args.n_states,
+            epsilon=args.vamp_epsilon
+        )
+        model = RevVAMPNet(
+            embedding_module=embedding_module,
+            encoder=encoder,
+            rev_score=rev_score,
+            classifier_module=classifier,
+            lag_time=args.lag_time,
+            training_jitter=args.training_jitter
+        )
+    else:
+        model = VAMPNet(
+            embedding_module=embedding_module,
+            encoder=encoder,
+            vamp_score=vamp_score,
+            classifier_module=classifier,
+            lag_time=args.lag_time,
+            training_jitter=args.training_jitter
+        )
 
     # Apply to your model
     init_for_vamp(model, method='kaiming_normal')

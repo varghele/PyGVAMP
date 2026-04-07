@@ -24,6 +24,7 @@ from pygv.utils.plotting import (plot_transition_probabilities, plot_state_edge_
                                  plot_state_network)
 
 from pygv.vampnet.vampnet import VAMPNet
+from pygv.vampnet.rev_vampnet import RevVAMPNet
 from pygv.utils.analysis import analyze_vampnet_outputs
 from torch_geometric.loader import DataLoader
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
@@ -90,11 +91,11 @@ def load_model(model_path, args, device):
     VAMPNet
         The loaded VAMPNet model on the appropriate device
     """
-    # Load the model
+    # Load the model (works for both VAMPNet and RevVAMPNet via torch.load)
     try:
-        model = VAMPNet.load_complete_model(model_path, map_location=device)
+        model = torch.load(model_path, map_location=device, weights_only=False)
         model = model.to(device)
-        print(f"Model loaded to {device}")
+        print(f"Model loaded to {device} (type: {type(model).__name__})")
         return model
     except Exception as e:
         sys.exit(f"Error loading model: {str(e)}")
@@ -243,12 +244,32 @@ def run_analysis(args=None):
 
     # ---- Step 3: Plot original transition matrix ----
     from pygv.utils.analysis import calculate_transition_matrices
-    original_transition_matrix, _ = calculate_transition_matrices(
-        probs=probs,
-        lag_time=args.lag_time,
-        stride=args.stride,
-        timestep=inferred_timestep,
-    )
+    is_reversible = isinstance(model, RevVAMPNet)
+
+    if is_reversible:
+        from pygv.utils.analysis import extract_learned_transition_matrix
+        learned_K, learned_pi = extract_learned_transition_matrix(model)
+        original_transition_matrix = learned_K
+
+        # Also compute count-based estimate for comparison
+        count_based_K, _ = calculate_transition_matrices(
+            probs=probs, lag_time=args.lag_time, stride=args.stride, timestep=inferred_timestep
+        )
+
+        # Save both matrices
+        np.save(os.path.join(paths['analysis_dir'], f"{args.protein_name}_learned_K.npy"), learned_K)
+        np.save(os.path.join(paths['analysis_dir'], f"{args.protein_name}_learned_pi.npy"), learned_pi)
+        np.save(os.path.join(paths['analysis_dir'], f"{args.protein_name}_count_based_K.npy"), count_based_K)
+
+        print(f"Learned stationary distribution: {learned_pi}")
+        print(f"Max |learned_K - count_K|: {np.max(np.abs(learned_K - count_based_K)):.6f}")
+    else:
+        original_transition_matrix, _ = calculate_transition_matrices(
+            probs=probs,
+            lag_time=args.lag_time,
+            stride=args.stride,
+            timestep=inferred_timestep,
+        )
 
     plot_transition_probabilities(
         probs=probs,
@@ -491,6 +512,7 @@ def run_analysis(args=None):
         "diagnostic_report": diagnostic_report,
         "state_attention_maps": state_attention_maps,
         "state_populations": state_populations,
+        "is_reversible": is_reversible,
     }
 
     print(f"\nResults saved to: {paths['analysis_dir']}")
