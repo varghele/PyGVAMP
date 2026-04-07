@@ -176,7 +176,8 @@ def create_model(args):
             output_dim=args.output_dim,
             n_interactions=args.n_interactions,
             activation=args.activation,
-            use_attention=args.use_attention
+            use_attention=args.use_attention,
+            edge_norm_eps=args.edge_norm_eps
         )
     elif args.encoder_type.lower() == 'meta':
         encoder = Meta(
@@ -202,7 +203,8 @@ def create_model(args):
             output_dim=args.output_dim,
             n_interactions=args.n_interactions,
             activation=args.activation,
-            use_attention=args.use_attention
+            use_attention=args.use_attention,
+            edge_norm_eps=args.edge_norm_eps
         )
     elif args.encoder_type.lower() == 'ml3':
         encoder = ML3Encoder(
@@ -233,7 +235,7 @@ def create_model(args):
         output_dim = args.ml3_output_dim
 
     # Create VAMP score module
-    vamp_score = VAMPScore(epsilon=1e-6, mode='regularize')
+    vamp_score = VAMPScore(epsilon=args.vamp_epsilon, mode='regularize')
 
     # Create classifier if requested
     classifier = None
@@ -289,7 +291,8 @@ def create_model(args):
         encoder=encoder,
         vamp_score=vamp_score,
         classifier_module=classifier,
-        lag_time=args.lag_time
+        lag_time=args.lag_time,
+        training_jitter=args.training_jitter
     )
 
     # Apply to your model

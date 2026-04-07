@@ -32,7 +32,8 @@ class VAMPNet(nn.Module):
                  classifier_act='elu',
                  classifier_norm=None,
                  # Other parameters
-                 lag_time=1):
+                 lag_time=1,
+                 training_jitter=1e-6):
         """
         Initialize the VAMPNet with encoder, classifier, and VAMP score.
 
@@ -83,6 +84,7 @@ class VAMPNet(nn.Module):
         self.encoder = encoder
         self.vamp_score = vamp_score
         self.lag_time = lag_time
+        self.training_jitter = training_jitter
         self.optimizer = None
 
         # Set up embedding module if needed
@@ -189,8 +191,7 @@ class VAMPNet(nn.Module):
 
         # Add a small jitter to prevent identical representations (helps with gradient flow)
         if self.training and x.requires_grad:
-            # Add small noise (1e-6) during training
-            x = x + torch.randn_like(x) * 1e-6
+            x = x + torch.randn_like(x) * self.training_jitter
 
         try:
             # Pass through encoder

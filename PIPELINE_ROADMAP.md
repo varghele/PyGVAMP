@@ -340,7 +340,7 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 |-------|----------|-------------|---------------|
 | ~~Dual dataset files~~ | ~~`vampnet_dataset.py`, `vampnet_dataset_with_AA.py`~~ | ~~Two nearly identical files~~ | ✅ Consolidated: old files moved to `legacy/`, unified `vampnet_dataset.py` with `use_amino_acid_encoding` flag |
 | One-hot node features | `vampnet_dataset.py` | Creates N×N matrix for N atoms (memory inefficient) | Learned embeddings exist but had issues; document tradeoffs |
-| Magic numbers | Various | Epsilon values, thresholds hardcoded | Move to configuration |
+| ~~Magic numbers~~ | ~~Various~~ | ~~Epsilon values, thresholds hardcoded~~ | ✅ Fixed — `vamp_epsilon`, `training_jitter`, `edge_norm_eps` added to `BaseConfig` and wired through pipeline |
 | NaN masking | `vampnet.py` | NaN outputs replaced with zeros | Fix root cause of NaN generation |
 | ~~Commented code~~ | ~~`analysis.py:266-272`~~ | ~~TODO comment with dead code~~ | ✅ Cleaned up |
 | Batch size sensitivity | `vamp_score_v0.py` | VAMP score varies with batch composition | Document limitation or implement batch-invariant version |

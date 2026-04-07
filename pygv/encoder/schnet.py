@@ -27,7 +27,8 @@ class CFConv(MessagePassing):
                  hidden_channels=None,
                  activation='tanh',
                  use_attention=True,
-                 aggr='add'):
+                 aggr='add',
+                 edge_norm_eps=1e-8):
 
         super(CFConv, self).__init__(aggr=aggr)
 
@@ -39,6 +40,7 @@ class CFConv(MessagePassing):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.edge_channels = edge_channels
+        self.edge_norm_eps = edge_norm_eps
 
         # Convert string activation to module if needed
         self.activation = self._get_activation(activation) if isinstance(activation, str) else activation
@@ -85,7 +87,7 @@ class CFConv(MessagePassing):
         Forward pass of CFConv layer.
         """
         # Normalize edge attributes for numerical stability
-        edge_attr_norm = edge_attr / (edge_attr.norm(dim=-1, keepdim=True) + 1e-8)
+        edge_attr_norm = edge_attr / (edge_attr.norm(dim=-1, keepdim=True) + self.edge_norm_eps)
 
         # Generate weights from edge attributes
         edge_weights = self.filter_network(edge_attr_norm)
@@ -161,7 +163,7 @@ class GCNInteraction(nn.Module):
     """SchNet-style interaction block using the PyG-compatible CFConv."""
 
     def __init__(self, in_channels, edge_channels, hidden_channels,
-                 activation='tanh', use_attention=True):
+                 activation='tanh', use_attention=True, edge_norm_eps=1e-8):
         super(GCNInteraction, self).__init__()
 
         # Initial dense layer (matching classic implementation)
@@ -174,7 +176,8 @@ class GCNInteraction(nn.Module):
             edge_channels=edge_channels,
             hidden_channels=hidden_channels,
             activation=activation,
-            use_attention=use_attention
+            use_attention=use_attention,
+            edge_norm_eps=edge_norm_eps
         )
 
         # Output transformation
@@ -215,7 +218,8 @@ class SchNetEncoderNoEmbed(nn.Module):
             output_dim=32,
             n_interactions=3,
             activation='tanh',
-            use_attention=True
+            use_attention=True,
+            edge_norm_eps=1e-8
     ):
         super(SchNetEncoderNoEmbed, self).__init__()
 
@@ -229,7 +233,8 @@ class SchNetEncoderNoEmbed(nn.Module):
                 edge_channels=edge_dim,
                 hidden_channels=hidden_dim,
                 activation=activation,
-                use_attention=use_attention
+                use_attention=use_attention,
+                edge_norm_eps=edge_norm_eps
             ) for _ in range(n_interactions)
         ])
 

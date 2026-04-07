@@ -68,6 +68,11 @@ class BaseConfig:
     population_threshold: float = 0.02         # Min state population (fraction) to keep
     jsd_threshold: float = 0.05                # Max JSD for states to be considered redundant
 
+    # Numerical stability
+    vamp_epsilon: float = 1e-6          # Regularization for VAMP covariance matrices and eigendecomposition
+    training_jitter: float = 1e-6       # Small noise added during training for gradient flow
+    edge_norm_eps: float = 1e-8         # Prevents division by zero in edge attribute normalization
+
     # Hardware
     cpu: bool = False
 
