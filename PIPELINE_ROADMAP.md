@@ -1,464 +1,167 @@
 # PyGVAMP Pipeline Roadmap
 
-This document outlines the current state of the PyGVAMP pipeline, steps needed to complete it, and technical debt that should be addressed.
+Tracks the current state, remaining work, and technical debt for the PyGVAMP pipeline.
 
 ---
 
-## Pipeline Overview
-
-PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular dynamics (MD) trajectories using the Variational Approach for Markov Processes (VAMP). The project achieves ~50x speedup compared to the original implementation through PyTorch Geometric architecture.
-
-### What VAMP/VAMPNets Does
-
-1. **Input**: MD trajectory files (.xtc, .dcd) + topology (.pdb)
-2. **Process**: Converts molecular structures to k-NN graphs, learns latent representations via message-passing neural networks
-3. **Output**: Discrete state assignments, transition probabilities, and slow collective variable identification
-
----
-
-## Pipeline Architecture Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              PyGVAMP MASTER PIPELINE                            │
-│                           (master_pipeline.py)                                  │
-└────────────────────────────────────┬────────────────────────────────────────────┘
-                                     │
-                    ┌────────────────┴────────────────┐
-                    ▼                                 │
-┌─────────────────────────────────────┐               │
-│   CONFIGURATION LOADING             │               │
-│   ─────────────────────────         │               │
-│   • Presets (YAML/JSON)             │               │
-│   • CLI argument overrides          │               │
-│   • BaseConfig / SchNetConfig       │               │
-└─────────────────┬───────────────────┘               │
-                  │                                   │
-                  ▼                                   │
-┌═══════════════════════════════════════════════════════════════════════════════┐
-║                          PHASE 1: PREPARATION                                  ║
-║                         (preparation.py)                                       ║
-╠═══════════════════════════════════════════════════════════════════════════════╣
-║                                                                                ║
-║  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────────────┐ ║
-║  │ Trajectory Files │    │  Topology File   │    │    Configuration         │ ║
-║  │   (.xtc/.dcd)    │    │     (.pdb)       │    │  (selection, stride,     │ ║
-║  └────────┬─────────┘    └────────┬─────────┘    │   lag_time, n_neighbors) │ ║
-║           │                       │              └────────────┬─────────────┘ ║
-║           └───────────┬───────────┘                           │               ║
-║                       ▼                                       │               ║
-║  ┌─────────────────────────────────────────────────────────────────────────┐  ║
-║  │                    VAMPNetDataset                                       │  ║
-║  │   ┌─────────────────────────────────────────────────────────────────┐   │  ║
-║  │   │ 1. Load trajectory frames (MDTraj)                              │   │  ║
-║  │   │ 2. Select atoms (e.g., "name CA" for alpha carbons)             │   │  ║
-║  │   │ 3. Apply stride (every Nth frame)                               │   │  ║
-║  │   │ 4. Calculate pairwise distances                                 │   │  ║
-║  │   │ 5. Build k-NN graphs for each frame                            │   │  ║
-║  │   │ 6. Gaussian expansion of edge distances                        │   │  ║
-║  │   │ 7. Create time-lagged pairs (t=0, t=lag)                       │   │  ║
-║  │   └─────────────────────────────────────────────────────────────────┘   │  ║
-║  └─────────────────────────────────────────────────────────────────────────┘  ║
-║                       │                                                        ║
-║                       ▼                                                        ║
-║           ┌───────────────────────┐                                            ║
-║           │   Cached Dataset      │ ──► Hash-based caching for reuse           ║
-║           │   (PyG Data objects)  │                                            ║
-║           └───────────────────────┘                                            ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-                                     │
-                                     ▼
-┌═══════════════════════════════════════════════════════════════════════════════┐
-║                          PHASE 2: TRAINING                                     ║
-║                         (training.py)                                          ║
-╠═══════════════════════════════════════════════════════════════════════════════╣
-║                                                                                ║
-║  ┌─────────────────────────────────────────────────────────────────────────┐  ║
-║  │                    GRID SEARCH OVER HYPERPARAMETERS                     │  ║
-║  │                                                                         │  ║
-║  │    for lag_time in [10, 20, 50, 100] ns:                               │  ║
-║  │        for n_states in [3, 5, 7, 10]:                                  │  ║
-║  │            → Create experiment directory                               │  ║
-║  │            → Train model                                               │  ║
-║  │            → Save best checkpoint                                      │  ║
-║  └─────────────────────────────────────────────────────────────────────────┘  ║
-║                                     │                                          ║
-║                                     ▼                                          ║
-║  ┌─────────────────────────────────────────────────────────────────────────┐  ║
-║  │                         VAMPNet MODEL                                   │  ║
-║  │                                                                         │  ║
-║  │  ┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌────────────┐  │  ║
-║  │  │  Embedding  │ → │   Encoder   │ → │ Classifier  │ → │  Softmax   │  │  ║
-║  │  │   (MLP)     │   │ (SchNet/GIN │   │  (MLP)      │   │  Output    │  │  ║
-║  │  │  optional   │   │  /Meta/ML3) │   │             │   │            │  │  ║
-║  │  └─────────────┘   └─────────────┘   └─────────────┘   └────────────┘  │  ║
-║  │                                                                         │  ║
-║  │  Input: PyG Graph (node_feat, edge_index, edge_attr)                   │  ║
-║  │  Output: State probabilities [batch_size, n_states]                    │  ║
-║  └─────────────────────────────────────────────────────────────────────────┘  ║
-║                                     │                                          ║
-║                                     ▼                                          ║
-║  ┌─────────────────────────────────────────────────────────────────────────┐  ║
-║  │                       TRAINING LOOP                                     │  ║
-║  │                                                                         │  ║
-║  │   for epoch in range(n_epochs):                                        │  ║
-║  │       for (x_t0, x_t1) in train_loader:   # time-lagged pairs          │  ║
-║  │           χ_t0 = model(x_t0)              # state probs at t=0         │  ║
-║  │           χ_t1 = model(x_t1)              # state probs at t=lag       │  ║
-║  │           loss = -VAMP_score(χ_t0, χ_t1)  # maximize VAMP score        │  ║
-║  │           loss.backward()                                              │  ║
-║  │           optimizer.step()                                             │  ║
-║  │                                                                         │  ║
-║  │       validate(test_loader)                                            │  ║
-║  │       early_stopping_check()                                           │  ║
-║  │       save_checkpoint_if_best()                                        │  ║
-║  └─────────────────────────────────────────────────────────────────────────┘  ║
-║                                     │                                          ║
-║  ┌─────────────────────────────────────────────────────────────────────────┐  ║
-║  │                       VAMP SCORE CALCULATION                            │  ║
-║  │                                                                         │  ║
-║  │   C₀₀ = E[χ(t)ᵀ χ(t)]           # instantaneous covariance             │  ║
-║  │   C₀ₜ = E[χ(t)ᵀ χ(t+τ)]         # cross-covariance                     │  ║
-║  │   Cₜₜ = E[χ(t+τ)ᵀ χ(t+τ)]       # lagged covariance                    │  ║
-║  │                                                                         │  ║
-║  │   VAMP-2 = ||C₀₀^(-1/2) C₀ₜ Cₜₜ^(-1/2)||²_F + 1                        │  ║
-║  └─────────────────────────────────────────────────────────────────────────┘  ║
-║                                     │                                          ║
-║                                     ▼                                          ║
-║                        ┌───────────────────────┐                               ║
-║                        │  Trained Models       │                               ║
-║                        │  (best_model.pt)      │                               ║
-║                        └───────────────────────┘                               ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-                                     │
-                                     ▼
-┌═══════════════════════════════════════════════════════════════════════════════┐
-║                          PHASE 3: ANALYSIS                                     ║
-║                         (analysis.py)                                          ║
-╠═══════════════════════════════════════════════════════════════════════════════╣
-║                                                                                ║
-║  ┌─────────────────────────────────────────────────────────────────────────┐  ║
-║  │                      POST-TRAINING ANALYSIS                             │  ║
-║  │                                                                         │  ║
-║  │  1. STATE PROBABILITIES                                                │  ║
-║  │     • Run inference on all frames                                      │  ║
-║  │     • Assign each frame to most probable state                         │  ║
-║  │                                                                         │  ║
-║  │  2. TRANSITION ANALYSIS                                                │  ║
-║  │     • Calculate transition probability matrices                        │  ║
-║  │     • Plot transition networks (state graph)                           │  ║
-║  │                                                                         │  ║
-║  │  3. ATTENTION MAPS                                                     │  ║
-║  │     • Extract encoder attention weights                                │  ║
-║  │     • Compute per-state residue-residue attention                      │  ║
-║  │     • Identify key interactions per state                              │  ║
-║  │                                                                         │  ║
-║  │  4. STATE STRUCTURES                                                   │  ║
-║  │     • Extract representative PDB structures per state                  │  ║
-║  │     • Generate ensemble PDBs                                           │  ║
-║  │     • Color by attention values                                        │  ║
-║  │                                                                         │  ║
-║  │  5. IMPLIED TIMESCALES (ITS)                                           │  ║
-║  │     • Calculate: ITS = -τ / ln|λ|                                      │  ║
-║  │     • Plot ITS vs lag time                                             │  ║
-║  │     • Identify slow processes                                          │  ║
-║  │                                                                         │  ║
-║  │  6. CHAPMAN-KOLMOGOROV TESTS                                           │  ║
-║  │     • Validate Markov assumption                                       │  ║
-║  │     • Compare predicted vs observed transitions                        │  ║
-║  └─────────────────────────────────────────────────────────────────────────┘  ║
-║                                     │                                          ║
-║                                     ▼                                          ║
-║  ┌─────────────────────────────────────────────────────────────────────────┐  ║
-║  │                         OUTPUT ARTIFACTS                                │  ║
-║  │                                                                         │  ║
-║  │  analysis/                                                             │  ║
-║  │  ├── transition_matrix.png                                             │  ║
-║  │  ├── state_network.png                                                 │  ║
-║  │  ├── attention_maps/                                                   │  ║
-║  │  │   ├── state_0_attention.png                                         │  ║
-║  │  │   ├── state_1_attention.png                                         │  ║
-║  │  │   └── ...                                                           │  ║
-║  │  ├── structures/                                                       │  ║
-║  │  │   ├── state_0_ensemble.pdb                                          │  ║
-║  │  │   └── ...                                                           │  ║
-║  │  ├── its_plot.png                                                      │  ║
-║  │  └── ck_test.png                                                       │  ║
-║  └─────────────────────────────────────────────────────────────────────────┘  ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-                                     │
-                                     ▼
-                    ┌────────────────────────────────┐
-                    │      pipeline_summary.json     │
-                    │  ────────────────────────────  │
-                    │  • Configuration used          │
-                    │  • Models trained              │
-                    │  • Analysis completed          │
-                    │  • Timestamp                   │
-                    └────────────────────────────────┘
-```
-
----
-
-## Current Implementation Status
+## Implementation Status
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| VAMPNetDataset | ✅ Complete | MD→PyG graphs with caching |
-| VAMPNet Model | ✅ Complete | Embedding + Encoder + Classifier |
-| SchNet Encoder | ✅ Complete | With attention mechanism |
-| Meta Encoder | ⚠️ Partial | Config WIP, encoder exists |
-| ML3 Encoder | ✅ Complete | Rewritten with parallel attention, spectral mode, pipeline integrated |
-| VAMP Score | ✅ Complete | VAMP1, VAMP2, VAMPE modes |
-| SoftmaxMLP Classifier | ✅ Complete | |
-| Master Pipeline | ✅ Complete | 3-phase orchestration |
-| Preparation Phase | ✅ Complete | Dataset creation |
-| Training Phase | ✅ Complete | Multi-lag, multi-state grid |
-| Analysis Phase | ✅ Complete | All visualizations |
-| Caching | ✅ Complete | Hash-based dataset caching |
-| ITS Analysis | ✅ Complete | Implied timescales |
-| CK Tests | ✅ Complete | Chapman-Kolmogorov |
-| Visualization | ✅ Complete | 2133 lines in plotting.py |
-| Documentation | ⚠️ Minimal | Sphinx setup exists |
-| GIN Encoder | ✅ Complete | With parallel attention, WL-expressive |
-| Tests | ⚠️ Partial | 428+ tests passing, not in CI |
+| VAMPNetDataset | Done | MD→PyG graphs with caching, continuous/non-continuous modes |
+| VAMPNet Model | Done | Embedding + Encoder + Classifier |
+| SchNet Encoder | Done | With attention mechanism |
+| GIN Encoder | Done | Parallel attention, WL-expressive |
+| ML3 Encoder | Done | Spectral convolutions, parallel attention, gaussian/spectral edge modes |
+| Meta Encoder | Experimental | Works but unstable, not production-ready |
+| VAMP Score | Done | VAMP1, VAMP2, VAMPE modes; validated against NumPy reference |
+| SoftmaxMLP Classifier | Done | |
+| Master Pipeline | Done | 3-phase orchestration with dry_run, resume, validate_only |
+| Preparation Phase | Done | Dataset creation + optional state discovery |
+| Training Phase | Done | Multi-lag, multi-state grid with checkpointing |
+| Analysis Phase | Done | Transitions, attention maps, structures, ITS, CK tests |
+| Configuration System | Done | BaseConfig + encoder configs + 16 presets (small/medium/large) |
+| Visualization | Done | Static plots (2133L) + interactive HTML viewer (Three.js) |
+| Tests | Done | 504+ unit tests, 7 integration tests (SchNet/GIN/ML3, .xtc/.dcd) |
 
 ---
 
-## Steps to Complete the Pipeline
+## Pipeline Execution
 
-### Phase 1: Critical Path (Required for Publication)
+### Phase 0: Configuration
+- Parse CLI args → load preset/model config → create experiment directory structure
+- Supports `--dry_run`, `--resume`, `--validate_only`, `--skip_preparation`
 
-#### 1.1 Validate End-to-End Pipeline Execution
-- [x] Run complete pipeline on test dataset (automated integration tests in `test_pipeline_integration.py`)
-- [x] Verify all phases execute without errors (SchNet, GIN, ML3 all pass end-to-end)
-- [x] Confirm all expected outputs are generated (checkpoints, plots, analysis artifacts verified)
-- [x] Test with multiple trajectory formats (.xtc, .dcd) (AB42 .xtc + NTL9 .dcd)
+### Phase 1: Preparation (`preparation.py`)
+1. Validate and convert topology to PDB
+2. Find trajectory files (.xtc, .dcd, .trr)
+3. Process trajectories (load, select atoms, apply stride)
+4. Build k-NN graphs with Gaussian-expanded edge features
+5. Create time-lagged pairs (continuous or boundary-aware)
+6. Optional: Graph2Vec state discovery to recommend n_states
 
-#### 1.2 Fix Known Issues
-- [x] Address hardcoded `model.to('cuda')` in `training.py` (now uses `device` variable with `--cpu` flag support)
-- [x] Remove unused `from pymol.querying import distance` import in `training.py` (removed)
-- [x] Handle case when encoder is `None` for ML3 type in `create_model()` (ML3Encoder now instantiated with full config)
-- [x] Add proper error handling when model loading fails in analysis (`load_model()` with try/except)
+### Phase 2: Training (`training.py`)
+For each `(lag_time, n_states)` combination:
+1. Create dataset and DataLoaders (80/20 train/val split)
+2. Auto-infer feature dimensions from dataset
+3. Build model: Embedding → Encoder → Classifier → VAMPScore
+4. Train with AdamW, VAMP-2 loss, gradient clipping, early stopping
+5. Post-training: CK test + ITS analysis
 
-#### 1.3 Verify VAMP Score Calculation
-- [x] Validate covariance matrix calculations against reference implementation (25 NumPy validation tests in `test_vamp_score_numpy.py`: covariance matrices, M^{-1/2}, Koopman matrix, VAMP1/VAMP2/VAMPE scores, SciPy cross-check, float32 precision)
-- [x] Test eigenvalue truncation/regularization strategies (trunc/regularize modes, stability with near-zero variance)
-- [x] Confirm score maximization (higher = better) throughout codebase (`loss()` returns `-score`, training loop verified)
+### Phase 3: Analysis (`analysis.py`)
+For each trained model:
+1. Load best checkpoint, run inference on all frames
+2. State assignment, transition matrices
+3. Per-state attention map aggregation
+4. Representative structure extraction (PDB)
+5. Visualization: networks, heatmaps, ensembles
 
-#### 1.4 Test Multi-Lag Pipeline
-- [ ] Verify lag time compatibility check with trajectory timestep
-- [ ] Test stride + lag_time combination edge cases
-- [ ] Validate that different lag times produce different models
+### Output Directory Structure
+```
+exp_{protein_name}_{timestamp}/
+├── config.yaml
+├── pipeline_summary.json
+├── logs/
+├── preparation/
+│   └── prep_{timestamp}/
+│       ├── topology.pdb, prep_config.json, dataset_stats.json
+│       ├── cache/
+│       └── state_discovery/    (if --discover_states)
+├── training/
+│   └── lag{X}ns_{Y}states/
+│       ├── best_model.pt, final_model.pt, config.txt
+│       ├── vamp_scores.png, models/, plots/{ck_test,its}/
+│       └── state_probs.npy, embeddings.npy
+└── analysis/
+    └── lag{X}ns_{Y}states/
+        ├── transition_matrix.npy, state_probs.npy
+        ├── state_structures/State_N/*.pdb
+        ├── attention_maps/, attention_structures/
+        └── visualizations/
+```
 
-### Phase 2: Robustness & Quality
+---
 
-#### 2.1 Error Handling
-- [x] Add input validation for trajectory files (existence, format) — `analysis.py` validates paths, `validate_topology_file()` checks format
-- [x] Add configuration validation (compatible parameters) — `validate_lag_times()` checks timestep/stride/lag compatibility, `--validate_only` mode
-- [x] Improve error messages with actionable guidance — topology gives conversion commands, lag times suggest closest valid values, timestep warns with `--timestep` hint
-- [x] Add graceful failure modes with partial results saved — training/analysis/retrain phases catch per-experiment exceptions and continue
+## Remaining Work
 
-#### 2.2 Gradient Flow & Numerical Stability
-- [ ] Review and document gradient workarounds (jitter, skip connections)
-- [ ] Add gradient monitoring/logging during training
-- [ ] Investigate and fix root causes of NaN outputs
-- [ ] Add automatic learning rate adjustment on gradient explosion
+### Next Up
+- **Multi-lag edge cases (1.4)**: Verify lag time compatibility checks, stride+lag combinations, different lag times producing different models
+- **Gradient flow & numerical stability (2.2)**: Document gradient workarounds, add monitoring/logging, investigate NaN root causes, auto learning rate adjustment
+- **CI/CD (2.3)**: Set up automated testing pipeline
 
-#### 2.3 Testing
-- [x] Create integration tests for full pipeline (7 tests in `test_pipeline_integration.py`: SchNet+XTC, GIN+DCD, ML3+XTC, preparation, lag time validation, resume)
-- [x] Add unit tests for VAMP score calculation (25 tests in `test_vamp_score.py`)
-- [x] Add unit tests for dataset creation (40+ tests in `test_dataset.py`)
-- [x] Clean up existing tests in `testdata/` and `area51_testing_grounds/` (deleted)
-- [ ] Set up CI/CD with automated testing
-
-### Phase 3: Feature Completion
-
-#### 3.1 Complete Encoder Options
-- [x] Integrate ML3 encoder into pipeline (full rewrite with SpectConvWithAttention, parallel attention, spectral/gaussian edge modes, equivalence-tested against original)
-- [x] Complete Meta encoder configuration (MetaConfig in `model_configs/meta.py`, fully integrated)
-- [x] Add encoder selection validation (type check with ValueError for unknown types)
-
-#### 3.2 Trajectory Handling
-- [x] Add `continuous` flag for trajectory loading (`base_config.py` and `vampnet_dataset.py`)
-- [x] Implement non-continuous trajectory support (boundary tracking and pair filtering)
-- [x] Add trajectory boundary detection and handling
-- [x] **Bug fix**: `continuous` flag now passed to dataset in `training.py`, `analysis.py`, and `preparation.py`
-
-#### 3.3 State Count Selection
-- [x] Implement automatic n_states selection method (`state_diagnostics.py`: eigenvalue gap, population, JSD analysis)
-- [x] Ensure comparable state counts across different lag times
-- [x] Add state count validation/recommendation system (`recommend_state_reduction()` with confidence scoring, integrated in `analysis.py`)
-
-#### 3.4 Enhanced Analysis
-- [ ] Add cross-validation for model selection
-- [ ] Add ensemble model support
-
-#### 3.5 Visualization Improvements
-- [x] Add interactive plots (`MDTrajectoryVisualizer` with web-based 3D interface)
-- [x] Add comparison plots across lag times (`plot_state_populations_newrec`, `plot_state_evolution_newrec`)
-- [x] ~~Add trajectory projection onto learned states~~ (covered by existing MD tools)
-- [x] ~~Add video/animation generation for state transitions~~ (not needed)
-
-### Phase 4: Documentation & Usability
-
-#### 4.1 Documentation
-- [ ] Complete Sphinx documentation
-- [ ] Add tutorial notebooks (Jupyter)
-- [ ] Add example configurations for common proteins
-- [ ] Document hyperparameter tuning guidelines
-
-#### 4.2 Report Generation
-- [x] Integrate HTML report generation (`MDTrajectoryVisualizer` in `pygv/visualization/visualizer.py`)
-- [x] Combine all analysis outputs into single shareable HTML file (Three.js-based interactive viewer)
-- [x] Add interactive elements to HTML report (3D structure, attention mapping, state coloring, transition matrices)
-
-#### 4.3 CLI Improvements
-- [x] Add `--dry_run` option to preview pipeline (shows config, trajectories, planned experiments)
-- [x] Add `--resume` option to continue failed runs (resumes from existing experiment directory)
-- [x] Add progress persistence for long-running jobs (`PipelineLogger` + `pipeline_summary.json`)
-- [x] Add `--validate_only` mode for configuration checking (validates topology, trajectories, lag times)
+### Future
+- **Documentation (4.1)**: Complete Sphinx docs, tutorial notebooks, example configs, hyperparameter guidelines
+- **Cross-validation & ensemble (3.4)**: Model selection and ensemble support
 
 ---
 
 ## Technical Debt
 
-### High Priority (Blocking Issues)
+### Medium Priority
 
-| Issue | Location | Description | Suggested Fix |
-|-------|----------|-------------|---------------|
-| ~~Hardcoded CUDA~~ | ~~`training.py:268`~~ | ~~`model.to('cuda')` ignores `--cpu` flag~~ | ✅ Fixed — uses `device` variable with `--cpu` flag support |
-| ~~Unused import~~ | ~~`training.py:10`~~ | ~~`from pymol.querying import distance` never used~~ | ✅ Fixed — import removed |
-| ~~None encoder~~ | ~~`training.py:194`~~ | ~~ML3 encoder returns `None`, causes crash~~ | ✅ Fixed — `ML3Encoder` instantiated in `create_model()` |
-| ~~Device inconsistency~~ | ~~`training.py:268,276`~~ | ~~Model moved to CUDA before device is determined~~ | ✅ Fixed — `model.to(device)` after device determination |
-| ~~Broken imports~~ | ~~`pygv/config/__init__.py:4`~~ | ~~Imports `MetaConfig`, `ML3Config` which are commented out in `base_config.py`~~ | ✅ Fixed — configs properly defined and imported |
-| ~~Missing preset files~~ | ~~`pygv/config/presets/`~~ | ~~`medium.py` and `large.py` imported but don't exist~~ | ✅ Fixed — `small.py`, `medium.py`, `large.py` all exist with 16 presets |
+| Issue | Location | Description |
+|-------|----------|-------------|
+| One-hot node features | `vampnet_dataset.py` | N×N matrix for N atoms; learned embeddings exist but had issues |
+| NaN masking | `vampnet.py` | NaN outputs replaced with zeros instead of fixing root cause |
+| Batch size sensitivity | `vamp_score_v0.py` | VAMP score varies with batch composition |
+| BatchNorm single-sample | training pipeline | `drop_last=True` not set in DataLoader; last batch can have 1 sample |
 
-### Medium Priority (Code Quality)
+### Low Priority
 
-| Issue | Location | Description | Suggested Fix |
-|-------|----------|-------------|---------------|
-| ~~Dual dataset files~~ | ~~`vampnet_dataset.py`, `vampnet_dataset_with_AA.py`~~ | ~~Two nearly identical files~~ | ✅ Consolidated: old files moved to `legacy/`, unified `vampnet_dataset.py` with `use_amino_acid_encoding` flag |
-| One-hot node features | `vampnet_dataset.py` | Creates N×N matrix for N atoms (memory inefficient) | Learned embeddings exist but had issues; document tradeoffs |
-| ~~Magic numbers~~ | ~~Various~~ | ~~Epsilon values, thresholds hardcoded~~ | ✅ Fixed — `vamp_epsilon`, `training_jitter`, `edge_norm_eps` added to `BaseConfig` and wired through pipeline |
-| NaN masking | `vampnet.py` | NaN outputs replaced with zeros | Fix root cause of NaN generation |
-| ~~Commented code~~ | ~~`analysis.py:266-272`~~ | ~~TODO comment with dead code~~ | ✅ Cleaned up |
-| Batch size sensitivity | `vamp_score_v0.py` | VAMP score varies with batch composition | Document limitation or implement batch-invariant version |
-
-### Low Priority (Improvements)
-
-| Issue | Location | Description | Suggested Fix |
-|-------|----------|-------------|---------------|
-| ~~WIP configs~~ | ~~`base_config.py:135-169`~~ | ~~MetaConfig and ML3Config commented out~~ | ✅ Fixed — both live in `pygv/config/model_configs/` and import correctly |
-| ~~Empty viz module~~ | ~~`viz/`~~ | ~~Directory exists but is empty~~ | ✅ Resolved — `viz/` removed; visualization lives in `pygv/visualization/` with `MDTrajectoryVisualizer` |
-| Inconsistent naming | Various | Mix of `n_states` and `n_states_list` | Compatibility pattern: `master_pipeline.py` checks for `n_states_list`, falls back to `[n_states]` |
-| Redundant analysis | `training.py` | Pre-analysis duplicates analysis phase | Intentional: training does quick CK/ITS validation, analysis does comprehensive output |
-| Type hints | Various | Incomplete type annotations | Add comprehensive type hints |
-
-### Pre-Analysis Duplication Details
-
-**Location of duplication:**
-
-In `training.py:373-438` (after training completes):
-```python
-# Line 375-382: analyze_vampnet_outputs()
-# Line 418-426: run_ck_analysis()
-# Line 430-437: analyze_implied_timescales()
-```
-
-In `analysis.py:212-326` (Analysis phase):
-```python
-# Line 212-218: analyze_vampnet_outputs()
-# Line 223-228: plot_transition_probabilities()
-# Plus all attention/structure analysis (lines 230-326)
-```
-
-**Decision needed:** Should training.py do quick validation (CK/ITS only) while analysis.py does comprehensive output? Or consolidate all analysis to one location?
-
-### Planned Features (Not Yet Implemented)
-
-| Feature | Description | Priority |
-|---------|-------------|----------|
-| ~~Non-continuous trajectories~~ | ~~Add `continuous` flag to handle trajectories that aren't continuous.~~ | ✅ Done - `continuous` parameter in `vampnet_dataset.py` and `BaseConfig` |
-| ~~Automatic n_states selection~~ | ~~Find correct/comparable number of states for each timescale~~ | ✅ Done - `state_diagnostics.py` with eigenvalue gap, population, JSD analysis |
-| ~~Comparable state counts~~ | ~~Ensure consistent state definitions across different lag times~~ | ✅ Done - `recommend_state_reduction()` integrated in `analysis.py` |
-| ~~Dataset encoding flag~~ | ~~Clean up dual dataset system (one-hot vs amino acid encoding).~~ | ✅ Done - unified `vampnet_dataset.py` with `use_amino_acid_encoding` parameter |
-| ~~Complete preset system~~ | ~~Add missing preset files and configs~~ | ✅ Done - `small.py`, `medium.py`, `large.py` with all 4 encoder variants (16 presets) |
-| ~~ML3 pipeline integration~~ | ~~Integrate working ML3 encoder into training pipeline~~ | ✅ Done — rewritten as `ML3Encoder` with parallel attention, spectral mode, 30 tests (encoder + equivalence) |
-| ~~HTML report generation~~ | ~~Combine all analysis outputs into single HTML file for sharing~~ | ✅ Done - `MDTrajectoryVisualizer` with Three.js interactive viewer |
-| ~~Unit test cleanup~~ | ~~Existing tests need cleanup and CI integration~~ | ✅ Done — legacy test snippets deleted, 398+ tests passing |
-
-### Architecture Considerations
-
-| Issue | Description | Suggested Approach |
-|-------|-------------|-------------------|
-| Encoder abstraction | No common base class for encoders | Create `BaseEncoder` abstract class |
-| Config validation | No schema validation for configs | Add Pydantic or dataclass validation |
-| Logging | Print statements instead of proper logging | Replace with `logging` module |
-| Progress tracking | Manual print statements | Use unified progress tracking |
+| Issue | Location | Description |
+|-------|----------|-------------|
+| Inconsistent naming | Various | Mix of `n_states` and `n_states_list` (compatibility pattern in master_pipeline) |
+| Pre-analysis duplication | `training.py` | Quick CK/ITS after training duplicates analysis phase (intentional: validation vs comprehensive) |
+| Type hints | Various | Incomplete type annotations |
+| Logging | Various | Print statements instead of `logging` module |
+| Encoder abstraction | Various | No common `BaseEncoder` abstract class |
 
 ---
 
-## Recommended Priority Order
+## Completed Items
 
-1. ~~**Week 1**: Fix high-priority technical debt (especially CUDA hardcoding)~~ ✅ All 6 items fixed
-2. ~~**Next**: Run and validate end-to-end pipeline on test data (1.1)~~ ✅ 7 integration tests passing (SchNet/GIN/ML3, .xtc/.dcd)
-3. **Next**: Multi-lag pipeline edge cases (1.4)
-4. **Ongoing**: Gradient flow & numerical stability (2.2), CI/CD (2.3)
-5. **Future**: Documentation (4.1), cross-validation & ensemble (3.4)
+<details>
+<summary>Click to expand completed work</summary>
+
+### Critical Path (Phase 1)
+- End-to-end pipeline validated with automated integration tests (SchNet+XTC, GIN+DCD, ML3+XTC)
+- VAMP score validated against NumPy reference (25 tests: covariances, Koopman, VAMP1/2/E)
+- All high-priority tech debt fixed (CUDA hardcoding, broken imports, None encoder, device inconsistency, missing presets)
+
+### Features
+- ML3 encoder rewritten with SpectConvWithAttention, parallel attention, spectral/gaussian edge modes
+- GIN encoder with parallel attention preserving WL expressiveness
+- Non-continuous trajectory support with boundary tracking
+- Automatic n_states selection (eigenvalue gap, population, JSD analysis)
+- Interactive HTML report generation (Three.js)
+- Complete preset system (small/medium/large × 4 encoder types)
+- CLI: --dry_run, --resume, --validate_only, --skip_preparation
+
+### Code Quality
+- Hardcoded epsilon values moved to BaseConfig (`vamp_epsilon`, `training_jitter`, `edge_norm_eps`)
+- Repository cleanup (legacy code, dead functions, build artifacts, duplicate datasets)
+- 504+ unit tests, 7 integration tests
+- Unused imports removed, empty files cleaned up
+
+</details>
 
 ---
 
-## Design Decisions (Resolved)
+## Design Decisions
 
-These questions have been clarified:
-
-| Question | Decision |
-|----------|----------|
-| **Graph Bidirectionality** | Asymmetric k-NN graphs are **intentional** - edges should NOT automatically be bidirectional |
-| **Node Features** | One-hot encoding is the starting point; learned embeddings had issues previously |
-| **Multiple Lag Times** | Always train the **full grid** - behavior on different timescales is important |
-| **Encoder Priority** | **ML3** has priority (already working independently, needs pipeline integration) |
+| Decision | Rationale |
+|----------|-----------|
+| Asymmetric k-NN graphs | Intentional — edges are directional |
+| One-hot node features | Learned embeddings had issues; one-hot is the starting point |
+| Full lag×states grid | Behavior on different timescales is important |
+| Parallel attention | Additive pathway preserves WL expressiveness (paper-worthy) |
+| Pre-analysis duplication | Training does quick validation; analysis does comprehensive output |
 
 ## Open Questions
 
-1. **Validation Strategy**: Should CK test and ITS analysis run during training (current) or only in analysis phase? (See Pre-Analysis Duplication Details above)
-
-2. **Memory Constraints**: For large trajectories, should the pipeline support streaming/chunked processing?
-
-### n_states Selection Methods — ✅ Implemented
-
-Implemented in `pygv/utils/state_diagnostics.py` with three approaches:
-- **Eigenvalue gap analysis** (`eigenvalue_gap_suggestion`) — standard MSM approach
-- **Population-based analysis** (`underpopulated_states`) — detects sparse states
-- **JSD merge group detection** (`merge_groups`) — identifies redundant states
-
-Integrated in `analysis.py` via `recommend_state_reduction()` with confidence scoring.
+1. **Memory constraints**: For large trajectories, should the pipeline support streaming/chunked processing?
+2. **Validation strategy**: Should CK/ITS run during training (current) or only in analysis phase?
 
 ---
 
-## File Reference
-
-Key files for understanding the pipeline:
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `pygv/pipe/master_pipeline.py` | 431 | Pipeline orchestration |
-| `pygv/pipe/preparation.py` | 197 | Data preparation |
-| `pygv/pipe/training.py` | 449 | Model training |
-| `pygv/pipe/analysis.py` | 352 | Post-training analysis |
-| `pygv/dataset/vampnet_dataset.py` | 810 | MD trajectory → PyG graphs (unified with AA encoding & continuous flag) |
-| `pygv/vampnet/vampnet.py` | 1184 | VAMPNet model |
-| `pygv/scores/vamp_score_v0.py` | 341 | VAMP loss calculation |
-| `pygv/encoder/schnet_wo_embed_v2.py` | 300+ | SchNet encoder |
-| `pygv/encoder/ml3.py` | ~350 | ML3Encoder with SpectConvWithAttention, parallel attention, spectral/gaussian modes |
-| `pygv/encoder/meta_att.py` | - | Meta encoder |
-| `pygv/config/base_config.py` | 169 | Configuration classes |
-| `pygv/config/__init__.py` | 99 | Config registry and presets |
-| `pygv/config/presets/small.py` | 45 | Small preset configurations |
-| `pygv/utils/plotting.py` | 2133 | Visualization utilities |
-| `run_pipeline.py` | 12 | Entry point |
-
----
-
-*Generated: 2025-12-31*
+*Last updated: 2026-04-07*

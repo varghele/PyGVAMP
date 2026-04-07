@@ -1,38 +1,4 @@
-# PyGVAMP Codebase Summary & Claude Context Primer
-
-## Quick Reference Prompt for Claude
-
-Copy and paste this prompt at the start of a new Claude session:
-
----
-
-**START PROMPT:**
-
-```
-I'm working on PyGVAMP, a PyTorch Geometric implementation of GraphVAMPNets for molecular dynamics analysis. Please read these files to understand the codebase:
-
-1. /home/iwe81/PycharmProjects/PyGVAMP/CODEBASE_SUMMARY.md (this file)
-2. /home/iwe81/PycharmProjects/PyGVAMP/PIPELINE_ROADMAP.md (technical debt & roadmap)
-
-Key context:
-- PyGVAMP converts MD trajectories (.xtc/.dcd + .pdb topology) into k-NN graphs
-- Trains VAMPNet models to learn slow collective variables via VAMP score optimization
-- 3-phase pipeline: Preparation → Training → Analysis
-- Main package: pygv/ (production code)
-- Visualization: pygviz/ (new interactive HTML visualizer)
-- Testing areas: area51_testing_grounds/, area52/, testdata/
-
-Current state (as of last session):
-- Core pipeline is functional (training, analysis work)
-- Known issues: hardcoded CUDA in training.py:268, ML3 encoder not integrated
-- Technical debt documented in PIPELINE_ROADMAP.md
-
-[Add your specific task here]
-```
-
-**END PROMPT**
-
----
+# PyGVAMP Codebase Summary
 
 ## Project Overview
 
@@ -55,53 +21,41 @@ Current state (as of last session):
 
 ```
 PyGVAMP/
-├── pygv/                     # MAIN PACKAGE - Production pipeline
-│   ├── pipe/                 # Pipeline orchestration
-│   │   ├── master_pipeline.py    # Entry point (431 lines)
-│   │   ├── preparation.py        # Phase 1: Data prep
-│   │   ├── training.py           # Phase 2: Model training
-│   │   └── analysis.py           # Phase 3: Post-analysis
-│   ├── dataset/              # Data handling
-│   │   ├── vampnet_dataset.py    # Unified: MD→PyG graphs with optional AA encoding
-│   │   └── legacy/               # Old dataset variants (deprecated)
-│   ├── vampnet/              # Model architecture
-│   │   └── vampnet.py            # VAMPNet model (1184 lines)
-│   ├── encoder/              # Message-passing encoders
-│   │   ├── schnet_wo_embed_v2.py # SchNet (DEFAULT)
-│   │   ├── ml3.py                # ML3 (working, needs integration)
-│   │   ├── meta_att.py           # Meta with attention
-│   │   └── gat.py                # GAT-based
-│   ├── classifier/           # State classification
-│   │   └── SoftmaxMLP.py
-│   ├── scores/               # VAMP loss calculation
-│   │   └── vamp_score_v0.py      # VAMP1/2/E/CE (341 lines)
-│   ├── config/               # Configuration management
-│   │   ├── base_config.py        # BaseConfig dataclass
-│   │   └── presets/small.py
-│   ├── args/                 # CLI argument parsing
-│   └── utils/                # Utilities
-│       ├── plotting.py           # Visualization (2133 lines!)
-│       ├── analysis.py           # Analysis utils (1048 lines)
-│       ├── ck.py                 # Chapman-Kolmogorov tests
-│       └── its.py                # Implied timescales
+├── pygv/                        # Main package
+│   ├── pipe/                    # Pipeline orchestration
+│   │   ├── master_pipeline.py   # Entry point, 3-phase orchestration
+│   │   ├── preparation.py       # Phase 1: Data preparation
+│   │   ├── training.py          # Phase 2: Model training
+│   │   ├── analysis.py          # Phase 3: Post-training analysis
+│   │   └── args.py              # Pipeline CLI argument parsing
+│   ├── dataset/
+│   │   └── vampnet_dataset.py   # MD→PyG graphs (k-NN, Gaussian expansion, time-lagged pairs, caching)
+│   ├── vampnet/
+│   │   └── vampnet.py           # VAMPNet model (Embedding → Encoder → Classifier → Softmax)
+│   ├── encoder/                 # Message-passing encoders
+│   │   ├── schnet.py            # SchNet (default) — continuous-filter convolutions
+│   │   ├── gin.py               # GIN — parallel attention preserving WL expressiveness
+│   │   ├── ml3.py               # ML3 — spectral convolutions with 3-WL expressivity
+│   │   ├── meta.py              # Meta (experimental)
+│   │   ├── meta_att.py          # Meta with attention (experimental)
+│   │   └── gat.py               # GAT-based (experimental)
+│   ├── classifier/
+│   │   └── SoftmaxMLP.py        # State classification (embedding → probabilities)
+│   ├── scores/
+│   │   └── vamp_score_v0.py     # VAMP1/VAMP2/VAMPE/VAMPCE loss functions
+│   ├── config/
+│   │   ├── base_config.py       # BaseConfig dataclass (all shared parameters)
+│   │   ├── model_configs/       # SchNetConfig, GINConfig, ML3Config, MetaConfig
+│   │   └── presets/             # Small/Medium/Large presets for all encoder types
+│   ├── args/                    # CLI argument definitions
+│   ├── clustering/              # Graph2Vec + state discovery
+│   ├── utils/                   # Utilities (plotting, analysis, CK, ITS, state diagnostics)
+│   └── visualization/           # Interactive HTML visualizer (Three.js)
 │
-├── pygviz/                   # NEW - Interactive visualization
-│   └── md_visualizer/        # Web-based 3D visualizer
-│       ├── visualizer.py         # MDTrajectoryVisualizer class
-│       ├── data_handler.py       # Data validation
-│       └── templates/            # HTML/JS/CSS assets
-│
-├── area51_testing_grounds/   # Graph2vec experiments
-├── area52/                   # User-friendly training scripts
-│   ├── train.py                  # Simple training entry
-│   └── anly.py                   # Simple analysis entry
-├── cluster_scripts/          # SLURM cluster scripts
-├── testdata/                 # Test/debug scripts (50+ files)
-│
-├── run_pipeline.py           # Main entry point
-├── PIPELINE_ROADMAP.md       # Technical debt & roadmap
-├── README.md                 # Installation & usage
-└── requirements.txt          # Dependencies
+├── tests/                       # 504+ unit tests, 7 integration tests
+├── cluster_scripts/             # SLURM job scripts
+├── run_pipeline.py              # Entry point
+└── PIPELINE_ROADMAP.md          # Roadmap, status, remaining work
 ```
 
 ---
@@ -110,127 +64,80 @@ PyGVAMP/
 
 ### 1. VAMPNetDataset (`pygv/dataset/vampnet_dataset.py`)
 Converts MD trajectories to PyTorch Geometric graphs:
-- Loads frames with MDTraj
-- Builds k-NN graphs for each frame
+- Loads frames with MDTraj, applies atom selection and stride
+- Builds asymmetric k-NN graphs per frame
 - Gaussian expansion of edge distances
-- Creates time-lagged pairs (t=0, t=lag)
+- Creates time-lagged pairs (t=0, t=lag) with continuous/non-continuous modes
 - Hash-based caching for reuse
 
 ### 2. VAMPNet Model (`pygv/vampnet/vampnet.py`)
-Neural network architecture:
 ```
-Input Graph → [Embedding MLP] → Encoder (SchNet/Meta/ML3) → Classifier → Softmax → State Probabilities
+Input Graph → [Embedding MLP] → Encoder (SchNet/GIN/ML3) → Classifier (SoftmaxMLP) → State Probabilities
 ```
 
-### 3. VAMP Score (`pygv/scores/vamp_score_v0.py`)
-Loss function that maximizes VAMP-2 score:
+### 3. Encoders
+| Encoder | File | Status | Key Feature |
+|---------|------|--------|-------------|
+| SchNet | `schnet.py` | Production | Continuous-filter convolutions with attention |
+| GIN | `gin.py` | Production | Parallel attention preserving 1-WL expressiveness |
+| ML3 | `ml3.py` | Production | Spectral convolutions, 3-WL expressivity, gaussian/spectral edge modes |
+| Meta | `meta.py` | Experimental | Graph meta-learning |
+
+### 4. VAMP Score (`pygv/scores/vamp_score_v0.py`)
 ```
 C₀₀ = E[χ(t)ᵀ χ(t)]           # instantaneous covariance
 C₀ₜ = E[χ(t)ᵀ χ(t+τ)]         # cross-covariance
-VAMP-2 = ||C₀₀^(-1/2) C₀ₜ Cₜₜ^(-1/2)||²_F + 1
+VAMP-2 = ‖C₀₀^{-1/2} C₀ₜ Cₜₜ^{-1/2}‖²_F + 1
 ```
 
-### 4. Pipeline Phases
+### 5. Pipeline Phases
 1. **Preparation** (`preparation.py`): Load trajectories → Convert to graphs → Cache
 2. **Training** (`training.py`): Grid search over lag times × n_states → Train → Save best
-3. **Analysis** (`analysis.py`): Inference → States → Transitions → Attention → Plots
+3. **Analysis** (`analysis.py`): Inference → States → Transitions → Attention → Structures → Plots
 
 ---
 
-## Configuration (BaseConfig)
+## Configuration
 
-Key parameters in `pygv/config/base_config.py`:
+All configuration lives in `pygv/config/base_config.py` (shared params) and `pygv/config/model_configs/` (encoder-specific). Key groups:
 
-```python
-# Data
-traj_dir, top, file_pattern     # Input files
-selection, stride, lag_time     # Processing
-
-# Graph
-n_neighbors, gaussian_expansion_dim
-
-# Model
-encoder_type: "schnet" | "meta" | "ml3"
-n_states: int                   # Number of output states
-
-# Training
-epochs, batch_size, lr, weight_decay
-```
+- **Data**: `traj_dir`, `top`, `file_pattern`, `selection`, `stride`, `lag_time`, `continuous`
+- **Graph**: `n_neighbors`, `gaussian_expansion_dim`
+- **Model**: `encoder_type`, `n_states`
+- **Training**: `epochs`, `batch_size`, `lr`, `weight_decay`, `clip_grad`
+- **Numerical stability**: `vamp_epsilon`, `training_jitter`, `edge_norm_eps`
+- **Embedding/Classifier**: `use_embedding`, `clf_hidden_dim`, `clf_num_layers`, etc.
 
 ---
 
 ## Entry Points
 
 ```bash
-# Full pipeline
-python run_pipeline.py --protein_name ATR --traj_dir ~/data --top ~/data/prot.pdb --lag_time 20 --n_states 5
+# Full pipeline (recommended)
+python run_pipeline.py --traj_dir /path/to/trajectories --top /path/to/topology.pdb \
+    --preset medium_schnet --lag_times 10 20 50 --n_states 3 5 7
 
-# Training only (modify create_test_args() first)
-python area52/train.py
+# Dry run (preview config without executing)
+python run_pipeline.py ... --dry_run
 
-# Analysis only (set base_output_dir first)
-python area52/anly.py
+# Resume from existing experiment
+python run_pipeline.py ... --resume /path/to/experiment
 
-# SLURM cluster
-sbatch cluster_scripts/atr.sh
+# Validate configuration only
+python run_pipeline.py ... --validate_only
 ```
 
 ---
 
-## Known Issues (High Priority)
+## Design Decisions
 
-| Issue | Location | Description |
-|-------|----------|-------------|
-| Hardcoded CUDA | `training.py:268` | Uses `model.to('cuda')` instead of device variable |
-| Unused import | `training.py:10` | `from pymol.querying import distance` never used |
-| ML3 not integrated | `training.py:194` | Returns `None` for ML3 encoder |
-| Broken imports | `config/__init__.py:4` | Imports MetaConfig/ML3Config which are commented out |
-| Missing presets | `config/presets/` | `medium.py`, `large.py` don't exist |
-
----
-
-## Planned Features
-
-1. **Non-continuous trajectories**: Handle trajectory boundaries correctly
-2. **Automatic n_states selection**: Via eigenvalue gap or ITS plateau counting
-3. **ML3 encoder integration**: Working code exists in `pygv/encoder/ml3.py`
-4. **HTML report generation**: Interactive analysis reports
-5. **Complete Meta/ML3 configs**: Currently commented out
+| Decision | Rationale |
+|----------|-----------|
+| Asymmetric k-NN graphs | Intentional — edges are directional |
+| One-hot node features | Learned embeddings had issues; one-hot is the starting point |
+| Full lag_time × n_states grid | Behavior on different timescales matters |
+| Parallel attention (GIN/ML3) | Additive pathway preserves WL expressiveness while adding learned re-weighting |
 
 ---
 
-## File Line Counts (Key Files)
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `vampnet.py` | 1184 | Full VAMPNet model |
-| `vampnet_dataset.py` | 810 | Unified dataset with AA encoding & continuous flag |
-| `plotting.py` | 2133 | All visualizations |
-| `analysis.py` (utils) | 1048 | Analysis utilities |
-| `master_pipeline.py` | 431 | Pipeline orchestration |
-| `training.py` | 449 | Training loop |
-| `vamp_score_v0.py` | 341 | VAMP loss |
-
----
-
-## Design Decisions (Resolved)
-
-| Question | Decision |
-|----------|----------|
-| Graph Bidirectionality | Asymmetric k-NN graphs are **intentional** |
-| Node Features | One-hot encoding (learned embeddings had issues) |
-| Multiple Lag Times | Always train **full grid** |
-| Encoder Priority | **ML3** has priority (needs integration) |
-
----
-
-## Development Workflow
-
-1. **Fix bugs**: Address PIPELINE_ROADMAP.md high-priority issues first
-2. **Test**: Run `python run_pipeline.py` with test data to verify
-3. **Develop**: Add features incrementally, test each
-4. **Document**: Update this file and PIPELINE_ROADMAP.md as changes are made
-
----
-
-*Last updated: 2026-01-15*
+*Last updated: 2026-04-07*
