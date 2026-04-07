@@ -29,6 +29,7 @@ from pygv.vampnet import VAMPNet
 from pygv.encoder.schnet import SchNetEncoderNoEmbed
 from pygv.encoder.meta_att import Meta
 from pygv.encoder.gin import GINEncoder
+from pygv.encoder.ml3 import ML3Encoder
 
 from pygv.scores.vamp_score_v0 import VAMPScore
 from pygv.classifier.SoftmaxMLP import SoftmaxMLP
@@ -204,16 +205,21 @@ def create_model(args):
             use_attention=args.use_attention
         )
     elif args.encoder_type.lower() == 'ml3':
-        encoder = None
-        #TODO: IMPLEMENT
-        """encoder = ML3Encoder(
+        encoder = ML3Encoder(
             node_dim=args.ml3_node_dim,
             edge_dim=args.ml3_edge_dim,
             hidden_dim=args.ml3_hidden_dim,
             output_dim=args.ml3_output_dim,
             num_layers=args.ml3_num_layers,
-            activation=args.ml3_activation
-        )"""
+            activation=args.ml3_activation,
+            use_attention=args.ml3_use_attention,
+            edge_mode=args.ml3_edge_mode,
+            nfreq=args.ml3_nfreq,
+            spectral_dv=args.ml3_spectral_dv,
+            recfield=args.ml3_recfield,
+            nout1=args.ml3_nout1,
+            nout2=args.ml3_nout2,
+        )
     else:
         raise ValueError(f"Unsupported encoder type: {args.encoder_type}. "
                          f"Choose from 'schnet', 'meta', 'gin', or 'ml3'.")
@@ -245,6 +251,16 @@ def create_model(args):
         elif args.encoder_type == 'meta':
             classifier = SoftmaxMLP(
                 in_channels=args.meta_output_dim,
+                hidden_channels=args.clf_hidden_dim,
+                out_channels=args.n_states,
+                num_layers=args.clf_num_layers,
+                dropout=args.clf_dropout,
+                act=args.clf_activation,
+                norm=args.clf_norm
+            )
+        elif args.encoder_type == 'ml3':
+            classifier = SoftmaxMLP(
+                in_channels=args.ml3_output_dim,
                 hidden_channels=args.clf_hidden_dim,
                 out_channels=args.n_states,
                 num_layers=args.clf_num_layers,

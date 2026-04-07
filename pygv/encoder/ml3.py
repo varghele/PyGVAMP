@@ -1,38 +1,21 @@
 import torch
-from torch.nn import Parameter
-from torch_geometric.nn.conv import MessagePassing
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import global_add_pool
 import math
-from torch_geometric.nn import MLP
-from typing import Optional, Union, Callable, Literal, List
+import numpy as np
+from torch.nn import Parameter
+from torch_geometric.nn import MLP, global_add_pool
+from torch_geometric.utils import softmax
+from pygv.utils.alternative_torch_scatter import scatter_add
 
 
 def glorot(tensor):
-    """
-    Glorot (Xavier) initialization for weights.
-
-    Initializes the input tensor with values using a uniform distribution
-    scaled according to the fan-in and fan-out of the tensor.
-
-    Args:
-        tensor (torch.Tensor): The tensor to initialize
-    """
     if tensor is not None:
         stdv = math.sqrt(6.0 / (tensor.size(-2) + tensor.size(-1)))
         tensor.data.uniform_(-stdv, stdv)
 
 
 def zeros(tensor):
-    """
-    Zero initialization for bias terms.
-
-    Fills the input tensor with zeros.
-
-    Args:
-        tensor (torch.Tensor): The tensor to initialize
-    """
     if tensor is not None:
         tensor.data.fill_(0)
 
@@ -43,371 +26,448 @@ def init_weights(m):
         m.bias.data.fill_(0.01)
 
 
-class SpectConv(MessagePassing):
+class SpectralDesign:
     """
-    Spectral Convolution layer for Graph Neural Networks.
+    Computes spectral edge features via Laplacian eigendecomposition.
 
-    This layer implements spectral graph convolution using edge attributes as the
-    spectral coefficients. It supports depthwise separable convolutions and self-connections.
+    For each graph in the batch, computes Gaussian spectral filters from
+    the normalized Laplacian eigenvalues/eigenvectors, then extracts
+    per-edge features.
+    """
+
+    def __init__(self, nfreq=10, dv=1.0, recfield=1):
+        self.nfreq = nfreq
+        self.dv = dv
+        self.recfield = recfield
+
+    def compute(self, edge_index, batch, num_nodes, device):
+        """
+        Compute spectral edge features for all graphs in the batch.
+
+        Returns: [total_edges, nfreq + 1] tensor of edge features.
+        """
+        src, dst = edge_index
+        # Determine graph membership for each node
+        if batch is None:
+            batch = torch.zeros(num_nodes, dtype=torch.long, device=device)
+
+        graph_ids = torch.unique(batch)
+        all_edge_features = torch.zeros(edge_index.size(1), self.nfreq + 1, device=device)
+
+        for gid in graph_ids:
+            node_mask = batch == gid
+            node_indices = torch.where(node_mask)[0]
+            n = node_indices.size(0)
+
+            # Find edges belonging to this graph
+            edge_mask = node_mask[src] & node_mask[dst]
+            graph_edge_indices = torch.where(edge_mask)[0]
+
+            if n == 0 or graph_edge_indices.size(0) == 0:
+                continue
+
+            # Map global node indices to local
+            local_map = torch.zeros(num_nodes, dtype=torch.long, device=device)
+            local_map[node_indices] = torch.arange(n, device=device)
+            local_src = local_map[src[edge_mask]]
+            local_dst = local_map[dst[edge_mask]]
+
+            # Build adjacency matrix
+            A = torch.zeros(n, n, device=device)
+            A[local_src, local_dst] = 1.0
+
+            # Normalized Laplacian: L = I - D^{-1/2} A D^{-1/2}
+            deg = A.sum(dim=1)
+            deg_inv_sqrt = torch.zeros_like(deg)
+            mask = deg > 0
+            deg_inv_sqrt[mask] = deg[mask].pow(-0.5)
+            D_inv_sqrt = torch.diag(deg_inv_sqrt)
+            L = torch.eye(n, device=device) - D_inv_sqrt @ A @ D_inv_sqrt
+
+            # Eigendecomposition
+            try:
+                eigenvalues, eigenvectors = torch.linalg.eigh(L)
+            except Exception:
+                # Fallback: use identity features
+                all_edge_features[graph_edge_indices, -1] = 1.0
+                continue
+
+            # Create nfreq Gaussian filters
+            # Centers evenly spaced in [0, 2] (eigenvalues of normalized Laplacian are in [0, 2])
+            centers = torch.linspace(0, 2, self.nfreq, device=device)
+
+            # Receptive field mask: M = (A + I)^recfield, binarized
+            M = A + torch.eye(n, device=device)
+            for _ in range(self.recfield - 1):
+                M = M @ (A + torch.eye(n, device=device))
+            M = (M > 0).float()
+
+            for k in range(self.nfreq):
+                # Gaussian filter in spectral domain
+                g_k = torch.exp(-self.dv * (eigenvalues - centers[k]) ** 2)
+                # Apply filter: F_k = U @ diag(g_k) @ U^T
+                F_k = eigenvectors @ torch.diag(g_k) @ eigenvectors.T
+                # Apply receptive field mask
+                F_k = F_k * M
+                # Extract edge features
+                all_edge_features[graph_edge_indices, k] = F_k[local_src, local_dst]
+
+            # Identity channel (self-connection indicator)
+            identity = torch.eye(n, device=device)
+            all_edge_features[graph_edge_indices, -1] = identity[local_src, local_dst]
+
+        return all_edge_features
+
+
+class SpectConvWithAttention(nn.Module):
+    """
+    Spectral convolution with parallel attention aggregation.
+
+    Drops MessagePassing in favor of explicit scatter_add with dual
+    aggregation per spectral coefficient:
+    - Sum branch: preserves 3-WL expressiveness (identical to original SpectConv)
+    - Attention branch: adds learned per-neighbor re-weighting
 
     Args:
-        in_channels (int): Size of each input sample
-        out_channels (int): Size of each output sample
-        K (int): Number of spectral coefficients (default: 1)
-        selfconn (bool): Whether to include self-connections (default: True)
-        depthwise (bool): Whether to use depthwise separable convolution (default: False)
-        bias (bool): If set to False, the layer will not learn an additive bias (default: True)
-        **kwargs: Additional arguments for the MessagePassing base class
+        in_channels: Input feature dimension
+        out_channels: Output feature dimension
+        K: Number of spectral coefficients
+        selfconn: Whether to use self-connection (last weight)
+        use_attention: Whether to add parallel attention branch
+        bias: Whether to use bias
     """
 
     def __init__(self, in_channels, out_channels, K=1, selfconn=True,
-                 depthwise=False, bias=True, **kwargs):
-        kwargs.setdefault('aggr', 'add')
-        super(SpectConv, self).__init__(**kwargs)
-
-        assert K > 0, "Number of spectral coefficients must be positive"
+                 use_attention=True, bias=True):
+        super().__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.depthwise = depthwise
         self.selfconn = selfconn
+        self.use_attention = use_attention
+        self.K_spectral = K  # number of spectral coefficients (before self-conn)
 
-        # Adjust K if self-connection is used
-        if self.selfconn:
-            K = K + 1
+        total_K = K + 1 if selfconn else K
+        self.weight = Parameter(torch.Tensor(total_K, in_channels, out_channels))
 
-        # Set up weights based on convolution type
-        if self.depthwise:
-            self.DSweight = Parameter(torch.Tensor(K, in_channels))
-            self.nsup = K
-            K = 1
-
-        # Main filter weights
-        self.weight = Parameter(torch.Tensor(K, in_channels, out_channels))
-
-        # Optional bias
         if bias:
             self.bias = Parameter(torch.Tensor(out_channels))
         else:
             self.register_parameter('bias', None)
 
+        if use_attention:
+            self.attention_vector = Parameter(torch.Tensor(in_channels, 1))
+            nn.init.xavier_uniform_(self.attention_vector, gain=1.414)
+
         self.reset_parameters()
 
     def reset_parameters(self):
-        """Initialize weights using Glorot initialization and set biases to zero."""
         glorot(self.weight)
-        if hasattr(self, 'bias') and self.bias is not None:
-            zeros(self.bias)
-        if self.depthwise:
-            zeros(self.DSweight)
-
-    def forward(self, x, edge_index, edge_attr, edge_weight=None,
-                batch=None, lambda_max=None):
-        """
-        Forward pass of the spectral convolution layer.
-
-        Args:
-            x (Tensor): Node feature matrix
-            edge_index (LongTensor): Graph connectivity in COO format with shape [2, num_edges]
-            edge_attr (Tensor): Edge feature matrix with shape [num_edges, K]
-            edge_weight (OptTensor, optional): One-dimensional edge weight tensor
-            batch (OptTensor, optional): Batch vector
-            lambda_max (OptTensor, optional): Largest eigenvalue for each graph
-
-        Returns:
-            Tensor: Updated node features
-        """
-        Tx_0 = x
-        out = 0
-
-        if not self.depthwise:
-            end_itr = self.weight.size(0)
-
-            # Handle self-connection if enabled
-            if self.selfconn:
-                out = torch.matmul(Tx_0, self.weight[-1])
-                end_itr -= 1
-
-                # Process each spectral coefficient
-            for i in range(0, end_itr):
-                h = self.propagate(edge_index, x=Tx_0, norm=edge_attr[:, i], size=None)
-                out = out + torch.matmul(h, self.weight[i])
-        else:
-            # Depthwise separable convolution path
-            end_itr = self.nsup
-
-            # Handle self-connection if enabled
-            if self.selfconn:
-                out = Tx_0 * self.DSweight[-1]
-                end_itr -= 1
-
-                # First coefficient has special handling
-            out = out + (1 + self.DSweight[0:1, :]) * self.propagate(
-                edge_index, x=Tx_0, norm=edge_attr[:, 0], size=None)
-
-            # Process remaining coefficients
-            for i in range(1, end_itr):
-                out = out + self.DSweight[i:i + 1, :] * self.propagate(
-                    edge_index, x=Tx_0, norm=edge_attr[:, i], size=None)
-
-            # Final projection
-            out = torch.matmul(out, self.weight[0])
-
-            # Add bias if enabled
         if self.bias is not None:
-            out += self.bias
+            zeros(self.bias)
 
-        return out
-
-    def message(self, x_j, norm):
+    def forward(self, x, edge_index, edge_attr):
         """
-        Message function that defines how node features are aggregated.
-
         Args:
-            x_j (Tensor): Node features of neighbors
-            norm (Tensor): Normalization/weight for the edges
+            x: [n_nodes, in_channels]
+            edge_index: [2, n_edges]
+            edge_attr: [n_edges, K_spectral]
 
         Returns:
-            Tensor: The message passed along each edge
+            out: [n_nodes, out_channels]
+            att_scores: [n_edges] or None
         """
-        return norm.view(-1, 1) * x_j
+        src, dst = edge_index
+        n_nodes = x.size(0)
+        K = self.K_spectral
 
-    def __repr__(self):
-        """String representation of the layer."""
-        return '{}({}, {}, K={})'.format(
-            self.__class__.__name__, self.in_channels, self.out_channels,
-            self.weight.size(0))
+        sum_out = torch.zeros(n_nodes, self.out_channels, device=x.device, dtype=x.dtype)
+
+        # Self-connection (last weight)
+        if self.selfconn:
+            sum_out = sum_out + torch.matmul(x, self.weight[-1])
+
+        # Collect messages across all K spectral coefficients
+        all_msg = [] if self.use_attention else None
+
+        for k in range(K):
+            # spectral-weighted neighbor features
+            msg_k = edge_attr[:, k].view(-1, 1) * x[src]  # [n_edges, in_channels]
+            sum_agg_k = scatter_add(msg_k, dst, dim=0, dim_size=n_nodes)
+            sum_out = sum_out + torch.matmul(sum_agg_k, self.weight[k])
+            if self.use_attention:
+                all_msg.append(msg_k)
+
+        att_scores = None
+        if self.use_attention and len(all_msg) > 0:
+            # Single attention score per edge (averaged across K coefficients)
+            pooled_msg = torch.stack(all_msg).mean(dim=0)  # [n_edges, in_channels]
+            raw_att = torch.matmul(pooled_msg, self.attention_vector).squeeze(-1)  # [n_edges]
+            att_scores = softmax(raw_att, dst, num_nodes=n_nodes)
+
+            att_out = torch.zeros(n_nodes, self.out_channels, device=x.device, dtype=x.dtype)
+            for k in range(K):
+                att_msg_k = att_scores.view(-1, 1) * all_msg[k]
+                att_agg_k = scatter_add(att_msg_k, dst, dim=0, dim_size=n_nodes)
+                att_out = att_out + torch.matmul(att_agg_k, self.weight[k])
+
+            out = sum_out + att_out
+        else:
+            out = sum_out
+
+        if self.bias is not None:
+            out = out + self.bias
+
+        return out, att_scores
 
 
-class ML3Layer(torch.nn.Module):
-    def __init__(self, learnedge=True, nedgeinput=1, nedgeoutput=1, ninp=1, nout1=30, nout2=2):
-        """
-        ML3Layer: A message-passing layer for GNNs with higher-order expressivity
+class ML3Layer(nn.Module):
+    """
+    ML3 message-passing layer with edge transformation and skip connection.
 
-        Args:
-            learnedge (bool): Whether to learn edge features transformations
-            nedgeinput (int): Dimension of input edge features
-            nedgeoutput (int): Dimension of output edge features
-            ninp (int): Dimension of input node features
-            nout1 (int): Dimension of convolution output features
-            nout2 (int): Dimension of skip connection output features (set to 0 to disable)
-        """
-        super(ML3Layer, self).__init__()
+    Uses SpectConvWithAttention instead of the original SpectConv/MessagePassing.
+    """
+
+    def __init__(self, learnedge=True, nedgeinput=1, nedgeoutput=1,
+                 ninp=1, nout1=30, nout2=2, use_attention=True):
+        super().__init__()
 
         self.learnedge = learnedge
         self.nout2 = nout2
 
-        # Edge feature transformation network (if enabled)
         if self.learnedge:
             self.edge_transform = nn.ModuleDict({
-                'linear1': torch.nn.Linear(nedgeinput, 2 * nedgeinput, bias=False),
-                'linear2': torch.nn.Linear(nedgeinput, 2 * nedgeinput, bias=False),
-                'linear3': torch.nn.Linear(nedgeinput, 2 * nedgeinput, bias=False),
-                'linear4': torch.nn.Linear(4 * nedgeinput, nedgeoutput, bias=False)
+                'linear1': nn.Linear(nedgeinput, 2 * nedgeinput, bias=False),
+                'linear2': nn.Linear(nedgeinput, 2 * nedgeinput, bias=False),
+                'linear3': nn.Linear(nedgeinput, 2 * nedgeinput, bias=False),
+                'linear4': nn.Linear(4 * nedgeinput, nedgeoutput, bias=False)
             })
         else:
             nedgeoutput = nedgeinput
 
-        # Main spectral convolution
-        self.conv1 = SpectConv(ninp, nout1, nedgeoutput, selfconn=False)
+        self.conv = SpectConvWithAttention(
+            ninp, nout1, nedgeoutput, selfconn=False, use_attention=use_attention
+        )
 
-        # Node feature skip connection (if enabled)
         if nout2 > 0:
             self.skip_connection = nn.ModuleDict({
-                'linear1': torch.nn.Linear(ninp, nout2),
-                'linear2': torch.nn.Linear(ninp, nout2)
+                'linear1': nn.Linear(ninp, nout2),
+                'linear2': nn.Linear(ninp, nout2)
             })
 
     def forward(self, x, edge_index, edge_attr):
         """
-        Forward pass of the ML3Layer
-
-        Args:
-            x (torch.Tensor): Node features
-            edge_index (torch.Tensor): Graph connectivity in COO format
-            edge_attr (torch.Tensor): Edge features
-
         Returns:
-            torch.Tensor: Updated node features
+            out: [n_nodes, nout1 + nout2]
+            att_scores: [n_edges] or None
         """
-        # Transform edge features if enabled
         if self.learnedge:
             linear_part = F.relu(self.edge_transform['linear1'](edge_attr))
-            gated_part = torch.tanh(self.edge_transform['linear2'](edge_attr)) * \
-                         torch.tanh(self.edge_transform['linear3'](edge_attr))
+            gated_part = (torch.tanh(self.edge_transform['linear2'](edge_attr)) *
+                          torch.tanh(self.edge_transform['linear3'](edge_attr)))
             tmp = torch.cat([linear_part, gated_part], dim=1)
             edge_attr = F.relu(self.edge_transform['linear4'](tmp))
 
-        # Apply convolution
-        conv_output = F.relu(self.conv1(x, edge_index, edge_attr))
+        conv_output, att_scores = self.conv(x, edge_index, edge_attr)
+        conv_output = F.relu(conv_output)
 
-        # Apply skip connection if enabled
         if self.nout2 > 0:
-            skip_output = torch.tanh(self.skip_connection['linear1'](x)) * \
-                          torch.tanh(self.skip_connection['linear2'](x))
-            return torch.cat([conv_output, skip_output], dim=1)
+            skip_output = (torch.tanh(self.skip_connection['linear1'](x)) *
+                           torch.tanh(self.skip_connection['linear2'](x)))
+            return torch.cat([conv_output, skip_output], dim=1), att_scores
         else:
-            return conv_output
+            return conv_output, att_scores
 
 
-class GNNML3(torch.nn.Module):
+class ML3Interaction(nn.Module):
+    """
+    ML3 interaction block with residual connection.
+
+    Mirrors GINInteraction: initial projection → ML3Layer → output projection → residual.
+    """
+
+    def __init__(self, node_dim, edge_dim, hidden_dim=30, nout1=30, nout2=2,
+                 use_attention=True, learnedge=True):
+        super().__init__()
+
+        self.initial_dense = nn.Linear(node_dim, node_dim, bias=False)
+
+        self.ml3_layer = ML3Layer(
+            learnedge=learnedge,
+            nedgeinput=edge_dim,
+            nedgeoutput=edge_dim,
+            ninp=node_dim,
+            nout1=nout1,
+            nout2=nout2,
+            use_attention=use_attention
+        )
+
+        # Project back to node_dim for residual connection
+        self.output_layer = nn.Linear(nout1 + nout2, node_dim)
+
+    def forward(self, h, edge_index, edge_feat):
+        """
+        Returns:
+            delta: [n_nodes, node_dim] — residual update
+            att_scores: [n_edges] or None
+        """
+        h_proj = self.initial_dense(h)
+        layer_out, att_scores = self.ml3_layer(h_proj, edge_index, edge_feat)
+        delta = self.output_layer(layer_out)
+        return delta, att_scores
+
+
+class ML3Encoder(nn.Module):
+    """
+    ML3 encoder using spectral convolutions with 3-WL expressivity and
+    optional parallel attention.
+
+    Follows the same interface as GINEncoder:
+    - forward(x, edge_index, edge_attr, batch) → (output, (h, attentions))
+    - output shape: [batch_size, output_dim]
+
+    Supports two edge feature modes:
+    - 'gaussian': Uses dataset-provided Gaussian-expanded distance features,
+      projected through an edge encoder MLP (default)
+    - 'spectral': Computes Laplacian eigendecomposition per graph for
+      spectral edge features
+
+    Args:
+        node_dim: Input node feature dimension
+        edge_dim: Input edge feature dimension (for gaussian mode)
+        hidden_dim: Hidden dimension for ML3 layers (nout1)
+        output_dim: Final graph-level output dimension
+        num_layers: Number of ML3 interaction layers
+        activation: Activation function name
+        use_attention: Whether to use parallel attention
+        edge_mode: 'gaussian' or 'spectral'
+        nfreq: Number of spectral frequencies (spectral mode)
+        spectral_dv: Gaussian width for spectral filters (spectral mode)
+        recfield: Receptive field for spectral filters (spectral mode)
+        nout1: Convolution output dim in ML3Layer
+        nout2: Skip connection output dim in ML3Layer (0 to disable)
+    """
+
     def __init__(
             self,
-            node_dim: int,
-            edge_dim: int,
-            global_dim: int,
-            hidden_dim: int = 30,
-            num_layers: int = 4,
-            num_encoder_layers: int = 2,
-            output_dim: int = 2,
-            shift_predictor_hidden_dim: Union[int, List[int]] = 32,
-            shift_predictor_layers: int = 1,
-            embedding_type: Literal["node", "global", "combined"] = "node",
-            act: Union[str, Callable] = "relu",
-            norm: Optional[str] = "batch_norm",
-            dropout: float = 0.0,
-            **kwargs
+            node_dim,
+            edge_dim,
+            hidden_dim=30,
+            output_dim=32,
+            num_layers=4,
+            activation='relu',
+            use_attention=True,
+            edge_mode='gaussian',
+            nfreq=10,
+            spectral_dv=1.0,
+            recfield=1,
+            nout1=30,
+            nout2=2,
     ):
         super().__init__()
 
-        # Store model configuration parameters
         self.node_dim = node_dim
         self.edge_dim = edge_dim
-        self.global_dim = global_dim
-        self.hidden_dim = hidden_dim
         self.output_dim = output_dim
-        self.num_layers = num_layers
-        self.num_encoder_layers = num_encoder_layers
-        self.embedding_type = embedding_type
-        self.act = act
-        self.norm = norm
-        self.dropout = dropout
+        self.edge_mode = edge_mode
+        self.use_attention = use_attention
 
-        # Initialize node and edge encoders as None (will be initialized in forward)
-        self.node_encoder = None
-        self.edge_encoder = None
+        # Internal working dimension for nodes
+        internal_node_dim = hidden_dim
 
-        # First layer has different input dimension
-        self.layers = torch.nn.ModuleList()
-        self.layers.append(
-            ML3Layer(
-                learnedge=True,
-                nedgeinput=edge_dim,
-                nedgeoutput=edge_dim,
-                ninp=node_dim,
-                nout1=self.hidden_dim,
-                nout2=self.output_dim
+        # Node encoder: project input features to internal dim
+        self.node_encoder = MLP(
+            in_channels=node_dim,
+            hidden_channels=hidden_dim,
+            out_channels=internal_node_dim,
+            num_layers=2,
+            act=activation,
+            norm=None,
+        ).apply(init_weights)
+
+        # Edge handling depends on mode
+        if edge_mode == 'gaussian':
+            internal_edge_dim = edge_dim  # keep original edge dim
+            self.edge_encoder = MLP(
+                in_channels=edge_dim,
+                hidden_channels=hidden_dim,
+                out_channels=internal_edge_dim,
+                num_layers=2,
+                act=activation,
+                norm=None,
+            ).apply(init_weights)
+            self.spectral_design = None
+        elif edge_mode == 'spectral':
+            internal_edge_dim = nfreq + 1
+            self.edge_encoder = None
+            self.spectral_design = SpectralDesign(
+                nfreq=nfreq, dv=spectral_dv, recfield=recfield
             )
-        )
-
-        # Remaining layers take output of previous layer as input
-        nin = self.hidden_dim + self.output_dim  # Combined dimension of layer outputs
-        for _ in range(num_layers - 1):
-            self.layers.append(
-                ML3Layer(
-                    learnedge=True,
-                    nedgeinput=edge_dim,
-                    nedgeoutput=edge_dim,
-                    ninp=nin,
-                    nout1=self.hidden_dim,
-                    nout2=self.output_dim
-                )
-            )
-
-        # Determine input dimension for shift predictor
-        if embedding_type == "node":
-            shift_predictor_in_dim = nin  # Use node embedding dimension
-        elif embedding_type == "global":
-            shift_predictor_in_dim = global_dim
-        else:  # combined
-            shift_predictor_in_dim = nin + global_dim
-
-        # Create channel list for shift predictor MLP
-        if isinstance(shift_predictor_hidden_dim, int):
-            channel_list = [shift_predictor_in_dim] + [shift_predictor_hidden_dim] * (shift_predictor_layers - 1) + [1]
         else:
-            channel_list = [shift_predictor_in_dim] + list(shift_predictor_hidden_dim) + [1]
+            raise ValueError(f"Unknown edge_mode: {edge_mode}. Use 'gaussian' or 'spectral'.")
 
-        # Shift predictor MLP
-        self.shift_predictor = MLP(
-            channel_list=channel_list,
-            act=act,
-            norm=None,  # norm,
-            dropout=dropout
+        # Interaction layers
+        self.interactions = nn.ModuleList([
+            ML3Interaction(
+                node_dim=internal_node_dim,
+                edge_dim=internal_edge_dim,
+                hidden_dim=hidden_dim,
+                nout1=nout1,
+                nout2=nout2,
+                use_attention=use_attention,
+                learnedge=True,
+            ) for _ in range(num_layers)
+        ])
+
+        # Output network: graph-level projection
+        self.output_network = MLP(
+            in_channels=internal_node_dim,
+            hidden_channels=hidden_dim,
+            out_channels=output_dim,
+            num_layers=2,
+            act=activation,
         )
 
-    def forward(self, x, edge_index, edge_attr, batch=None, u=None):
+    def forward(self, x, edge_index, edge_attr, batch=None):
         """
-        Forward pass of the GNNML3 model.
+        Forward pass.
 
         Args:
-            x: Node features
-            edge_index: Graph connectivity in COO format
-            edge_attr: Edge features
-            batch: Batch vector
-            u: Global features (optional)
+            x: [n_nodes, node_dim] node features
+            edge_index: [2, n_edges] edge connectivity
+            edge_attr: [n_edges, edge_dim] edge features
+            batch: [n_nodes] batch assignment
 
         Returns:
-            torch.Tensor: Graph-level prediction
-            dict: Empty dictionary (for compatibility)
+            output: [batch_size, output_dim] graph-level embeddings
+            aux: (h, attentions) — node embeddings and attention weights per layer
         """
         if batch is None:
             batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
 
-        # Initialize node encoder if not already initialized
-        if self.node_encoder is None:
-            node_in_channels = x.size(1)  # Infer input dimension from node features
-            self.node_encoder = MLP(
-                in_channels=node_in_channels,
-                hidden_channels=self.hidden_dim,
-                out_channels=self.node_dim,
-                num_layers=self.num_encoder_layers,
-                act=self.act,
-                norm="BatchNorm",  # self.norm,
-                dropout=self.dropout
-            ).apply(init_weights).to(x.device)  # Move node_encoder to the same device as x
+        # Encode node features
+        h = self.node_encoder(x)
 
-        # Initialize edge encoder if not already initialized
-        if self.edge_encoder is None:
-            edge_in_channels = edge_attr.size(1)  # Infer input dimension from edge features
-            self.edge_encoder = MLP(
-                in_channels=edge_in_channels,
-                hidden_channels=self.hidden_dim,
-                out_channels=self.edge_dim,
-                num_layers=self.num_encoder_layers,
-                act=self.act,
-                norm="BatchNorm",  # self.norm,
-                dropout=self.dropout
-            ).apply(init_weights).to(x.device)  # Move edge_encoder to the same device as x
+        # Encode/compute edge features
+        if self.edge_mode == 'gaussian':
+            edge_feat = self.edge_encoder(edge_attr)
+        else:
+            edge_feat = self.spectral_design.compute(
+                edge_index, batch, x.size(0), x.device
+            )
 
-        # Encode node and edge features
-        x = self.node_encoder(x)  # Encode node features
-        edge_attr = self.edge_encoder(edge_attr)  # Encode edge features
+        # Message passing with residual connections
+        attentions = []
+        for interaction in self.interactions:
+            delta, att = interaction(h, edge_index, edge_feat)
+            h = h + delta  # residual
+            if att is not None:
+                attentions.append(att)
 
-        # Apply each layer sequentially
-        for layer in self.layers:
-            x = layer(x, edge_index, edge_attr)
+        # Graph-level pooling (add-pool, faithful to ML3 paper)
+        pooled = global_add_pool(h, batch)
 
-        return self.shift_predictor(x), {}
+        # Output projection
+        output = self.output_network(pooled)  # [batch_size, output_dim]
 
-        # Pooling strategy based on embedding type
-        #if self.embedding_type == "node":
-        #    # Use node features for prediction (pooled)
-        #    pooled = global_add_pool(x, batch)
-        #    return self.shift_predictor(pooled), {}
-        #elif self.embedding_type == "global":
-        #    # Use global features for prediction
-        #    if u is not None:
-        #        return self.shift_predictor(u), {}
-        #    else:
-        #        # Fallback to node features if no global features are provided
-        #        pooled = global_add_pool(x, batch)
-        #        return self.shift_predictor(pooled), {}
-        #else:  # combined
-        #    # Combine node and global features
-        #    pooled = global_add_pool(x, batch)
-        #    if u is not None:
-        #        combined = torch.cat([pooled, u], dim=1)
-        #        return self.shift_predictor(combined), {}
-        #    else:
-        #        return self.shift_predictor(pooled), {}
+        return output, (h, attentions)

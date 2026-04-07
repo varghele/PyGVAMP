@@ -3,7 +3,7 @@
 """
 Encoder-specific command line arguments for PyGVAMP.
 
-Contains argument groups for SchNet, Meta, and ML3 encoders.
+Contains argument groups for SchNet, Meta, ML3, and GIN encoders.
 """
 
 import argparse
@@ -86,44 +86,46 @@ def add_meta_args(parser: argparse.ArgumentParser):
 
 def add_ml3_args(parser: argparse.ArgumentParser):
     """
-    Add ML3 (GNNML3) encoder arguments to parser.
+    Add ML3 encoder arguments to parser.
 
-    ML3 uses spectral convolutions with higher-order expressivity,
-    featuring learned edge transformations and skip connections.
+    ML3 uses spectral convolutions with 3-WL expressivity,
+    learned edge transformations, skip connections, and optional
+    parallel attention.
     """
     ml3_group = parser.add_argument_group('ML3 Encoder')
     # Core dimensions
     ml3_group.add_argument('--ml3_node_dim', type=int, default=16,
-                           help='Dimension of encoded node features')
+                           help='Dimension of input node features')
     ml3_group.add_argument('--ml3_edge_dim', type=int, default=16,
-                           help='Dimension of encoded edge features')
-    ml3_group.add_argument('--ml3_global_dim', type=int, default=0,
-                           help='Dimension of global features (0 = not used)')
+                           help='Dimension of input edge features')
     ml3_group.add_argument('--ml3_hidden_dim', type=int, default=30,
                            help='Hidden dimension for ML3 layers')
     ml3_group.add_argument('--ml3_output_dim', type=int, default=32,
-                           help='Output dimension (also skip connection dimension)')
+                           help='Output dimension (graph-level)')
     # Layer configuration
     ml3_group.add_argument('--ml3_num_layers', type=int, default=4,
-                           help='Number of ML3 layers')
-    ml3_group.add_argument('--ml3_num_encoder_layers', type=int, default=2,
-                           help='Number of layers in node/edge encoder MLPs')
-    # Shift predictor configuration
-    ml3_group.add_argument('--ml3_shift_predictor_hidden_dim', type=int, default=32,
-                           help='Hidden dimension for shift predictor')
-    ml3_group.add_argument('--ml3_shift_predictor_layers', type=int, default=1,
-                           help='Number of layers in shift predictor')
-    # Embedding type
-    ml3_group.add_argument('--ml3_embedding_type', type=str, default='node',
-                           choices=['node', 'global', 'combined'],
-                           help='Type of embedding to use for output')
-    # Regularization and activation
+                           help='Number of ML3 interaction layers')
+    ml3_group.add_argument('--ml3_nout1', type=int, default=30,
+                           help='Convolution output dim in ML3Layer')
+    ml3_group.add_argument('--ml3_nout2', type=int, default=2,
+                           help='Skip connection output dim (0 to disable)')
+    # Attention
+    ml3_group.add_argument('--ml3_use_attention', action='store_true', default=True,
+                           help='Use parallel attention mechanism')
+    # Edge feature mode
+    ml3_group.add_argument('--ml3_edge_mode', type=str, default='gaussian',
+                           choices=['gaussian', 'spectral'],
+                           help='Edge feature mode: gaussian (from dataset) or spectral (eigendecomp)')
+    ml3_group.add_argument('--ml3_nfreq', type=int, default=10,
+                           help='Number of spectral frequencies (spectral mode)')
+    ml3_group.add_argument('--ml3_spectral_dv', type=float, default=1.0,
+                           help='Gaussian width for spectral filters (spectral mode)')
+    ml3_group.add_argument('--ml3_recfield', type=int, default=1,
+                           help='Receptive field for spectral filters (spectral mode)')
+    # Activation
     ml3_group.add_argument('--ml3_activation', type=str, default='relu',
                            choices=['relu', 'tanh', 'leaky_relu', 'elu', 'gelu'],
                            help='Activation function')
-    ml3_group.add_argument('--ml3_norm', type=str, default='batch_norm',
-                           choices=['batch_norm', 'layer_norm', 'none'],
-                           help='Normalization type')
     ml3_group.add_argument('--ml3_dropout', type=float, default=0.0,
                            help='Dropout rate')
     return ml3_group

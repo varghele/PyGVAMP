@@ -17,7 +17,7 @@ from torch_geometric.data import Data, Batch
 
 # Import encoders
 from pygv.encoder.schnet import SchNetEncoderNoEmbed
-from pygv.encoder.ml3 import GNNML3
+from pygv.encoder.ml3 import ML3Encoder
 from pygv.encoder.meta import Meta
 from pygv.encoder.meta_att import Meta as MetaAtt
 from pygv.encoder.gat import GAT
@@ -333,92 +333,91 @@ class TestSchNetEncoder:
 # =============================================================================
 
 class TestML3Encoder:
-    """Tests for GNNML3 encoder."""
+    """Tests for ML3Encoder."""
 
     def test_forward_single_graph(self, single_graph_data, device):
         """Test forward pass on a single graph."""
         data = single_graph_data
+        node_dim = data.x.size(1)
+        edge_dim = data.edge_attr.size(1)
+        output_dim = 32
 
-        model = GNNML3(
-            node_dim=32,  # Target dimension after encoding
-            edge_dim=32,
-            global_dim=32,
+        model = ML3Encoder(
+            node_dim=node_dim,
+            edge_dim=edge_dim,
             hidden_dim=30,
+            output_dim=output_dim,
             num_layers=2,
-            num_encoder_layers=2,
-            output_dim=2,
-            embedding_type="node"
+            use_attention=True
         ).to(device)
 
-        output, aux = model(data.x, data.edge_index, data.edge_attr, data.batch, u=None)
+        model.eval()
+        with torch.no_grad():
+            output, aux = model(data.x, data.edge_index, data.edge_attr, data.batch)
 
-        # ML3 outputs node-level predictions: [num_nodes, 1]
-        num_nodes = data.x.size(0)
-        assert output.shape == (num_nodes, 1), f"Expected ({num_nodes}, 1), got {output.shape}"
+        assert output.shape == (1, output_dim), f"Expected (1, {output_dim}), got {output.shape}"
         assert not torch.isnan(output).any(), "Output contains NaN values"
 
     def test_forward_batched(self, batched_graph_data, device):
         """Test forward pass on batched graphs."""
         batch, num_graphs = batched_graph_data
+        node_dim = batch.x.size(1)
+        edge_dim = batch.edge_attr.size(1)
+        output_dim = 32
 
-        model = GNNML3(
-            node_dim=32,
-            edge_dim=32,
-            global_dim=32,
+        model = ML3Encoder(
+            node_dim=node_dim,
+            edge_dim=edge_dim,
             hidden_dim=30,
+            output_dim=output_dim,
             num_layers=2,
-            num_encoder_layers=2,
-            output_dim=2,
-            embedding_type="node"
+            use_attention=True
         ).to(device)
 
-        output, aux = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch, u=None)
+        output, aux = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
 
-        total_nodes = batch.x.size(0)
-        assert output.shape == (total_nodes, 1), f"Expected ({total_nodes}, 1), got {output.shape}"
+        assert output.shape == (num_graphs, output_dim), f"Expected ({num_graphs}, {output_dim}), got {output.shape}"
         assert not torch.isnan(output).any(), "Output contains NaN values"
 
-    def test_gradient_flow(self, single_graph_data, device):
+    def test_gradient_flow(self, batched_graph_data, device):
         """Test that gradients flow through all parameters."""
-        data = single_graph_data
+        batch, num_graphs = batched_graph_data
+        node_dim = batch.x.size(1)
+        edge_dim = batch.edge_attr.size(1)
 
-        model = GNNML3(
-            node_dim=32,
-            edge_dim=32,
-            global_dim=32,
+        model = ML3Encoder(
+            node_dim=node_dim,
+            edge_dim=edge_dim,
             hidden_dim=30,
+            output_dim=32,
             num_layers=2,
-            num_encoder_layers=2,
-            output_dim=2,
-            embedding_type="node"
+            use_attention=True
         ).to(device)
 
-        output, aux = model(data.x, data.edge_index, data.edge_attr, data.batch, u=None)
+        output, aux = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
         loss = output.sum()
 
-        assert_gradients_flow(model, loss, "GNNML3")
+        assert_gradients_flow(model, loss, "ML3Encoder")
 
-    def test_gradient_flow_to_inputs(self, single_graph_data, device):
+    def test_gradient_flow_to_inputs(self, batched_graph_data, device):
         """Test that gradients flow back to input tensors."""
-        data = single_graph_data
+        batch, num_graphs = batched_graph_data
 
-        model = GNNML3(
-            node_dim=32,
-            edge_dim=32,
-            global_dim=32,
+        model = ML3Encoder(
+            node_dim=batch.x.size(1),
+            edge_dim=batch.edge_attr.size(1),
             hidden_dim=30,
+            output_dim=32,
             num_layers=2,
-            num_encoder_layers=2,
-            output_dim=2,
-            embedding_type="node"
+            use_attention=True
         ).to(device)
 
-        output, aux = model(data.x, data.edge_index, data.edge_attr, data.batch, u=None)
+        output, aux = model(batch.x, batch.edge_index, batch.edge_attr, batch.batch)
         loss = output.sum()
         loss.backward()
 
-        assert data.x.grad is not None, "No gradient for node features (x)"
-        assert not torch.all(data.x.grad == 0), "Zero gradient for node features (x)"
+        assert batch.x.grad is not None, "No gradient for node features (x)"
+        assert not torch.all(batch.x.grad == 0), "Zero gradient for node features (x)"
 
 
 # =============================================================================
@@ -934,9 +933,9 @@ class TestEncoderIntegration:
                 node_dim=node_dim, edge_dim=edge_dim, hidden_dim=64, output_dim=32,
                 n_interactions=2, use_attention=True
             ),
-            'ML3': GNNML3(
-                node_dim=32, edge_dim=32, global_dim=32, hidden_dim=30,
-                num_layers=2, num_encoder_layers=2, output_dim=2, embedding_type="node"
+            'ML3': ML3Encoder(
+                node_dim=node_dim, edge_dim=edge_dim, hidden_dim=30,
+                output_dim=32, num_layers=2, use_attention=True
             ),
             'Meta': Meta(
                 node_dim=node_dim, edge_dim=edge_dim, global_dim=32,
@@ -970,10 +969,7 @@ class TestEncoderIntegration:
             edge_attr = batch.edge_attr.detach().clone().requires_grad_(True)
 
             try:
-                if name == 'ML3':
-                    output, aux = encoder(x, batch.edge_index, edge_attr, batch.batch, u=None)
-                else:
-                    output, aux = encoder(x, batch.edge_index, edge_attr, batch.batch)
+                output, aux = encoder(x, batch.edge_index, edge_attr, batch.batch)
 
                 loss = output.sum()
                 loss.backward()
