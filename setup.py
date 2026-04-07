@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="pygv",
-    version="0.9.0",
+    version="1.0.0",
     description="Graph-based VAMPNet for MD trajectory analysis with PyTorch Geometric",
     packages=find_packages(),
     package_data={

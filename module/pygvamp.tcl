@@ -6,12 +6,12 @@
 ## which is set during installation by install_module.sh.
 ##
 ## Usage after installation:
-##   module load pygvamp/0.9.0
+##   module load pygvamp/1.0.0
 ##   pygvamp --help
 ##
 
 proc ModulesHelp { } {
-    puts stderr "PyGVAMP 0.9.0 - Graph-based VAMPNet for MD trajectory analysis"
+    puts stderr "PyGVAMP 1.0.0 - Graph-based VAMPNet for MD trajectory analysis"
     puts stderr ""
     puts stderr "  Converts MD trajectories (.xtc/.dcd) to k-NN graphs and trains"
     puts stderr "  VAMPNet models to learn slow collective variables via VAMP score"
@@ -24,14 +24,14 @@ proc ModulesHelp { } {
     puts stderr "  Presets:  small_schnet, medium_schnet, large_schnet, etc."
 }
 
-module-whatis "PyGVAMP 0.9.0 - Graph-based VAMPNet for MD trajectory analysis with PyTorch Geometric"
+module-whatis "PyGVAMP 1.0.0 - Graph-based VAMPNet for MD trajectory analysis with PyTorch Geometric"
 
 # Conflict with other versions of this module
 conflict pygvamp
 
 # ── Root directory (set during installation) ──────────────────────────
 # PYGVAMP_ROOT points to the installation prefix, e.g.:
-#   /opt/software/pygvamp/0.9.0
+#   /opt/software/pygvamp/1.0.0
 #
 # Expected layout under PYGVAMP_ROOT:
 #   conda_env/     - self-contained conda environment
@@ -63,7 +63,7 @@ prepend-path PYTHONPATH "$root/source"
 
 # Make the install root discoverable by other tools
 setenv PYGVAMP_ROOT $root
-setenv PYGVAMP_VERSION "0.9.0"
+setenv PYGVAMP_VERSION "1.0.0"
 
 # CUDA — let the system CUDA module handle this, but set fallback
 # if CUDA_HOME is already set (e.g., by a CUDA module), don't override
