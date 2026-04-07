@@ -73,6 +73,9 @@ class BaseConfig:
     training_jitter: float = 1e-6       # Small noise added during training for gradient flow
     edge_norm_eps: float = 1e-8         # Prevents division by zero in edge attribute normalization
 
+    # Reversibility constraints
+    reversible: bool = False            # Use RevGraphVAMP (reversible likelihood loss)
+
     # Hardware
     cpu: bool = False
 

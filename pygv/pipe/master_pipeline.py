@@ -886,6 +886,10 @@ def main():
     if args.timestep is not None:
         config.timestep = args.timestep
 
+    # Reversible training
+    if args.reversible:
+        config.reversible = True
+
     # State diagnostics overrides
     if args.population_threshold is not None:
         config.population_threshold = args.population_threshold

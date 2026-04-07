@@ -45,7 +45,28 @@ pip uninstall pygv
 
 We currently supply you with different methods to call the training function, the main functionality being in `pygv.pipe.training.run_training`. You can either call the training directly  with the use of the prepared `run_training.py` in `cluster_scripts`, you can modify the shell script in there if you want to run training on a SLURM cluster, or you can use the `train.py` in `area52`. The current project is in development, and a more high-level, user-friendly training script is in the works.
 
-### 2.1 Calling the training function directly `cluster_scripts/run_training.py`
+### 2.1 Reversible GraphVAMPNet (RevGraphVAMP)
+
+To train with physical constraints (reversibility and detailed balance),
+add the `--reversible` flag:
+
+```bash
+python run_training.py \
+    --reversible \
+    --protein_name "your_protein" \
+    --top "topology.pdb" \
+    --traj_dir "trajectories/" \
+    ... (other arguments same as standard training)
+```
+
+This uses a likelihood-based loss function instead of VAMP-2, and learns
+a transition matrix that satisfies detailed balance by construction.
+Recommended for:
+- Non-equilibrium MD trajectories
+- Quantitative kinetic analysis (rates, mean first passage times)
+- Transition path theory calculations
+
+### 2.2 Calling the training function directly `cluster_scripts/run_training.py`
 
 ```bash
 # Train VAMPNet model on ATR protein molecular dynamics data

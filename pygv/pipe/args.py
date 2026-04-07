@@ -61,6 +61,8 @@ Examples:
                         help='Override trajectory timestep in nanoseconds. '
                              'Use when the XTC/DCD time metadata is incorrect '
                              '(e.g. --timestep 0.2 for 0.2 ns between frames)')
+    parser.add_argument('--reversible', action='store_true',
+                        help='Use RevGraphVAMP (reversible likelihood-based training)')
     parser.add_argument('--cpu', action='store_true',
                         help='Force CPU usage even if CUDA is available')
     parser.add_argument('--no_continuous', action='store_true',

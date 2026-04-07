@@ -31,7 +31,8 @@ PyGVAMP/
 │   ├── dataset/
 │   │   └── vampnet_dataset.py   # MD→PyG graphs (k-NN, Gaussian expansion, time-lagged pairs, caching)
 │   ├── vampnet/
-│   │   └── vampnet.py           # VAMPNet model (Embedding → Encoder → Classifier → Softmax)
+│   │   ├── vampnet.py           # VAMPNet model (Embedding → Encoder → Classifier → Softmax)
+│   │   └── rev_vampnet.py       # RevVAMPNet — reversible likelihood-based training with detailed balance
 │   ├── encoder/                 # Message-passing encoders
 │   │   ├── schnet.py            # SchNet (default) — continuous-filter convolutions
 │   │   ├── gin.py               # GIN — parallel attention preserving WL expressiveness
@@ -42,7 +43,8 @@ PyGVAMP/
 │   ├── classifier/
 │   │   └── SoftmaxMLP.py        # State classification (embedding → probabilities)
 │   ├── scores/
-│   │   └── vamp_score_v0.py     # VAMP1/VAMP2/VAMPE/VAMPCE loss functions
+│   │   ├── vamp_score_v0.py     # VAMP1/VAMP2/VAMPE/VAMPCE loss functions
+│   │   └── reversible_score.py  # ReversibleVAMPScore — likelihood loss with detailed balance
 │   ├── config/
 │   │   ├── base_config.py       # BaseConfig dataclass (all shared parameters)
 │   │   ├── model_configs/       # SchNetConfig, GINConfig, ML3Config, MetaConfig
@@ -75,6 +77,10 @@ Converts MD trajectories to PyTorch Geometric graphs:
 Input Graph → [Embedding MLP] → Encoder (SchNet/GIN/ML3) → Classifier (SoftmaxMLP) → State Probabilities
 ```
 
+### 2b. RevVAMPNet Model (`pygv/vampnet/rev_vampnet.py`)
+Same architecture as VAMPNet but trained with likelihood-based loss and a learned
+transition matrix satisfying detailed balance. Enabled via `--reversible` flag.
+
 ### 3. Encoders
 | Encoder | File | Status | Key Feature |
 |---------|------|--------|-------------|
@@ -89,6 +95,11 @@ C₀₀ = E[χ(t)ᵀ χ(t)]           # instantaneous covariance
 C₀ₜ = E[χ(t)ᵀ χ(t+τ)]         # cross-covariance
 VAMP-2 = ‖C₀₀^{-1/2} C₀ₜ Cₜₜ^{-1/2}‖²_F + 1
 ```
+
+### 4b. Reversible Score (`pygv/scores/reversible_score.py`)
+Learns stationary distribution u and symmetric rate matrix S. Constructs
+transition matrix K satisfying detailed balance. Loss = negative log-likelihood
+of observed transitions under K.
 
 ### 5. Pipeline Phases
 1. **Preparation** (`preparation.py`): Load trajectories → Convert to graphs → Cache
