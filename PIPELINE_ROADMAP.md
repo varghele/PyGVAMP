@@ -242,7 +242,7 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 - [x] Add proper error handling when model loading fails in analysis (`load_model()` with try/except)
 
 #### 1.3 Verify VAMP Score Calculation
-- [ ] Validate covariance matrix calculations against reference implementation (properties tested, but no comparison against deeptime or manual NumPy)
+- [x] Validate covariance matrix calculations against reference implementation (25 NumPy validation tests in `test_vamp_score_numpy.py`: covariance matrices, M^{-1/2}, Koopman matrix, VAMP1/VAMP2/VAMPE scores, SciPy cross-check, float32 precision)
 - [x] Test eigenvalue truncation/regularization strategies (trunc/regularize modes, stability with near-zero variance)
 - [x] Confirm score maximization (higher = better) throughout codebase (`loss()` returns `-score`, training loop verified)
 
@@ -327,12 +327,12 @@ PyGVAMP is a refactored implementation of GraphVAMPNets for analyzing molecular 
 
 | Issue | Location | Description | Suggested Fix |
 |-------|----------|-------------|---------------|
-| Hardcoded CUDA | `training.py:268` | `model.to('cuda')` ignores `--cpu` flag | Use `device` variable from args |
-| Unused import | `training.py:10` | `from pymol.querying import distance` never used | Remove import |
+| ~~Hardcoded CUDA~~ | ~~`training.py:268`~~ | ~~`model.to('cuda')` ignores `--cpu` flag~~ | ✅ Fixed — uses `device` variable with `--cpu` flag support |
+| ~~Unused import~~ | ~~`training.py:10`~~ | ~~`from pymol.querying import distance` never used~~ | ✅ Fixed — import removed |
 | ~~None encoder~~ | ~~`training.py:194`~~ | ~~ML3 encoder returns `None`, causes crash~~ | ✅ Fixed — `ML3Encoder` instantiated in `create_model()` |
-| Device inconsistency | `training.py:268,276` | Model moved to CUDA before device is determined | Move `model.to(device)` after device determination |
-| Broken imports | `pygv/config/__init__.py:4` | Imports `MetaConfig`, `ML3Config` which are commented out in `base_config.py` | Either uncomment configs or remove from imports |
-| Missing preset files | `pygv/config/presets/` | `medium.py` and `large.py` imported but don't exist | Create these files or update imports |
+| ~~Device inconsistency~~ | ~~`training.py:268,276`~~ | ~~Model moved to CUDA before device is determined~~ | ✅ Fixed — `model.to(device)` after device determination |
+| ~~Broken imports~~ | ~~`pygv/config/__init__.py:4`~~ | ~~Imports `MetaConfig`, `ML3Config` which are commented out in `base_config.py`~~ | ✅ Fixed — configs properly defined and imported |
+| ~~Missing preset files~~ | ~~`pygv/config/presets/`~~ | ~~`medium.py` and `large.py` imported but don't exist~~ | ✅ Fixed — `small.py`, `medium.py`, `large.py` all exist with 16 presets |
 
 ### Medium Priority (Code Quality)
 
