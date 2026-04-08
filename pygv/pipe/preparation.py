@@ -165,6 +165,7 @@ def run_state_discovery(dataset, args, paths):
         umap_dims=getattr(args, 'g2v_umap_dim', [2]),
         max_k=args.max_states,
         min_k=args.min_states,
+        clustering_max_samples=getattr(args, 'clustering_max_samples', 100_000),
     )
     discovery.fit(frames_ds)
 

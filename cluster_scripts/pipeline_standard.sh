@@ -15,11 +15,11 @@
 #SBATCH --job-name=pygv_std
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --partition=paula
+#SBATCH --partition=standard
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=3-00:00:00
+#SBATCH --time=2-00:00:00
 #SBATCH --output=logs/std_%A_%a.out
 #SBATCH --error=logs/std_%A_%a.err
 
@@ -55,18 +55,13 @@ BATCH_SIZE=128
 OUTPUT_DIR="./experiments"
 CACHE="--cache"                         # set to "" to disable caching
 
-# Conda
-CONDA_ENV="PyGVAMP5"
-
 # ---- END USER CONFIGURATION -----------------------------------------------
 
 # ---- Environment setup -----------------------------------------------------
 module purge
-module load CUDA/12.4.0
-module load Anaconda3/2024.02-1
-
-eval "$(conda shell.bash hook)"
-conda activate "${CONDA_ENV}"
+source /etc/profile.d/modules.sh
+module load 12.8
+module load pygvamp/1.0.0
 
 mkdir -p logs
 

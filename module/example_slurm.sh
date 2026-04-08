@@ -21,8 +21,8 @@
 
 # Load modules — no conda activate needed
 module purge
-module load CUDA/12.4.0
-module load pygvamp/0.9.0
+module load 12.8
+module load pygvamp/1.0.0
 
 mkdir -p logs
 

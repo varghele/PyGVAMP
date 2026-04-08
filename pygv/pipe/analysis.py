@@ -124,8 +124,17 @@ def create_dataset_and_loader(args):
 
     # Get frames dataset instead of time-lagged pairs dataset
     frames_dataset = dataset.get_frames_dataset(return_pairs=False)
+    n_frames = len(frames_dataset)
 
-    print(f"Dataset created with {len(dataset)} samples")
+    # Subsample for analysis if dataset is very large
+    analysis_max = getattr(args, 'analysis_max_frames', 50_000)
+    if n_frames > analysis_max:
+        print(f"Subsampling {n_frames} → {analysis_max} frames for analysis")
+        rng = np.random.default_rng(42)
+        indices = np.sort(rng.choice(n_frames, analysis_max, replace=False))
+        frames_dataset = torch.utils.data.Subset(frames_dataset, indices)
+
+    print(f"Dataset created with {len(frames_dataset)} frames for analysis")
 
     # Create data loader
     loader = DataLoader(

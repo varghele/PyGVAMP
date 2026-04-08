@@ -24,8 +24,8 @@ set -euo pipefail
 
 VERSION="1.0.0"
 PYTHON_VERSION="3.12"
-CUDA_VERSION="12.4"
-TORCH_VERSION="2.5.1"
+CUDA_VERSION="12.8"
+TORCH_VERSION=""  # empty = latest compatible from PyTorch index
 
 # ── Parse arguments ───────────────────────────────────────────────────
 
@@ -134,14 +134,24 @@ if [[ $SKIP_ENV -eq 0 ]]; then
         numpy scipy matplotlib pandas scikit-learn \
         tqdm joblib pyyaml jinja2 sympy
 
-    # PyTorch + CUDA
+    # PyTorch + CUDA (use pip index for latest CUDA support)
     CUDA_TAG=$(echo "$CUDA_VERSION" | tr -d '.')
-    $CONDA_CMD install -y pytorch==${TORCH_VERSION} torchvision torchaudio \
-        pytorch-cuda=${CUDA_VERSION} -c pytorch -c nvidia
+    TORCH_INDEX="https://download.pytorch.org/whl/cu${CUDA_TAG}"
+    if [ -n "$TORCH_VERSION" ]; then
+        pip install --no-cache-dir \
+            "torch==${TORCH_VERSION}" torchvision torchaudio \
+            --index-url "$TORCH_INDEX"
+    else
+        pip install --no-cache-dir \
+            torch torchvision torchaudio \
+            --index-url "$TORCH_INDEX"
+    fi
 
     # PyTorch Geometric
     pip install --no-cache-dir torch_geometric
-    TORCH_SHORT=$(echo "$TORCH_VERSION" | cut -d. -f1-2)
+    # PyG extensions — try the matching wheel index, fall back gracefully
+    INSTALLED_TORCH=$(python -c "import torch; print(torch.__version__.split('+')[0])")
+    TORCH_SHORT=$(echo "$INSTALLED_TORCH" | cut -d. -f1-2)
     pip install --no-cache-dir \
         pyg_lib torch_scatter torch_sparse torch_cluster torch_spline_conv \
         -f "https://data.pyg.org/whl/torch-${TORCH_SHORT}.0+cu${CUDA_TAG}.html" \

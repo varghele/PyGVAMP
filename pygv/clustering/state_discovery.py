@@ -25,7 +25,7 @@ import json
 import warnings
 import numpy as np
 from typing import Optional, List
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.mixture import GaussianMixture
 from sklearn.metrics import silhouette_score
 from sklearn.manifold import TSNE
@@ -87,6 +87,7 @@ class StateDiscovery:
         min_k: int = 2,
         max_k: int = 15,
         random_state: int = 42,
+        clustering_max_samples: int = 100_000,
     ):
         self.embedding_dim = embedding_dim
         self.max_degree = max_degree
@@ -97,6 +98,7 @@ class StateDiscovery:
         self.min_k = min_k
         self.max_k = max_k
         self.random_state = random_state
+        self.clustering_max_samples = clustering_max_samples
 
         # Results storage
         self.embeddings = None
@@ -147,7 +149,7 @@ class StateDiscovery:
             min_count=self.g2v_min_count,
             min_count_decay=self.g2v_min_count_decay,
             batch_size=64,
-            num_workers=4,
+            num_workers=min(os.cpu_count() or 4, 12),
         )
         self.g2v_model.fit(frames_dataset, num_graphs)
 
@@ -156,11 +158,23 @@ class StateDiscovery:
         self.embeddings = self.g2v_model.get_embeddings().numpy()
         print(f"Embeddings shape: {self.embeddings.shape}")
 
-        # Step 3: Clustering sweep
+        # Step 3: Subsample for clustering if needed
+        n_total = len(self.embeddings)
+        if n_total > self.clustering_max_samples:
+            rng = np.random.RandomState(self.random_state)
+            cluster_idx = rng.choice(n_total, self.clustering_max_samples,
+                                     replace=False)
+            cluster_embeddings = self.embeddings[cluster_idx]
+            print(f"Subsampled {n_total} → {self.clustering_max_samples} "
+                  f"embeddings for clustering sweep")
+        else:
+            cluster_embeddings = self.embeddings
+
+        # Step 4: Clustering sweep
         print("\n--- Clustering sweep ---")
 
         # Always cluster raw embeddings
-        self._cluster_and_evaluate(self.embeddings, 'raw')
+        self._cluster_and_evaluate(cluster_embeddings, 'raw')
 
         # UMAP sweep
         for dim in self.umap_dims:
@@ -169,11 +183,11 @@ class StateDiscovery:
                 print(f"  UMAP reduction (dim={dim})...")
                 reducer = umap.UMAP(
                     n_components=dim,
-                    random_state=self.random_state,
-                    n_neighbors=min(15, len(self.embeddings) - 1),
+                    n_neighbors=min(15, len(cluster_embeddings) - 1),
                     min_dist=0.1,
+                    n_jobs=-1,
                 )
-                reduced = reducer.fit_transform(self.embeddings)
+                reduced = reducer.fit_transform(cluster_embeddings)
                 self._cluster_and_evaluate(reduced, f'umap_{dim}')
             except ImportError:
                 print("  UMAP not installed, skipping UMAP sweep.")
@@ -185,11 +199,11 @@ class StateDiscovery:
             print(f"  t-SNE reduction (dim={dim})...")
             tsne = TSNE(
                 n_components=dim,
-                random_state=self.random_state,
-                perplexity=min(30, len(self.embeddings) - 1),
+                perplexity=min(30, len(cluster_embeddings) - 1),
                 max_iter=1000,
+                n_jobs=-1,
             )
-            reduced = tsne.fit_transform(self.embeddings)
+            reduced = tsne.fit_transform(cluster_embeddings)
             self._cluster_and_evaluate(reduced, f'tsne_{dim}')
 
         # Pick winner and recommend k
@@ -290,29 +304,56 @@ class StateDiscovery:
         print(f"\n  >> Recommended n_states: {self.best_k} "
               f"(max across metrics)")
 
+    # Maximum samples for silhouette score (O(n²) pairwise distances)
+    _SILHOUETTE_MAX_SAMPLES = 50_000
+    # Threshold for switching to MiniBatchKMeans
+    _MINIBATCH_THRESHOLD = 100_000
+
     def _run_clustering_analysis(self, data, silhouette_dict, inertia_dict,
                                  bic_dict, aic_dict, labels_dict, desc=""):
         """Run KMeans and GMM for different k values."""
         k_range = range(self.min_k, self.max_k + 1)
-        n_features = data.shape[1]
+        n_samples, n_features = data.shape
         cov_type = ('diag' if n_features > self._GMM_FULL_COV_THRESHOLD
                     else 'full')
+        use_minibatch = n_samples > self._MINIBATCH_THRESHOLD
+
+        # Subsample indices for silhouette (O(n²) is prohibitive for large n)
+        if n_samples > self._SILHOUETTE_MAX_SAMPLES:
+            rng = np.random.RandomState(self.random_state)
+            sil_idx = rng.choice(n_samples, self._SILHOUETTE_MAX_SAMPLES,
+                                 replace=False)
+        else:
+            sil_idx = None
 
         for k in tqdm(k_range, desc=f"KMeans + GMM ({desc})"):
-            # KMeans
-            kmeans = KMeans(
-                n_clusters=k,
-                random_state=self.random_state,
-                n_init=10,
-                max_iter=300,
-            )
+            # KMeans (MiniBatch for large datasets)
+            if use_minibatch:
+                kmeans = MiniBatchKMeans(
+                    n_clusters=k,
+                    random_state=self.random_state,
+                    n_init=10,
+                    max_iter=300,
+                    batch_size=min(10_000, n_samples),
+                )
+            else:
+                kmeans = KMeans(
+                    n_clusters=k,
+                    random_state=self.random_state,
+                    n_init=10,
+                    max_iter=300,
+                )
             labels = kmeans.fit_predict(data)
 
             labels_dict[k] = labels
             inertia_dict[k] = kmeans.inertia_
 
             if k >= 2:
-                silhouette_dict[k] = silhouette_score(data, labels)
+                if sil_idx is not None:
+                    silhouette_dict[k] = silhouette_score(
+                        data[sil_idx], labels[sil_idx])
+                else:
+                    silhouette_dict[k] = silhouette_score(data, labels)
 
             # GMM for BIC / AIC
             with warnings.catch_warnings():

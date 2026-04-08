@@ -63,6 +63,10 @@ class BaseConfig:
     g2v_umap_dim: Optional[list] = None  # defaults to [2,3,5,6,7,10] in StateDiscovery
     min_states: int = 2
     max_states: int = 10
+    clustering_max_samples: int = 100_000  # Max embeddings for clustering sweep (Graph2Vec trains on all)
+
+    # Analysis
+    analysis_max_frames: int = 50_000  # Max frames for analysis inference (report uses 5K)
 
     # State diagnostics
     population_threshold: float = 0.02         # Min state population (fraction) to keep
