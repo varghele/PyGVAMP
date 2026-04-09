@@ -33,8 +33,8 @@ sbatch cluster_scripts/run_discovery.sh \
 
 ### Standard (VAMP-2)
 
-| Run | Lag (ns) | n_states | Epochs | VAMP score | Status | Notes |
-|-----|----------|----------|--------|------------|--------|-------|
+| Run | Lag (ns) | Encoder | n_states | Epochs | Train VAMP | Val VAMP | Status | Job ID | Notes |
+|-----|----------|---------|----------|--------|------------|----------|--------|--------|-------|
 
 #### Submit command
 ```bash
@@ -55,8 +55,8 @@ sbatch cluster_scripts/run_experiment.sh \
 
 ### Reversible (RevGraphVAMP)
 
-| Run | Lag (ns) | n_states | Epochs | VAMP score | Status | Notes |
-|-----|----------|----------|--------|------------|--------|-------|
+| Run | Lag (ns) | Encoder | n_states | Epochs | Train VAMP | Val VAMP | Status | Job ID | Notes |
+|-----|----------|---------|----------|--------|------------|----------|--------|--------|-------|
 
 #### Submit command
 ```bash

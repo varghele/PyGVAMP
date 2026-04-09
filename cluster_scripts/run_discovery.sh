@@ -25,7 +25,7 @@
 #SBATCH --partition=gputraining
 #SBATCH --gres=gpu:batch:1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=128G
+#SBATCH --mem=120G
 #SBATCH --time=12:00:00
 #SBATCH --output=/mnt/hdd/experiments/logs/disc_%j.out
 #SBATCH --error=/mnt/hdd/experiments/logs/disc_%j.err

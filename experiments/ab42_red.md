@@ -19,13 +19,20 @@
 | Property | Value |
 |----------|-------|
 | Date | 2026-04-09 |
-| Job ID | 338 |
+| Job ID | 339 |
 | Stride | 1 |
 | Graph2Vec dim | 512 |
 | Clustering subsample | 100,000 |
-| Best source | pending |
-| **Recommended n_states** | **pending** |
-| Log | `/mnt/hdd/experiments/logs/disc_338.out` |
+| Best source | umap_2 (silhouette=0.444) |
+| **Recommended n_states** | **10** |
+| Log | `/mnt/hdd/experiments/logs/disc_339.out` |
+| Output | `/mnt/hdd/experiments/ab42_red/discovery/exp_ab42_red_20260409_110532` |
+
+Metric breakdown (umap_2):
+- Silhouette: k=6
+- Elbow: k=3
+- BIC: k=10
+- AIC: k=10
 
 ### Command
 ```bash
@@ -39,9 +46,9 @@ sbatch cluster_scripts/run_discovery.sh \
 
 ### Standard (VAMP-2)
 
-| Run | Lag (ns) | n_states | Epochs | VAMP score | Status | Notes |
-|-----|----------|----------|--------|------------|--------|-------|
-| 0   | 1        | 10       | 100    | ~9.83      | done   | first test run, job 336 |
+| Run | Lag (ns) | Encoder | n_states | Epochs | Train VAMP | Val VAMP | Status | Job ID | Notes |
+|-----|----------|---------|----------|--------|------------|----------|--------|--------|-------|
+| 0   | 1        | SchNet  | 10       | 50     | —          | —        | running | 342   | exploratory, batch_size=2048, stride=1 |
 
 #### Submit command
 ```bash
@@ -62,8 +69,8 @@ sbatch cluster_scripts/run_experiment.sh \
 
 ### Reversible (RevGraphVAMP)
 
-| Run | Lag (ns) | n_states | Epochs | VAMP score | Status | Notes |
-|-----|----------|----------|--------|------------|--------|-------|
+| Run | Lag (ns) | Encoder | n_states | Epochs | Train VAMP | Val VAMP | Status | Job ID | Notes |
+|-----|----------|---------|----------|--------|------------|----------|--------|--------|-------|
 
 #### Submit command
 ```bash
