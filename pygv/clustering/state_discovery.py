@@ -33,6 +33,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from pygv.clustering.graph2vec import Graph2Vec
+from pygv.utils.pipe_utils import available_cpus
 
 
 class StateDiscovery:
@@ -149,7 +150,7 @@ class StateDiscovery:
             min_count=self.g2v_min_count,
             min_count_decay=self.g2v_min_count_decay,
             batch_size=64,
-            num_workers=min(os.cpu_count() or 4, 12),
+            num_workers=max(1, available_cpus() - 1),
         )
         self.g2v_model.fit(frames_dataset, num_graphs)
 
@@ -169,6 +170,8 @@ class StateDiscovery:
                   f"embeddings for clustering sweep")
         else:
             cluster_embeddings = self.embeddings
+
+        self._cluster_embeddings = cluster_embeddings
 
         # Step 4: Clustering sweep
         print("\n--- Clustering sweep ---")
@@ -712,25 +715,28 @@ class StateDiscovery:
             if data.shape[1] == 2:
                 return data
 
+        # Fallback: compute projection on cluster_embeddings (subsampled)
+        plot_embeddings = getattr(self, '_cluster_embeddings', self.embeddings)
+
         if method == 'tsne':
             tsne = TSNE(
                 n_components=2,
-                random_state=self.random_state,
-                perplexity=min(30, len(self.embeddings) - 1),
+                perplexity=min(30, len(plot_embeddings) - 1),
                 max_iter=1000,
+                n_jobs=-1,
             )
-            return tsne.fit_transform(self.embeddings)
+            return tsne.fit_transform(plot_embeddings)
 
         if method == 'umap':
             try:
                 import umap
                 reducer = umap.UMAP(
                     n_components=2,
-                    random_state=self.random_state,
-                    n_neighbors=min(15, len(self.embeddings) - 1),
+                    n_neighbors=min(15, len(plot_embeddings) - 1),
                     min_dist=0.1,
+                    n_jobs=-1,
                 )
-                return reducer.fit_transform(self.embeddings)
+                return reducer.fit_transform(plot_embeddings)
             except ImportError:
                 return None
 
@@ -766,7 +772,7 @@ class StateDiscovery:
     def _plot_temporal_evolution(self, save_dir: str):
         """Generate temporal evolution plots."""
         labels = self.cluster_labels[self.best_k]
-        n_frames = len(self.embeddings)
+        n_frames = len(labels)
         frame_indices = np.arange(n_frames)
 
         print("  Computing t-SNE 2D for temporal visualization...")

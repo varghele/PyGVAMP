@@ -19,7 +19,7 @@ from torch_geometric.loader import DataLoader
 from datetime import datetime
 
 from pygv.dataset.vampnet_dataset import VAMPNetDataset
-from pygv.utils.pipe_utils import find_trajectory_files
+from pygv.utils.pipe_utils import find_trajectory_files, available_cpus
 from pygv.utils.analysis import analyze_vampnet_outputs
 from pygv.utils.ck import run_ck_analysis
 from pygv.utils.its import analyze_implied_timescales
@@ -157,14 +157,18 @@ def create_dataset_and_loader(args,
             shuffle=True,
             batch_size=args.batch_size,
             drop_last=True,
-            pin_memory=torch.cuda.is_available() and not args.cpu
+            pin_memory=torch.cuda.is_available() and not args.cpu,
+            num_workers=max(1, available_cpus() // 2),
+            persistent_workers=True,
         )
         test_loader = DataLoader(
             test_dataset,
             shuffle=True,
             batch_size=args.batch_size,
             drop_last=True,
-            pin_memory=torch.cuda.is_available() and not args.cpu
+            pin_memory=torch.cuda.is_available() and not args.cpu,
+            num_workers=max(1, available_cpus() // 2),
+            persistent_workers=True,
         )
 
     return dataset, train_dataset, train_loader, test_dataset, test_loader

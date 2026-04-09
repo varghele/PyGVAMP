@@ -47,7 +47,7 @@ class BaseConfig:
 
     # Optimization
     save_every: int = 10
-    sample_validate_every: int = 5
+    sample_validate_every: int = 100
 
     # Analysis
     protein_name: str = "protein"

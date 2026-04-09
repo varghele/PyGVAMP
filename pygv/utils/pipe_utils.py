@@ -4,6 +4,14 @@ import json
 import datetime
 from pygv.vampnet import VAMPNet
 
+
+def available_cpus() -> int:
+    """Return the number of CPUs available, respecting SLURM allocation."""
+    slurm = os.environ.get('SLURM_CPUS_PER_TASK')
+    if slurm is not None:
+        return int(slurm)
+    return os.cpu_count() or 1
+
 def save_run_info(model, train_config, dataset_info, save_dir, run_id=None):
     """
     Save comprehensive information about a training run.
