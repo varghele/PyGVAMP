@@ -677,18 +677,34 @@ def generate_merged_interactive_report(
     # --- Load trajectory frames for per-frame protein structure viewer ---
     frame_coords = None
     pdb_template = None
+    traj_stride = stride
     if traj_dir and topology_file:
         try:
             import mdtraj as md
             from pygv.utils.pipe_utils import find_trajectory_files
             traj_files = find_trajectory_files(traj_dir, file_pattern)
             if traj_files:
-                traj = md.load(traj_files, top=topology_file, stride=stride)
+                # Resolve atom selection BEFORE loading to avoid reading all atoms
+                atom_indices = None
                 if selection:
-                    atom_indices = traj.topology.select(selection)
-                    traj = traj.atom_slice(atom_indices)
+                    top = md.load_topology(topology_file)
+                    atom_indices = top.select(selection)
+
+                # Estimate total frames; increase stride if dataset is large
+                max_traj_frames = max_frames * 10
+                sample_traj = md.load(traj_files[0], top=topology_file, atom_indices=atom_indices)
+                frames_per_file = len(sample_traj) // max(stride, 1)
+                estimated_total = frames_per_file * len(traj_files)
+
+                traj_stride = stride
+                if estimated_total > max_traj_frames:
+                    traj_stride = max(stride, stride * (estimated_total // max_traj_frames))
+                    print(f"  Large dataset ({estimated_total} est. frames) — "
+                          f"loading with stride={traj_stride} (target ≤{max_traj_frames})")
+
+                traj = md.load(traj_files, top=topology_file,
+                               stride=traj_stride, atom_indices=atom_indices)
                 pdb_template = _create_pdb_template(traj[0], topology_file)
-                # frame_coords shape: (n_frames, n_atoms, 3) in Ångströms
                 frame_coords = traj.xyz * 10.0  # nm → Å
                 print(f"  Loaded trajectory: {frame_coords.shape[0]} frames, "
                       f"{frame_coords.shape[1]} atoms for per-frame structures.")
@@ -837,7 +853,7 @@ def generate_merged_interactive_report(
             attention_values=attention_values,
             state_structures=state_structures,
             metadata=metadata,
-            trajectory_frame_indices=selected_indices,
+            trajectory_frame_indices=selected_indices // max(traj_stride // max(stride, 1), 1),
             state_edge_attention=state_edge_attention,
         )
         timescales_added += 1

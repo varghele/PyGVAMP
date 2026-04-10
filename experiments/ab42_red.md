@@ -48,7 +48,7 @@ sbatch cluster_scripts/run_discovery.sh \
 
 | Run | Lag (ns) | Encoder | n_states | Epochs | Train VAMP | Val VAMP | Status | Job ID | Notes |
 |-----|----------|---------|----------|--------|------------|----------|--------|--------|-------|
-| 0   | 1        | SchNet  | 10       | 50     | —          | —        | running | 342   | exploratory, batch_size=2048, stride=1 |
+| 0   | 1        | SchNet  | 10       | 50     | 9.8247     | 9.8005   | OOM in analysis | 342   | training done, analysis OOM killed at 120GB |
 
 #### Submit command
 ```bash
