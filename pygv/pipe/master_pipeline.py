@@ -912,17 +912,17 @@ def main():
         _print_dry_run_summary(config, args)
         return None
 
-    # Create orchestrator and run pipeline
+    # Create orchestrator and run pipeline.
+    # Intentionally no return: setuptools wraps this as sys.exit(main()), so
+    # returning a dict would exit 1 and dump the dict repr to stderr.
     orchestrator = PipelineOrchestrator(config)
-    results = orchestrator.run_complete_pipeline(
+    orchestrator.run_complete_pipeline(
         skip_preparation=args.skip_preparation,
         skip_training=args.skip_training,
         only_analysis=args.only_analysis,
         resume=args.resume,
     )
 
-    return results
-
 
 if __name__ == "__main__":
-    results = main()
+    main()
