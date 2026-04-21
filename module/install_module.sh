@@ -173,8 +173,9 @@ if [[ $SKIP_ENV -eq 0 ]]; then
     echo "[1/4] Conda environment created."
 else
     echo "[1/4] Skipping conda env creation (--skip-env)."
-    eval "$($CONDA_CMD shell.bash hook)"
-    $CONDA_CMD activate "$CONDA_ENV"
+    # Prepend the env's bin to PATH instead of 'conda activate', which
+    # requires 'conda init' in the invoking shell and fails under sudo.
+    export PATH="$CONDA_ENV/bin:$PATH"
 fi
 
 # ── Step 2: Install PyGVAMP source ────────────────────────────────────
@@ -196,8 +197,8 @@ else
         "$REPO_DIR/" "$SOURCE_DIR/"
 fi
 
-# Install in editable mode
-pip install --no-cache-dir -e "$SOURCE_DIR"
+# Install in editable mode (use the env's pip directly, not PATH lookup)
+"$CONDA_ENV/bin/pip" install --no-cache-dir -e "$SOURCE_DIR"
 
 echo "[2/4] PyGVAMP installed."
 
