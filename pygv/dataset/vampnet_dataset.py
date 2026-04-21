@@ -67,6 +67,12 @@ class VAMPNetDataset(Dataset):
         If False, treat each trajectory file as independent - time-lagged pairs will not
         cross trajectory boundaries. Use False when trajectories are from independent
         simulations (e.g., multiple replicas, different starting conditions).
+    runtime_stride : int, default=1
+        Post-cache subsampling factor applied to the time-lagged pair index lists.
+        Orthogonal to ``stride``: ``stride`` is baked into the cached frames during
+        preprocessing, while ``runtime_stride`` picks every Nth (t0, t1) pair after
+        the cache is loaded. Used by the auto-stride feature to vary effective
+        density per lag time without recomputing the cache.
     """
 
     def __init__(
@@ -89,6 +95,7 @@ class VAMPNetDataset(Dataset):
             amino_acid_feature_type: Literal["labels", "properties"] = "labels",
             continuous: bool = True,
             timestep: Optional[float] = None,
+            runtime_stride: int = 1,
     ):
         super(VAMPNetDataset, self).__init__()
 
@@ -106,6 +113,12 @@ class VAMPNetDataset(Dataset):
         self.amino_acid_feature_type = amino_acid_feature_type
         self.continuous = continuous
         self.timestep_override_ns = timestep
+        if runtime_stride < 1:
+            raise ValueError(f"runtime_stride must be >= 1, got {runtime_stride}")
+        self.runtime_stride = int(runtime_stride)
+        # Populated by _infer_timestep() or _load_from_cache().  Used by the
+        # auto-stride feature in the orchestrator.
+        self.raw_timestep_ps: Optional[float] = None
 
         # Create cache directory if it doesn't exist
         if self.cache_dir and not os.path.exists(self.cache_dir):
@@ -151,6 +164,17 @@ class VAMPNetDataset(Dataset):
             # Save processed data to cache
             if self.cache_dir:
                 self._save_to_cache()
+
+        # Apply runtime subsampling to the time-lagged pair index lists.  Runs on
+        # both the fresh-process and cache-load paths so the cache stays at
+        # full density and is reusable across different runtime_stride values.
+        if self.runtime_stride > 1:
+            n_before = len(self.t0_indices)
+            self.t0_indices = list(self.t0_indices[::self.runtime_stride])
+            self.t1_indices = list(self.t1_indices[::self.runtime_stride])
+            n_after = len(self.t0_indices)
+            print(f"Runtime subsample: stride={self.runtime_stride}, "
+                  f"{n_before} -> {n_after} pairs")
 
     def _process_trajectories(self):
         """Process trajectory files and select atoms with tqdm progress.
@@ -497,6 +521,7 @@ class VAMPNetDataset(Dataset):
             'n_frames': self.n_frames,
             'n_atoms': self.n_atoms,
             'trajectory_boundaries': self.trajectory_boundaries,
+            'raw_timestep_ps': self.raw_timestep_ps,
             'config': {
                 'lag_time': self.lag_time,
                 'n_neighbors': self.n_neighbors,
@@ -547,6 +572,12 @@ class VAMPNetDataset(Dataset):
             self.n_frames = data['n_frames']
             self.n_atoms = data['n_atoms']
             self.trajectory_boundaries = data.get('trajectory_boundaries', [0, self.n_frames])
+            # Older caches may not have this key; fall back to user override
+            # converted to ps, or None (the orchestrator will re-probe if needed).
+            cached_ts = data.get('raw_timestep_ps')
+            if cached_ts is None and self.timestep_override_ns is not None:
+                cached_ts = self.timestep_override_ns * 1000.0
+            self.raw_timestep_ps = cached_ts
 
             cached_config = data['config']
             if (cached_config['lag_time'] != self.lag_time or
@@ -617,6 +648,7 @@ class VAMPNetDataset(Dataset):
             )
 
         self.lag_frames = int(lag_time_ps / effective_timestep)
+        self.raw_timestep_ps = float(timestep)
 
         print(f"Trajectory timestep: {timestep:.3f} ps")
         print(f"Effective timestep with stride {self.stride}: {effective_timestep:.3f} ps")

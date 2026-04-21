@@ -12,6 +12,7 @@ This script orchestrates the complete VAMPNet pipeline:
 Supports configuration presets and selective re-running of pipeline stages.
 """
 
+import math
 import os
 import re
 import argparse
@@ -44,6 +45,12 @@ class PipelineOrchestrator:
         """
         self.config = config
         self.experiment_dir = None
+        # Populated from dataset_stats.json once preparation has run (or been
+        # discovered on a --resume / --skip_preparation pipeline).  Used by
+        # auto-stride to compute per-lag subsampling without re-probing the
+        # trajectory.
+        self._frame_dt_ps = None
+        self._prep_stride = None
 
     def setup_experiment_directory(self):
         """Create experiment directory structure"""
@@ -97,17 +104,32 @@ class PipelineOrchestrator:
         prep_args = self._create_prep_args(dirs)
         dataset_path = run_preparation(prep_args)
 
-        # Read back recommended n_states from state discovery if it ran
+        # Read back recommended n_states from state discovery if it ran, and
+        # cache frame_dt_ps / prep stride for any auto-stride consumer.
         recommended_n_states = None
-        if self.config.discover_states:
-            stats_path = os.path.join(dataset_path, 'dataset_stats.json')
-            if os.path.isfile(stats_path):
+        stats = None
+        stats_path = os.path.join(dataset_path, 'dataset_stats.json')
+        if os.path.isfile(stats_path):
+            try:
                 with open(stats_path) as f:
                     stats = json.load(f)
-                if 'state_discovery' in stats:
-                    recommended_n_states = stats['state_discovery'].get('recommended_n_states')
-                    if recommended_n_states is not None:
-                        print(f"State discovery recommended n_states = {recommended_n_states}")
+            except Exception as e:
+                print(f"Warning: could not read {stats_path}: {e}")
+
+        if stats is not None:
+            if self.config.discover_states and 'state_discovery' in stats:
+                recommended_n_states = stats['state_discovery'].get('recommended_n_states')
+                if recommended_n_states is not None:
+                    print(f"State discovery recommended n_states = {recommended_n_states}")
+            params = stats.get('parameters') or {}
+            self._frame_dt_ps = params.get('frame_dt_ps')
+            self._prep_stride = params.get('stride')
+
+        # If still unknown and a user-provided timestep exists, use it as frame_dt.
+        if self._frame_dt_ps is None and self.config.timestep is not None:
+            self._frame_dt_ps = float(self.config.timestep) * 1000.0
+        if self._prep_stride is None:
+            self._prep_stride = int(self.config.stride)
 
         return dataset_path, recommended_n_states
 
@@ -299,6 +321,50 @@ class PipelineOrchestrator:
 
         return args
 
+    def _load_prep_stats(self, dataset_path):
+        """
+        Read frame_dt_ps and prep-level stride from dataset_stats.json.
+
+        Returns
+        -------
+        tuple (frame_dt_ps or None, prep_stride or None)
+        """
+        if not dataset_path:
+            return None, None
+        stats_path = os.path.join(dataset_path, 'dataset_stats.json')
+        if not os.path.isfile(stats_path):
+            return None, None
+        try:
+            with open(stats_path) as f:
+                stats = json.load(f)
+        except Exception as e:
+            print(f"Warning: could not read {stats_path}: {e}")
+            return None, None
+        params = stats.get('parameters') or {}
+        return params.get('frame_dt_ps'), params.get('stride')
+
+    def _compute_auto_stride(self, lag_time_ns: float) -> int:
+        """
+        Compute per-lag runtime subsampling stride.
+
+        Formula:   stride = max(1, floor(τ / (10 · cache_frame_dt)))
+        where cache_frame_dt is the time between consecutive frames in the
+        preprocessed cache = raw_frame_dt · prep_stride.
+
+        Returns a runtime stride to be applied on top of the preprocessed
+        cache's existing stride.  Never rebuilds the cache.
+        """
+        if self._frame_dt_ps is None or self._prep_stride is None:
+            raise RuntimeError(
+                "auto_stride is enabled but frame_dt_ps could not be determined. "
+                "Either (a) pass --timestep <value_in_ns>, or (b) re-run "
+                "preparation so dataset_stats.json contains frame_dt_ps."
+            )
+        cache_frame_dt_ps = self._frame_dt_ps * self._prep_stride
+        lag_ps = float(lag_time_ns) * 1000.0
+        runtime_stride = max(1, int(math.floor(lag_ps / (10.0 * cache_frame_dt_ps))))
+        return runtime_stride
+
     def _create_train_args(self, dirs, dataset_path, lag_time, n_states, exp_dir):
         """Create arguments for training phase"""
         # Start with config as base
@@ -310,6 +376,20 @@ class PipelineOrchestrator:
         args.output_dir = str(exp_dir)
         args.cache_dir = dataset_path if self.config.cache else None
         args.use_cache = self.config.cache
+
+        # Per-lag runtime subsample (Phase 2: auto-stride).  Stride is fixed
+        # within a single lag time (including all retrain rounds) — it only
+        # varies when lag_time varies.
+        if getattr(self.config, 'auto_stride', False):
+            runtime_stride = self._compute_auto_stride(lag_time)
+            cache_frame_dt_ps = self._frame_dt_ps * self._prep_stride
+            print(
+                f"Auto-stride: τ={lag_time:g}ns, frame_dt={cache_frame_dt_ps:g}ps, "
+                f"stride={runtime_stride}"
+            )
+        else:
+            runtime_stride = 1
+        args.runtime_stride = runtime_stride
 
         return args
 
@@ -359,6 +439,16 @@ class PipelineOrchestrator:
         else:
             args.lag_time = self.config.lag_times[0] if isinstance(self.config.lag_times,
                                                                    list) else self.config.lag_time
+
+        # When auto-stride is on, analysis must match training's effective stride
+        # so transition matrices and implied timescales use the correct time
+        # resolution.  We collapse prep_stride × runtime_stride into a single
+        # stride value for analysis so analysis.py does not need to know about
+        # runtime_stride.  (This may create a second cache at the coarser
+        # stride; that's acceptable.)
+        if getattr(self.config, 'auto_stride', False):
+            runtime_stride = self._compute_auto_stride(args.lag_time)
+            args.stride = self.config.stride * runtime_stride
 
         return args
 
@@ -559,6 +649,26 @@ class PipelineOrchestrator:
             else:
                 print("Skipping preparation phase.")
                 dataset_path = self._discover_dataset_path(dirs)
+                # When preparation is skipped we still need frame_dt_ps for any
+                # auto-stride consumer.  Read it from the existing dataset_stats.json.
+                fd, ps = self._load_prep_stats(dataset_path)
+                if fd is not None:
+                    self._frame_dt_ps = fd
+                if ps is not None:
+                    self._prep_stride = ps
+                if self._frame_dt_ps is None and self.config.timestep is not None:
+                    self._frame_dt_ps = float(self.config.timestep) * 1000.0
+                if self._prep_stride is None:
+                    self._prep_stride = int(self.config.stride)
+
+            # Fail loudly if auto-stride is requested but we still have no frame_dt.
+            if getattr(self.config, 'auto_stride', False) and self._frame_dt_ps is None:
+                raise RuntimeError(
+                    "--auto_stride requires a known frame_dt.  Either (a) pass "
+                    "--timestep <value_in_ns>, or (b) run preparation on a trajectory "
+                    "whose time metadata can be inferred, so dataset_stats.json "
+                    "records frame_dt_ps."
+                )
 
             # Phase 2: Training
             if not skip_training and not only_analysis:
@@ -883,6 +993,8 @@ def main():
         config.lr_schedule = args.lr_schedule
     if args.lr_min is not None:
         config.lr_min = args.lr_min
+    if args.auto_stride:
+        config.auto_stride = True
     if args.stride is not None:
         config.stride = args.stride
     if args.selection is not None:

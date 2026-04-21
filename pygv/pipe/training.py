@@ -121,6 +121,7 @@ def create_dataset_and_loader(args,
         use_cache=args.use_cache,
         timestep=getattr(args, 'timestep', None),
         continuous=getattr(args, 'continuous', True),
+        runtime_stride=getattr(args, 'runtime_stride', 1),
     )
 
     print(f"Dataset created with {len(dataset)} samples")

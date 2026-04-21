@@ -61,6 +61,12 @@ Examples:
                              "over --epochs. Default: none (constant LR).")
     parser.add_argument('--lr_min', type=float, default=None,
                         help='Minimum LR for cosine schedule (default: 0.0)')
+    parser.add_argument('--auto_stride', action='store_true',
+                        help="Per-lag-time runtime subsampling.  For each lag τ, use "
+                             "stride = max(1, floor(τ / (10·frame_dt))) on top of the "
+                             "preprocessing-level stride.  Requires --timestep when no prepared "
+                             "dataset with persisted frame_dt exists.  Stride is fixed within a "
+                             "lag time (retrains do not change it).")
     parser.add_argument('--stride', type=int, default=None,
                         help='Frame stride for trajectory loading (overrides preset)')
     parser.add_argument('--selection', type=str, default=None,

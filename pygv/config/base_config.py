@@ -36,6 +36,7 @@ class BaseConfig:
     clip_grad: Optional[float] = None
     lr_schedule: str = "none"   # "none" | "cosine"
     lr_min: float = 0.0         # eta_min for cosine schedule
+    auto_stride: bool = False   # per-lag-time runtime stride: max(1, floor(τ/(10·frame_dt)))
 
     # Output and caching
     output_dir: str = "./output"
