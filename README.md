@@ -45,6 +45,48 @@ pip uninstall pygv
 
 We currently supply you with different methods to call the training function, the main functionality being in `pygv.pipe.training.run_training`. You can either call the training directly  with the use of the prepared `run_training.py` in `cluster_scripts`, you can modify the shell script in there if you want to run training on a SLURM cluster, or you can use the `train.py` in `area52`. The current project is in development, and a more high-level, user-friendly training script is in the works.
 
+### 2.0 Multi-lag pipelines: auto-stride, warm-start, and the retrain policy
+
+For production runs that sweep multiple lag times, three orthogonal features in
+`run_pipeline.py` control how the pipeline scales:
+
+- **`--auto_stride`** — per-lag-time runtime subsampling. Each lag τ gets its own
+  effective stride `max(1, floor(τ / (10 · frame_dt)))` applied on top of the
+  preprocessed cache. Prevents long-τ runs from processing thousands of
+  near-duplicate pairs. Requires `--timestep <ns>` unless the preparation phase
+  has already persisted `frame_dt_ps` into `dataset_stats.json`.
+- **`--warm_start_retrains`** (default: on) — on retrain, preserve the encoder,
+  embedding, and BatchNorm running statistics, and swap only the classifier head
+  (and, for `--reversible`, the reversible score module). The optimizer and LR
+  schedule are always re-initialised. Pass `--no_warm_start_retrains` to fall
+  back to the full-rebuild path.
+- **`--max_retrains N`** (default: 5) + convergence check (default: on). The
+  retrain loop terminates immediately when the diagnostic's recommended `k`
+  equals the `k` the model was just trained at (rule (a)). Pass
+  `--no_convergence_check` to run all `N` rounds regardless.
+
+```bash
+# Recommended for production: multi-lag with auto-stride and warm-start.
+python run_pipeline.py \
+    --traj_dir /path/to/trajectories --top /path/to/topology.pdb \
+    --lag_times 1.0 5.0 10.0 20.0 \
+    --timestep 0.25 \
+    --auto_stride \
+    --preset medium_schnet
+
+# Reproduce pre-Phase-2 behaviour exactly (single lag, no auto-stride, old
+# retrain policy).  Useful when rerunning historical experiments.
+python run_pipeline.py \
+    --traj_dir /path/to/trajectories --top /path/to/topology.pdb \
+    --lag_time 5.0 --n_states 8 \
+    --no_warm_start_retrains --max_retrains 2 --no_convergence_check
+```
+
+Stride is **fixed within a lag time** — all retrain rounds at lag τ use the
+same auto-computed stride. `frame_dt_ps` is persisted to the preparation run's
+`dataset_stats.json` so resume runs and downstream consumers can read the
+authoritative value without re-probing the trajectory.
+
 ### 2.1 Reversible GraphVAMPNet (RevGraphVAMP)
 
 To train with physical constraints (reversibility and detailed balance),

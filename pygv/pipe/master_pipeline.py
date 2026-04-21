@@ -522,23 +522,58 @@ class PipelineOrchestrator:
     def _run_retrain_loop(self, dirs, dataset_path, trained_models,
                           analysis_results, max_retrain=2):
         """
-        Check analysis results for "retrain" recommendations and automatically
-        retrain with the reduced state count.
+        Automatic retrain loop driven by the state-reduction diagnostic.
 
-        Mutates trained_models and analysis_results in-place.
+        For every experiment whose initial analysis recommends ``"retrain"``,
+        the loop pops the recommended ``effective_n_states`` off a pending
+        queue, trains a new model at that k, re-analyses, and decides whether
+        to queue another round.  Three termination signals:
+
+        1. **Convergence (rule (a))**: when ``config.convergence_check`` is
+           True (the default) and the diagnostic's new
+           ``effective_n_states`` equals the ``n_states`` just trained, the
+           loop stops for that experiment — the diagnostic is "pointing at"
+           the current model.  This short-circuits even when
+           ``recommendation`` is still ``"retrain"`` (e.g. due to nonempty
+           ``merge_groups``/``underpopulated`` flags), which is the correct
+           behaviour under Phase 4's policy.
+        2. **Exhaustion**: when ``max_retrain`` rounds have been executed
+           and the diagnostic still recommends retrain.  The loop logs a
+           ``WARNING:`` line and keeps the last-trained model.
+        3. **Natural stop**: when the diagnostic recommends ``"keep"`` on
+           the most recent model.
+
+        Warm-start integration (Phase 3): when ``config.warm_start_retrains``
+        is True (the default after Phase 4), each retrain round reuses the
+        previous experiment's encoder + embedding + BatchNorm running stats
+        via :meth:`VAMPNet.warm_restart_with_new_k` /
+        :meth:`RevVAMPNet.warm_restart_with_new_k` instead of rebuilding the
+        model from scratch.  The optimizer and LR schedule are always
+        reinitialised.  On any load/restart failure the loop falls back to
+        the full-rebuild path with a printed notice.
+
+        Mutates ``trained_models`` and ``analysis_results`` in-place.
 
         Parameters
         ----------
         dirs : dict
-            Experiment directory structure.
+            Experiment directory structure (requires 'training', 'analysis',
+            'preparation', 'cache' entries as produced by
+            :meth:`setup_experiment_directory`).
         dataset_path : str
-            Path to the prepared dataset.
+            Path to the prepared dataset (the same path produced by the
+            preparation phase; used to re-create training datasets per lag).
         trained_models : dict
-            Maps exp_name -> model_path. Updated with retrained models.
+            Maps ``exp_name`` -> ``model_path``.  Updated with retrained
+            models as the loop progresses.
         analysis_results : dict
-            Maps exp_name -> results dict. Updated with retrained analysis.
-        max_retrain : int
-            Maximum number of retrain iterations per experiment (default: 2).
+            Maps ``exp_name`` -> results dict (must contain a
+            ``"diagnostic_report"`` key).  Updated with retrained analysis.
+        max_retrain : int, default=2
+            Safety cap on retrain iterations per experiment.  In practice
+            callers pass ``config.max_retrains`` (5 by default after Phase 4);
+            the kwarg default is kept at 2 for backward-compatibility with
+            callers that predate the policy change.
         """
         # Collect experiments that need retraining from the initial analysis
         pending = []

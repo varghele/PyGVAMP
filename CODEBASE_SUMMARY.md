@@ -102,9 +102,16 @@ transition matrix K satisfying detailed balance. Loss = negative log-likelihood
 of observed transitions under K.
 
 ### 5. Pipeline Phases
-1. **Preparation** (`preparation.py`): Load trajectories → Convert to graphs → Cache
-2. **Training** (`training.py`): Grid search over lag times × n_states → Train → Save best
+1. **Preparation** (`preparation.py`): Load trajectories → Convert to graphs → Cache. Writes `dataset_stats.json` including the raw trajectory `frame_dt_ps` (consumed by auto-stride).
+2. **Training** (`training.py`): Grid search over lag times × n_states → Train → Save best. Accepts an optional ``pre_built_model`` for warm-start retrains.
 3. **Analysis** (`analysis.py`): Inference → States → Transitions → Attention → Structures → Plots
+4. **Automatic retrain loop** (`master_pipeline._run_retrain_loop`): Phase 3b, optional. Triggered by the diagnostic's `recommendation="retrain"`; terminates on same-k convergence, exhaustion (`max_retrains`), or `"keep"`.
+
+### 6. Auto-Stride (`master_pipeline._compute_auto_stride`)
+Per-lag-time runtime subsampling. Formula: `stride = max(1, floor(τ / (10 · cache_frame_dt)))`, applied on top of the preprocessing-level stride without re-caching. Opt-in via `--auto_stride`; requires `--timestep` when no prepared dataset with persisted `frame_dt_ps` exists. The dataset's runtime subsample lives at `VAMPNetDataset.runtime_stride` (lines 140-147 in `vampnet_dataset.py`, applied after the time-lagged pair construction).
+
+### 7. Warm-Start Retrains
+`VAMPNet.warm_restart_with_new_k(new_k)` and `RevVAMPNet.warm_restart_with_new_k(new_k)` swap only the classifier head (and, for `RevVAMPNet`, the reversible score module — `log_stationary` and `rate_matrix_weights` are reinitialised because both depend on `n_states`; `epsilon` is preserved). Encoder + embedding weights and BatchNorm running statistics are kept in place. The caller must recreate the optimizer (and any LR scheduler) after the restart because parameter references have changed. Opt-in via `--warm_start_retrains` (default after Phase 4: ON). `SoftmaxMLP` exposes its construction hyperparameters as attributes so the restart can rebuild a same-shape, different-k classifier without external plumbing.
 
 ---
 
@@ -115,9 +122,10 @@ All configuration lives in `pygv/config/base_config.py` (shared params) and `pyg
 - **Data**: `traj_dir`, `top`, `file_pattern`, `selection`, `stride`, `lag_time`, `continuous`
 - **Graph**: `n_neighbors`, `gaussian_expansion_dim`
 - **Model**: `encoder_type`, `n_states`
-- **Training**: `epochs`, `batch_size`, `lr`, `weight_decay`, `clip_grad`
+- **Training**: `epochs`, `batch_size`, `lr`, `weight_decay`, `clip_grad`, `lr_schedule`, `lr_min`
 - **Numerical stability**: `vamp_epsilon`, `training_jitter`, `edge_norm_eps`
 - **Embedding/Classifier**: `use_embedding`, `clf_hidden_dim`, `clf_num_layers`, etc.
+- **Multi-lag policy**: `auto_stride`, `warm_start_retrains`, `max_retrains`, `convergence_check`
 
 ---
 
@@ -151,4 +159,4 @@ python run_pipeline.py ... --validate_only
 
 ---
 
-*Last updated: 2026-04-07*
+*Last updated: 2026-04-21*
