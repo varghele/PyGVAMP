@@ -677,6 +677,7 @@ class VAMPNet(nn.Module):
             train_loader,
             test_loader=None,
             optimizer=None,
+            scheduler=None,
             n_epochs=100,
             device=None,
             learning_rate=0.001,
@@ -925,6 +926,13 @@ class VAMPNet(nn.Module):
             # Save checkpoint if requested
             if save_every and (epoch + 1) % save_every == 0 and save_dir:
                 self.save_complete_model(os.path.join(save_dir, f"checkpoint_epoch_{epoch + 1}.pt"))
+
+            # Step LR scheduler (once per epoch) and log the new rate
+            if scheduler is not None:
+                scheduler.step()
+                if verbose:
+                    next_lr = optimizer.param_groups[0]['lr']
+                    print(f"  LR now: {next_lr:.6g}")
 
             # Execute callbacks if provided
             if callbacks:

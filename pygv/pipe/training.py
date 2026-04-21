@@ -340,6 +340,17 @@ def train_model(args, model, train_loader, test_loader, paths):
         weight_decay=args.weight_decay
     )
 
+    # Create LR scheduler (opt-in via --lr_schedule)
+    schedule_name = getattr(args, 'lr_schedule', 'none')
+    if schedule_name == 'cosine':
+        eta_min = getattr(args, 'lr_min', 0.0)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs, eta_min=eta_min
+        )
+        print(f"LR schedule: cosine annealing {args.lr} -> {eta_min} over {args.epochs} epochs")
+    else:
+        scheduler = None
+
     # Print optimizer parameters
     print("\nParameters captured by optimizer:")
     param_count = 0
@@ -372,6 +383,7 @@ def train_model(args, model, train_loader, test_loader, paths):
         train_loader=train_loader,
         test_loader=test_loader,
         optimizer=optimizer,
+        scheduler=scheduler,
         n_epochs=args.epochs,
         device=device,
         learning_rate=args.lr,

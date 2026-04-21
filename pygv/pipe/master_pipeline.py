@@ -879,6 +879,10 @@ def main():
         config.batch_size = args.batch_size
     if args.clip_grad is not None:
         config.clip_grad = args.clip_grad
+    if args.lr_schedule is not None:
+        config.lr_schedule = args.lr_schedule
+    if args.lr_min is not None:
+        config.lr_min = args.lr_min
     if args.stride is not None:
         config.stride = args.stride
     if args.selection is not None:

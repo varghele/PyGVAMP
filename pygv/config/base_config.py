@@ -34,6 +34,8 @@ class BaseConfig:
     weight_decay: float = 0.0001
     val_split: float = 0.2
     clip_grad: Optional[float] = None
+    lr_schedule: str = "none"   # "none" | "cosine"
+    lr_min: float = 0.0         # eta_min for cosine schedule
 
     # Output and caching
     output_dir: str = "./output"

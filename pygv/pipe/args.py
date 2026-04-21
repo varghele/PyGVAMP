@@ -55,6 +55,12 @@ Examples:
                         help='Batch size for training and inference (overrides preset)')
     parser.add_argument('--clip_grad', type=float, default=None,
                         help='Gradient clipping max norm (default: disabled)')
+    parser.add_argument('--lr_schedule', type=str, default=None,
+                        choices=['none', 'cosine'],
+                        help="Learning-rate schedule. 'cosine' anneals LR from --lr to --lr_min "
+                             "over --epochs. Default: none (constant LR).")
+    parser.add_argument('--lr_min', type=float, default=None,
+                        help='Minimum LR for cosine schedule (default: 0.0)')
     parser.add_argument('--stride', type=int, default=None,
                         help='Frame stride for trajectory loading (overrides preset)')
     parser.add_argument('--selection', type=str, default=None,
