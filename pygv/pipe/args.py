@@ -70,8 +70,16 @@ Examples:
     parser.add_argument('--warm_start_retrains', action='store_true',
                         help="On retrain, preserve encoder + embedding + BN running stats and "
                              "replace only the classifier head (and the reversible score module "
-                             "for --reversible).  Default: disabled (retrains rebuild from "
-                             "scratch).  The optimizer is always reinitialised.")
+                             "for --reversible).  Default: enabled.  The optimizer is always "
+                             "reinitialised.  Pass --no_warm_start_retrains to disable.")
+    parser.add_argument('--no_warm_start_retrains', action='store_true',
+                        help="Disable warm-start: retrains rebuild the model from scratch.")
+    parser.add_argument('--max_retrains', type=int, default=None,
+                        help="Safety cap on retrain iterations per experiment (default: 5).")
+    parser.add_argument('--no_convergence_check', action='store_true',
+                        help="Run all --max_retrains rounds even if the diagnostic recommends "
+                             "the same k the model was just trained with.  By default the loop "
+                             "terminates as soon as the recommendation matches the current k.")
     parser.add_argument('--stride', type=int, default=None,
                         help='Frame stride for trajectory loading (overrides preset)')
     parser.add_argument('--selection', type=str, default=None,

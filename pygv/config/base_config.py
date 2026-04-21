@@ -37,7 +37,9 @@ class BaseConfig:
     lr_schedule: str = "none"   # "none" | "cosine"
     lr_min: float = 0.0         # eta_min for cosine schedule
     auto_stride: bool = False   # per-lag-time runtime stride: max(1, floor(τ/(10·frame_dt)))
-    warm_start_retrains: bool = False  # retrain by swapping only the classifier head (+rev_score)
+    warm_start_retrains: bool = True   # retrain by swapping only the classifier head (+rev_score)
+    max_retrains: int = 5              # safety cap on retrain iterations per experiment
+    convergence_check: bool = True     # stop when diagnostic recommends the current k (no change)
 
     # Output and caching
     output_dir: str = "./output"

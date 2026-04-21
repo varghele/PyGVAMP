@@ -621,19 +621,33 @@ class PipelineOrchestrator:
                 print(f"Retrain analysis failed for {retrained_exp}: {e}")
                 continue
 
-            # Check if this retrained model also recommends "retrain"
+            # Decide whether to queue another retrain.
             report = results.get("diagnostic_report")
-            if (report is not None
-                    and getattr(report, "recommendation", None) == "retrain"
-                    and iteration + 1 < max_retrain):
-                print(f"Retrained model also recommends retrain "
-                      f"(effective_n_states={report.effective_n_states}). "
-                      f"Queuing iteration {iteration + 2}.")
-                pending.append((retrained_exp, report.effective_n_states, iteration + 1))
-            elif (report is not None
-                  and getattr(report, "recommendation", None) == "retrain"):
-                print(f"Retrained model still recommends retrain but max iterations "
-                      f"({max_retrain}) reached. Stopping.")
+            if report is None:
+                continue
+            recommended_k = getattr(report, "effective_n_states", None)
+            recommendation = getattr(report, "recommendation", None)
+
+            # Rule (a) convergence: if the diagnostic's recommended k matches
+            # the k we just trained, the loop has converged — stop even if
+            # the recommendation string is still "retrain" (which can happen
+            # when merge_groups or underpopulated is nonempty).
+            if (getattr(self.config, 'convergence_check', True)
+                    and recommended_k == new_n_states):
+                print(f"Convergence: recommended k={recommended_k} matches trained "
+                      f"n_states; stopping retrains for '{retrained_exp}'.")
+                continue
+
+            if recommendation == "retrain" and iteration + 1 < max_retrain:
+                print(f"Retrained model recommends another retrain "
+                      f"(effective_n_states={recommended_k}). "
+                      f"Queuing iteration {iteration + 2}/{max_retrain}.")
+                pending.append((retrained_exp, recommended_k, iteration + 1))
+            elif recommendation == "retrain":
+                print(f"WARNING: retrain loop exhausted ({max_retrain} iterations) "
+                      f"without convergence for '{retrained_exp}'.  Using the last "
+                      f"trained model (n_states={new_n_states}); latest recommendation "
+                      f"was k={recommended_k}.")
 
     def run_complete_pipeline(self, skip_preparation=False, skip_training=False,
                               only_analysis=False, resume=None):
@@ -714,7 +728,10 @@ class PipelineOrchestrator:
 
             # Phase 3b: Automatic retraining (skip when only running analysis)
             if analysis_results and dataset_path and not only_analysis:
-                self._run_retrain_loop(dirs, dataset_path, trained_models, analysis_results)
+                self._run_retrain_loop(
+                    dirs, dataset_path, trained_models, analysis_results,
+                    max_retrain=int(getattr(self.config, 'max_retrains', 2)),
+                )
 
             # Save summary
             self._save_pipeline_summary(dirs, trained_models, analysis_results)
@@ -1019,6 +1036,12 @@ def main():
         config.auto_stride = True
     if args.warm_start_retrains:
         config.warm_start_retrains = True
+    if args.no_warm_start_retrains:
+        config.warm_start_retrains = False
+    if args.max_retrains is not None:
+        config.max_retrains = args.max_retrains
+    if args.no_convergence_check:
+        config.convergence_check = False
     if args.stride is not None:
         config.stride = args.stride
     if args.selection is not None:

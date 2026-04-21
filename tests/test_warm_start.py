@@ -274,9 +274,11 @@ def test_warm_restart_optimizer_reinit_required():
 # 6. Off by default
 # ---------------------------------------------------------------------------
 
-def test_baseconfig_warm_start_default_false():
+def test_baseconfig_warm_start_default_after_phase4():
+    # Phase 3 shipped with default=False; Phase 4 flips this to True because
+    # retrains are cheap enough under warm-start to be the recommended mode.
     cfg = BaseConfig()
-    assert cfg.warm_start_retrains is False
+    assert cfg.warm_start_retrains is True
 
 
 # ---------------------------------------------------------------------------
