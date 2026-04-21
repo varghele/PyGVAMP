@@ -998,58 +998,50 @@ class VAMPNet(nn.Module):
             # Limit number of batches to data loader size
             num_batches = min(num_batches, len(data_loader))
 
-            # Evaluate in eval mode with no grad
+            # Evaluate in eval mode with no grad.
+            # Concatenate chi outputs across batches and score once on the full
+            # tensor — mean(VAMP(batch_i)) is a biased, high-variance estimator.
             self.eval()
-            batch_scores = []
-            batch_sizes = []
+            chi_t0_chunks = []
+            chi_t1_chunks = []
 
-            # Get iterator for the data loader
             iterator = iter(data_loader)
 
             with torch.no_grad():
-                # Process the specified number of batches
                 for i in range(num_batches):
                     try:
-                        # Get the next batch
                         test_batch = next(iterator)
                     except StopIteration:
-                        # Restart iterator if we run out of batches
                         iterator = iter(data_loader)
                         test_batch = next(iterator)
 
-                    # Move batch to device
                     test_t0, test_t1 = to_device(test_batch, device)
-                    batch_size = test_t0.size(0) if hasattr(test_t0, 'size') else 0
 
-                    # Forward pass
                     test_chi_t0, _ = self.forward(test_t0, apply_classifier=True)
                     test_chi_t1, _ = self.forward(test_t1, apply_classifier=True)
 
-                    # Get VAMP score
-                    test_loss = self.vamp_score.loss(test_chi_t0, test_chi_t1)
-                    test_score = -test_loss.item()
+                    chi_t0_chunks.append(test_chi_t0)
+                    chi_t1_chunks.append(test_chi_t1)
 
-                    batch_scores.append(test_score)
-                    batch_sizes.append(batch_size)
-
-            # Back to training mode
             self.train()
 
-            # Compute average score
-            if not batch_scores:
+            if not chi_t0_chunks:
                 if verbose:
                     print("\nNo batches were successfully evaluated")
                 return None
 
-            avg_score = sum(batch_scores) / len(batch_scores)
+            chi_t0_full = torch.cat(chi_t0_chunks, dim=0)
+            chi_t1_full = torch.cat(chi_t1_chunks, dim=0)
 
-            # Print validation score to console if requested
+            with torch.no_grad():
+                full_loss = self.vamp_score.loss(chi_t0_full, chi_t1_full)
+            score = -full_loss.item()
+
             if verbose:
-                batch_score_str = ", ".join([f"{score:.4f}" for score in batch_scores])
-                print(f"\nQuick validation ({len(batch_scores)} batches): Average VAMP score = {avg_score:.4f}")
-                print(f"Individual batch scores: [{batch_score_str}]")
+                print(f"\nQuick validation ({len(chi_t0_chunks)} batches, "
+                      f"{chi_t0_full.shape[0]} samples): VAMP score = {score:.4f}")
 
-            return avg_score
+            return score
 
         except Exception as e:
             if verbose:
@@ -1059,6 +1051,12 @@ class VAMPNet(nn.Module):
     def evaluate(self, data_loader, device=None):
         """
         Fully evaluate the model on the given data loader.
+
+        Computes the VAMP score once over the concatenated chi outputs of
+        every batch, rather than averaging per-batch VAMP scores. Per-batch
+        VAMP is a biased, high-variance estimator because the score is a
+        nonlinear function (SVD of a sample covariance) — averaging is not
+        equivalent to the full-set score and introduces epoch-to-epoch jitter.
 
         Parameters
         ----------
@@ -1070,7 +1068,7 @@ class VAMPNet(nn.Module):
         Returns
         -------
         float
-            Average VAMP score
+            VAMP score computed on the full validation set.
         """
         if data_loader is None or len(data_loader) == 0:
             return None
@@ -1085,28 +1083,30 @@ class VAMPNet(nn.Module):
             return (x_t0.to(device_), x_t1.to(device_))
 
         self.eval()
-        test_score_sum = 0.0
-        n_test_batches = 0
+        chi_t0_chunks = []
+        chi_t1_chunks = []
 
         with torch.no_grad():
             for test_batch in data_loader:
-                # Move batch to device
                 test_t0, test_t1 = to_device(test_batch, device)
 
-                # Forward pass
                 test_chi_t0, _ = self.forward(test_t0, apply_classifier=True)
                 test_chi_t1, _ = self.forward(test_t1, apply_classifier=True)
 
-                # Calculate VAMP score
-                test_loss = self.vamp_score.loss(test_chi_t0, test_chi_t1)
-                test_score = -test_loss.item()
+                chi_t0_chunks.append(test_chi_t0)
+                chi_t1_chunks.append(test_chi_t1)
 
-                test_score_sum += test_score
-                n_test_batches += 1
-
-        # Return to training mode
+        # Return to training mode (even on empty-loader edge case below)
         self.train()
 
-        # Return average test score
-        return test_score_sum / max(1, n_test_batches)
+        if not chi_t0_chunks:
+            return None
+
+        chi_t0_full = torch.cat(chi_t0_chunks, dim=0)
+        chi_t1_full = torch.cat(chi_t1_chunks, dim=0)
+
+        with torch.no_grad():
+            full_loss = self.vamp_score.loss(chi_t0_full, chi_t1_full)
+
+        return -full_loss.item()
 

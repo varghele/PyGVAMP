@@ -715,8 +715,12 @@ class RevVAMPNet(nn.Module):
 
             num_batches = min(num_batches, len(data_loader))
 
+            # The reversible NLL is linear in samples, so per-batch averaging
+            # is mathematically equivalent when batches are equal-sized. We
+            # still concat-and-score once for consistency with the VAMP-2 path.
             self.eval()
-            batch_nlls = []
+            chi_t0_chunks = []
+            chi_t1_chunks = []
 
             iterator = iter(data_loader)
 
@@ -733,24 +737,27 @@ class RevVAMPNet(nn.Module):
                     test_chi_t0, _ = self.forward(test_t0, apply_classifier=True)
                     test_chi_t1, _ = self.forward(test_t1, apply_classifier=True)
 
-                    test_nll = self.rev_score.loss(test_chi_t0, test_chi_t1)
-                    batch_nlls.append(test_nll.item())
+                    chi_t0_chunks.append(test_chi_t0)
+                    chi_t1_chunks.append(test_chi_t1)
 
             self.train()
 
-            if not batch_nlls:
+            if not chi_t0_chunks:
                 if verbose:
                     print("\nNo batches were successfully evaluated")
                 return None
 
-            avg_nll = sum(batch_nlls) / len(batch_nlls)
+            chi_t0_full = torch.cat(chi_t0_chunks, dim=0)
+            chi_t1_full = torch.cat(chi_t1_chunks, dim=0)
+
+            with torch.no_grad():
+                nll = self.rev_score.loss(chi_t0_full, chi_t1_full).item()
 
             if verbose:
-                batch_nll_str = ", ".join([f"{nll:.4f}" for nll in batch_nlls])
-                print(f"\nQuick validation ({len(batch_nlls)} batches): Average NLL = {avg_nll:.4f}")
-                print(f"Individual batch NLLs: [{batch_nll_str}]")
+                print(f"\nQuick validation ({len(chi_t0_chunks)} batches, "
+                      f"{chi_t0_full.shape[0]} samples): NLL = {nll:.4f}")
 
-            return avg_nll
+            return nll
 
         except Exception as e:
             if verbose:
@@ -761,10 +768,16 @@ class RevVAMPNet(nn.Module):
         """
         Fully evaluate the model on the given data loader.
 
+        Concatenates chi outputs across batches and scores once on the full
+        tensor. The reversible NLL is linear in samples, so with equal-sized
+        batches this matches per-batch averaging — the style mirrors the
+        VAMP-2 evaluator, where concat-and-score-once is required for
+        correctness.
+
         Returns
         -------
         float
-            Average NLL score
+            NLL computed on the full validation set.
         """
         if data_loader is None or len(data_loader) == 0:
             return None
@@ -777,8 +790,8 @@ class RevVAMPNet(nn.Module):
             return (x_t0.to(device_), x_t1.to(device_))
 
         self.eval()
-        test_nll_sum = 0.0
-        n_test_batches = 0
+        chi_t0_chunks = []
+        chi_t1_chunks = []
 
         with torch.no_grad():
             for test_batch in data_loader:
@@ -787,11 +800,18 @@ class RevVAMPNet(nn.Module):
                 test_chi_t0, _ = self.forward(test_t0, apply_classifier=True)
                 test_chi_t1, _ = self.forward(test_t1, apply_classifier=True)
 
-                test_nll = self.rev_score.loss(test_chi_t0, test_chi_t1)
-
-                test_nll_sum += test_nll.item()
-                n_test_batches += 1
+                chi_t0_chunks.append(test_chi_t0)
+                chi_t1_chunks.append(test_chi_t1)
 
         self.train()
 
-        return test_nll_sum / max(1, n_test_batches)
+        if not chi_t0_chunks:
+            return None
+
+        chi_t0_full = torch.cat(chi_t0_chunks, dim=0)
+        chi_t1_full = torch.cat(chi_t1_chunks, dim=0)
+
+        with torch.no_grad():
+            nll = self.rev_score.loss(chi_t0_full, chi_t1_full).item()
+
+        return nll
