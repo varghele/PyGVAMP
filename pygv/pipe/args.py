@@ -67,6 +67,11 @@ Examples:
                              "preprocessing-level stride.  Requires --timestep when no prepared "
                              "dataset with persisted frame_dt exists.  Stride is fixed within a "
                              "lag time (retrains do not change it).")
+    parser.add_argument('--warm_start_retrains', action='store_true',
+                        help="On retrain, preserve encoder + embedding + BN running stats and "
+                             "replace only the classifier head (and the reversible score module "
+                             "for --reversible).  Default: disabled (retrains rebuild from "
+                             "scratch).  The optimizer is always reinitialised.")
     parser.add_argument('--stride', type=int, default=None,
                         help='Frame stride for trajectory loading (overrides preset)')
     parser.add_argument('--selection', type=str, default=None,

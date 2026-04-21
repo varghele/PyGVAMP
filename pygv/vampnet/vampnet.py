@@ -371,6 +371,61 @@ class VAMPNet(nn.Module):
             # Regular tensor data
             return self.embedding_module(data)
 
+    def warm_restart_with_new_k(self, new_k: int) -> None:
+        """
+        Replace the classifier head with one sized for ``new_k`` output states.
+
+        Preserves the encoder, the embedding module, and the BatchNorm running
+        statistics inside them (their ``nn.Module`` objects are untouched).
+        Only the classifier is rebuilt — so any BN *inside* the classifier
+        gets fresh running stats, because its dimensions change with ``new_k``.
+
+        Note: the optimizer must be recreated by the caller after this method
+        returns, because ``self.classifier_module``'s parameter references are
+        new (and the old Adam/AdamW moments are meaningless for them).
+
+        Parameters
+        ----------
+        new_k : int
+            New classifier output dimension (number of states).
+
+        Raises
+        ------
+        ValueError
+            If ``new_k < 2`` or if the existing classifier does not expose
+            its construction hyperparameters (i.e. is not a ``SoftmaxMLP``).
+        """
+        if new_k < 2:
+            raise ValueError(f"new_k must be >= 2, got {new_k}")
+        old = self.classifier_module
+        if old is None:
+            raise ValueError("warm_restart_with_new_k requires an existing classifier_module")
+        required = ("in_channels", "hidden_channels", "num_layers",
+                    "dropout", "act", "norm")
+        missing = [a for a in required if not hasattr(old, a)]
+        if missing:
+            raise ValueError(
+                f"Existing classifier is missing hyperparameter attributes "
+                f"{missing}; cannot warm-restart.  Rebuild with --warm_start_retrains "
+                f"disabled, or upgrade the classifier to expose these fields."
+            )
+        new_classifier = SoftmaxMLP(
+            in_channels=old.in_channels,
+            hidden_channels=old.hidden_channels,
+            out_channels=new_k,
+            num_layers=old.num_layers,
+            dropout=old.dropout,
+            act=old.act,
+            norm=old.norm,
+        )
+        # Move the fresh classifier to the same device as the existing one.
+        try:
+            existing_device = next(old.parameters()).device
+            new_classifier = new_classifier.to(existing_device)
+        except StopIteration:
+            pass
+        self.classifier_module = new_classifier
+
     def save(self, filepath, save_optimizer=False, optimizer=None, metadata=None):
         """
         Save the VAMPNet model to disk, including all components and optional metadata.

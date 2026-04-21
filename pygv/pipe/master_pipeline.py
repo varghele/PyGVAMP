@@ -579,8 +579,30 @@ class PipelineOrchestrator:
             train_args = self._create_train_args(
                 dirs, dataset_path, lag_time, new_n_states, exp_dir
             )
+            # Warm-start branch: preserve encoder+embedding (+BN running stats)
+            # from the parent experiment's model and only swap the classifier head.
+            pre_built_model = None
+            if getattr(self.config, 'warm_start_retrains', False):
+                parent_model_path = trained_models.get(exp_name)
+                if parent_model_path is None:
+                    print(f"Warm-start requested but parent model for '{exp_name}' not found; "
+                          f"falling back to full rebuild.")
+                else:
+                    try:
+                        import torch as _torch
+                        device = _torch.device("cpu" if self.config.cpu else
+                                               "cuda" if _torch.cuda.is_available() else "cpu")
+                        pre_built_model = _torch.load(
+                            parent_model_path, map_location=device, weights_only=False
+                        )
+                        pre_built_model.warm_restart_with_new_k(new_n_states)
+                        print(f"Warm-restart: loaded '{parent_model_path}', "
+                              f"swapped classifier to n_states={new_n_states}.")
+                    except Exception as e:
+                        print(f"Warm-start failed ({e}); falling back to full rebuild.")
+                        pre_built_model = None
             try:
-                model_path = run_training(train_args)
+                model_path = run_training(train_args, pre_built_model=pre_built_model)
                 trained_models[retrained_exp] = str(model_path)
                 print(f"Retrain training completed: {model_path}")
             except Exception as e:
@@ -995,6 +1017,8 @@ def main():
         config.lr_min = args.lr_min
     if args.auto_stride:
         config.auto_stride = True
+    if args.warm_start_retrains:
+        config.warm_start_retrains = True
     if args.stride is not None:
         config.stride = args.stride
     if args.selection is not None:

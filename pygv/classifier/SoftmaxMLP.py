@@ -35,6 +35,16 @@ class SoftmaxMLP(nn.Module):
                  dropout=0.0, act='relu', norm=None):
         super(SoftmaxMLP, self).__init__()
 
+        # Stash constructor args so the model can rebuild a same-shape, different-k
+        # classifier on warm-restart without re-reading the CLI/config.
+        self.in_channels = in_channels
+        self.hidden_channels = hidden_channels
+        self.out_channels = out_channels
+        self.num_layers = num_layers
+        self.dropout = dropout
+        self.act = act
+        self.norm = norm
+
         # Create MLP for all but the last layer
         if num_layers > 1:
             # If more than one layer, use MLP for hidden layers

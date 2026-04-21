@@ -315,6 +315,72 @@ class RevVAMPNet(nn.Module):
         """
         return self.rev_score.get_stationary_distribution()
 
+    def warm_restart_with_new_k(self, new_k: int) -> None:
+        """
+        Replace the classifier head and the reversible score module with ones
+        sized for ``new_k`` output states.
+
+        Preserves the encoder, embedding module, and BatchNorm running
+        statistics inside them.  Rebuilds the classifier (so BN inside the
+        classifier is re-initialised — its dimensions change with ``new_k``)
+        AND the ``rev_score`` module (``log_stationary`` and
+        ``rate_matrix_weights`` both depend on ``n_states``; they are
+        reinitialised from scratch).
+
+        Note: the optimizer must be recreated by the caller after this
+        method returns, because parameter references have changed.
+
+        Parameters
+        ----------
+        new_k : int
+            New classifier output dimension (number of states).
+
+        Raises
+        ------
+        ValueError
+            If ``new_k < 2`` or if the existing classifier does not expose
+            its construction hyperparameters (i.e. is not a ``SoftmaxMLP``).
+        """
+        if new_k < 2:
+            raise ValueError(f"new_k must be >= 2, got {new_k}")
+        old = self.classifier_module
+        if old is None:
+            raise ValueError("warm_restart_with_new_k requires an existing classifier_module")
+        required = ("in_channels", "hidden_channels", "num_layers",
+                    "dropout", "act", "norm")
+        missing = [a for a in required if not hasattr(old, a)]
+        if missing:
+            raise ValueError(
+                f"Existing classifier is missing hyperparameter attributes "
+                f"{missing}; cannot warm-restart.  Rebuild with --warm_start_retrains "
+                f"disabled, or upgrade the classifier to expose these fields."
+            )
+
+        # Determine device before we swap modules
+        try:
+            existing_device = next(old.parameters()).device
+        except StopIteration:
+            existing_device = torch.device("cpu")
+
+        new_classifier = SoftmaxMLP(
+            in_channels=old.in_channels,
+            hidden_channels=old.hidden_channels,
+            out_channels=new_k,
+            num_layers=old.num_layers,
+            dropout=old.dropout,
+            act=old.act,
+            norm=old.norm,
+        ).to(existing_device)
+        self.classifier_module = new_classifier
+
+        # Rebuild the reversible score — its two learnable tensors depend on n_states.
+        old_rev = self.rev_score
+        new_rev = ReversibleVAMPScore(
+            n_states=new_k,
+            epsilon=float(getattr(old_rev, "epsilon", 1e-6)),
+        ).to(existing_device)
+        self.rev_score = new_rev
+
     def save(self, filepath, save_optimizer=False, optimizer=None, metadata=None):
         """
         Save the RevVAMPNet model to disk.
