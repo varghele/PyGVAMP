@@ -748,6 +748,8 @@ class VAMPNet(nn.Module):
             smoothing=5,
             sample_validate_every=100,  # Validate on a sample batch every N batches
             early_stopping=None,  # Number of epochs with no improvement to trigger early stopping
+            early_stopping_tol=0.0,       # Relative improvement threshold for "no improvement"
+            early_stopping_min_epochs=0,  # Warmup: don't trigger early stopping before this epoch
             callbacks=None
     ):
         """
@@ -790,7 +792,20 @@ class VAMPNet(nn.Module):
         sample_validate_every : int, default=100
             Check validation performance on a single batch every N training batches
         early_stopping : int, optional
-            Number of epochs without improvement after which to stop training
+            Patience — stop after this many consecutive epochs without a
+            meaningful Val VAMP improvement.  None (default) disables early
+            stopping.  See ``early_stopping_tol`` for what "meaningful" means.
+        early_stopping_tol : float, default=0.0
+            Relative improvement threshold for the plateau counter.  An epoch
+            counts as an "improvement" only when ``val > plateau_ref * (1 + tol)``
+            (or ``val > plateau_ref + tol`` if ``plateau_ref <= 0``).  At 0.0
+            (default) any strict improvement resets the counter — matches the
+            historical behaviour.  Typical non-zero value: ``1e-4`` (0.01%
+            relative gain threshold).
+        early_stopping_min_epochs : int, default=0
+            Warmup — no early-stopping trigger before this epoch.  Protects
+            against stopping during the initial noisy climb.  Typical value
+            for warm-started retrains on 50-epoch budgets: 10.
         callbacks : list, optional
             List of callback functions to call after each epoch
 
@@ -837,7 +852,8 @@ class VAMPNet(nn.Module):
         }
 
         # Initialize variables
-        best_score = float('-inf')
+        best_score = float('-inf')     # strict best — drives model selection
+        plateau_ref = float('-inf')    # tolerance-aware ratchet — drives patience counter
         best_model_state = None
         no_improvement_count = 0
         global_batch = 1
@@ -848,7 +864,10 @@ class VAMPNet(nn.Module):
                 print(f"Using quick validation every {sample_validate_every} batches")
                 print(f"Performing full validation after each epoch")
             if early_stopping:
-                print(f"Early stopping after {early_stopping} epochs without improvement")
+                print(
+                    f"Early stopping: patience={early_stopping} "
+                    f"(rel tol={early_stopping_tol}, min_epochs={early_stopping_min_epochs})"
+                )
 
         # Training loop over epochs
         for epoch in range(n_epochs):
@@ -954,28 +973,38 @@ class VAMPNet(nn.Module):
                 if verbose:
                     print(f"Epoch {epoch + 1}/{n_epochs}, Train VAMP: {avg_train_score:.4f}")
 
-            # Check if this is the best model
+            # Model selection — always saves on strict improvement.
             if current_val_score > best_score:
                 best_score = current_val_score
-                no_improvement_count = 0
-
-                # Save best model state
                 best_model_state = {k: v.cpu().clone() for k, v in self.state_dict().items()}
-
-                # Also save to disk if directory specified
                 if save_dir:
                     self.save_complete_model(os.path.join(save_dir, "best_model.pt"))
-
                 if verbose:
                     print(f"New best model with score: {best_score:.4f}")
+
+            # Plateau counter — separate ratchet using the tolerance threshold.
+            if plateau_ref == float('-inf'):
+                threshold = float('-inf')
+            elif plateau_ref > 0:
+                threshold = plateau_ref * (1.0 + early_stopping_tol)
+            else:
+                threshold = plateau_ref + early_stopping_tol
+
+            if current_val_score > threshold:
+                plateau_ref = current_val_score
+                no_improvement_count = 0
             else:
                 no_improvement_count += 1
                 if verbose:
-                    print(f"No improvement for {no_improvement_count} epochs. Best score: {best_score:.4f}")
+                    print(f"No improvement for {no_improvement_count} epochs. "
+                          f"Best score: {best_score:.4f}")
 
-            # Early stopping check
-            if early_stopping and no_improvement_count >= early_stopping:
-                print(f"Early stopping triggered after {no_improvement_count} epochs without improvement")
+            # Early stopping — respects min_epochs warmup.
+            if (early_stopping
+                    and (epoch + 1) >= early_stopping_min_epochs
+                    and no_improvement_count >= early_stopping):
+                print(f"Early stopping triggered after {no_improvement_count} epochs "
+                      f"below plateau threshold (rel tol={early_stopping_tol}).")
                 break
 
             # Save checkpoint if requested

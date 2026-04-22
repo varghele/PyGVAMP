@@ -397,7 +397,10 @@ def train_model(args, model, train_loader, test_loader, paths):
         verbose=True,
         show_batch_vamp=True,
         check_grad_stats=False,
-        sample_validate_every=args.sample_validate_every
+        sample_validate_every=args.sample_validate_every,
+        early_stopping=getattr(args, 'early_stopping_patience', None),
+        early_stopping_tol=getattr(args, 'early_stopping_tol', 0.0),
+        early_stopping_min_epochs=getattr(args, 'early_stopping_min_epochs', 0),
     )
 
     return scores

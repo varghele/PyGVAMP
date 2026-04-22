@@ -557,6 +557,8 @@ class RevVAMPNet(nn.Module):
             smoothing=5,
             sample_validate_every=100,
             early_stopping=None,
+            early_stopping_tol=0.0,
+            early_stopping_min_epochs=0,
             callbacks=None
     ):
         """
@@ -566,6 +568,10 @@ class RevVAMPNet(nn.Module):
         - Loss is NLL (lower is better), not negative VAMP score
         - Best model tracks lowest NLL instead of highest VAMP score
         - Score logging records NLL values
+        - ``early_stopping_tol`` is interpreted as a relative *decrease* of NLL
+          (since lower is better for NLL): an epoch resets the counter when
+          ``nll < plateau_ref * (1 - tol)`` (or ``nll < plateau_ref - tol``
+          for ``plateau_ref <= 0``).
 
         Returns
         -------
@@ -606,8 +612,11 @@ class RevVAMPNet(nn.Module):
             'epochs': []
         }
 
-        # For NLL, best score is lowest (start with +inf)
+        # For NLL, best score is lowest (start with +inf).  Two trackers:
+        # best_score drives model selection (strict minimum), plateau_ref drives
+        # the tolerance-aware patience counter.
         best_score = float('inf')
+        plateau_ref = float('inf')
         best_model_state = None
         no_improvement_count = 0
         global_batch = 1
@@ -618,7 +627,10 @@ class RevVAMPNet(nn.Module):
                 print(f"Using quick validation every {sample_validate_every} batches")
                 print(f"Performing full validation after each epoch")
             if early_stopping:
-                print(f"Early stopping after {early_stopping} epochs without improvement")
+                print(
+                    f"Early stopping: patience={early_stopping} "
+                    f"(rel tol={early_stopping_tol}, min_epochs={early_stopping_min_epochs})"
+                )
 
         for epoch in range(n_epochs):
             self.train()
@@ -703,26 +715,38 @@ class RevVAMPNet(nn.Module):
                 if verbose:
                     print(f"Epoch {epoch + 1}/{n_epochs}, Train NLL: {avg_train_nll:.4f}")
 
-            # Best model tracking: lowest NLL is best
+            # Model selection — strict-minimum NLL drives best-model save.
             if current_val_nll < best_score:
                 best_score = current_val_nll
-                no_improvement_count = 0
-
                 best_model_state = {k: v.cpu().clone() for k, v in self.state_dict().items()}
-
                 if save_dir:
                     self.save_complete_model(os.path.join(save_dir, "best_model.pt"))
-
                 if verbose:
                     print(f"New best model with NLL: {best_score:.4f}")
+
+            # Plateau counter — tolerance-aware ratchet on NLL (lower is better).
+            if plateau_ref == float('inf'):
+                threshold = float('inf')
+            elif plateau_ref > 0:
+                threshold = plateau_ref * (1.0 - early_stopping_tol)
+            else:
+                threshold = plateau_ref - early_stopping_tol
+
+            if current_val_nll < threshold:
+                plateau_ref = current_val_nll
+                no_improvement_count = 0
             else:
                 no_improvement_count += 1
                 if verbose:
-                    print(f"No improvement for {no_improvement_count} epochs. Best NLL: {best_score:.4f}")
+                    print(f"No improvement for {no_improvement_count} epochs. "
+                          f"Best NLL: {best_score:.4f}")
 
-            # Early stopping
-            if early_stopping and no_improvement_count >= early_stopping:
-                print(f"Early stopping triggered after {no_improvement_count} epochs without improvement")
+            # Early stopping — respects min_epochs warmup.
+            if (early_stopping
+                    and (epoch + 1) >= early_stopping_min_epochs
+                    and no_improvement_count >= early_stopping):
+                print(f"Early stopping triggered after {no_improvement_count} epochs "
+                      f"below plateau threshold (rel tol={early_stopping_tol}).")
                 break
 
             if save_every and (epoch + 1) % save_every == 0 and save_dir:

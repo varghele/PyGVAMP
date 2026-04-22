@@ -80,6 +80,18 @@ Examples:
                         help="Run all --max_retrains rounds even if the diagnostic recommends "
                              "the same k the model was just trained with.  By default the loop "
                              "terminates as soon as the recommendation matches the current k.")
+    parser.add_argument('--early_stopping_patience', type=int, default=None,
+                        help="Enable plateau-based early stopping: stop after this many "
+                             "consecutive epochs without a meaningful improvement.  Applies "
+                             "to both initial training and retrains.  Off when unset.  "
+                             "Suggested non-default: 8.")
+    parser.add_argument('--early_stopping_tol', type=float, default=None,
+                        help="Relative improvement threshold for the plateau counter.  An "
+                             "epoch counts as an improvement only when the gain over the "
+                             "plateau reference exceeds this fraction.  Suggested: 1e-4 "
+                             "(0.01%% relative).")
+    parser.add_argument('--early_stopping_min_epochs', type=int, default=None,
+                        help="Warmup — no early-stopping trigger before this epoch.  Suggested: 10.")
     parser.add_argument('--stride', type=int, default=None,
                         help='Frame stride for trajectory loading (overrides preset)')
     parser.add_argument('--selection', type=str, default=None,

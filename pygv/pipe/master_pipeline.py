@@ -1077,6 +1077,12 @@ def main():
         config.max_retrains = args.max_retrains
     if args.no_convergence_check:
         config.convergence_check = False
+    if args.early_stopping_patience is not None:
+        config.early_stopping_patience = args.early_stopping_patience
+    if args.early_stopping_tol is not None:
+        config.early_stopping_tol = args.early_stopping_tol
+    if args.early_stopping_min_epochs is not None:
+        config.early_stopping_min_epochs = args.early_stopping_min_epochs
     if args.stride is not None:
         config.stride = args.stride
     if args.selection is not None:
