@@ -270,7 +270,11 @@ def create_and_analyze_dataset(args, paths):
             'node_embedding_dim': args.node_embedding_dim,
             'gaussian_expansion_dim': args.gaussian_expansion_dim,
             'selection': args.selection,
-            'stride': args.stride
+            'stride': args.stride,
+            # Raw trajectory frame delta in picoseconds.  Persisted here so the
+            # orchestrator can compute per-lag auto-stride without re-probing the
+            # trajectory.  None if the dataset couldn't determine it.
+            'frame_dt_ps': getattr(dataset, 'raw_timestep_ps', None),
         }
     }
 

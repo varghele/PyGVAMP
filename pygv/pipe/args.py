@@ -61,6 +61,37 @@ Examples:
                              "over --epochs. Default: none (constant LR).")
     parser.add_argument('--lr_min', type=float, default=None,
                         help='Minimum LR for cosine schedule (default: 0.0)')
+    parser.add_argument('--auto_stride', action='store_true',
+                        help="Per-lag-time runtime subsampling.  For each lag τ, use "
+                             "stride = max(1, floor(τ / (10·frame_dt))) on top of the "
+                             "preprocessing-level stride.  Requires --timestep when no prepared "
+                             "dataset with persisted frame_dt exists.  Stride is fixed within a "
+                             "lag time (retrains do not change it).")
+    parser.add_argument('--warm_start_retrains', action='store_true',
+                        help="On retrain, preserve encoder + embedding + BN running stats and "
+                             "replace only the classifier head (and the reversible score module "
+                             "for --reversible).  Default: enabled.  The optimizer is always "
+                             "reinitialised.  Pass --no_warm_start_retrains to disable.")
+    parser.add_argument('--no_warm_start_retrains', action='store_true',
+                        help="Disable warm-start: retrains rebuild the model from scratch.")
+    parser.add_argument('--max_retrains', type=int, default=None,
+                        help="Safety cap on retrain iterations per experiment (default: 5).")
+    parser.add_argument('--no_convergence_check', action='store_true',
+                        help="Run all --max_retrains rounds even if the diagnostic recommends "
+                             "the same k the model was just trained with.  By default the loop "
+                             "terminates as soon as the recommendation matches the current k.")
+    parser.add_argument('--early_stopping_patience', type=int, default=None,
+                        help="Enable plateau-based early stopping: stop after this many "
+                             "consecutive epochs without a meaningful improvement.  Applies "
+                             "to both initial training and retrains.  Off when unset.  "
+                             "Suggested non-default: 8.")
+    parser.add_argument('--early_stopping_tol', type=float, default=None,
+                        help="Relative improvement threshold for the plateau counter.  An "
+                             "epoch counts as an improvement only when the gain over the "
+                             "plateau reference exceeds this fraction.  Suggested: 5e-4 "
+                             "(0.05%% relative, sits above the Val-VAMP plateau noise floor).")
+    parser.add_argument('--early_stopping_min_epochs', type=int, default=None,
+                        help="Warmup — no early-stopping trigger before this epoch.  Suggested: 10.")
     parser.add_argument('--stride', type=int, default=None,
                         help='Frame stride for trajectory loading (overrides preset)')
     parser.add_argument('--selection', type=str, default=None,

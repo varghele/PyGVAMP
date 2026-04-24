@@ -121,6 +121,7 @@ def create_dataset_and_loader(args,
         use_cache=args.use_cache,
         timestep=getattr(args, 'timestep', None),
         continuous=getattr(args, 'continuous', True),
+        runtime_stride=getattr(args, 'runtime_stride', 1),
     )
 
     print(f"Dataset created with {len(dataset)} samples")
@@ -396,14 +397,29 @@ def train_model(args, model, train_loader, test_loader, paths):
         verbose=True,
         show_batch_vamp=True,
         check_grad_stats=False,
-        sample_validate_every=args.sample_validate_every
+        sample_validate_every=args.sample_validate_every,
+        early_stopping=getattr(args, 'early_stopping_patience', None),
+        early_stopping_tol=getattr(args, 'early_stopping_tol', 0.0),
+        early_stopping_min_epochs=getattr(args, 'early_stopping_min_epochs', 0),
     )
 
     return scores
 
 
-def run_training(args):
-    """Main function"""
+def run_training(args, pre_built_model=None):
+    """Main function.
+
+    Parameters
+    ----------
+    args : Namespace
+        Training arguments.
+    pre_built_model : nn.Module, optional
+        When provided, skip :func:`create_model` and use this model as-is.
+        Used by the warm-start retrain path to reuse the previous run's
+        encoder/embedding/BN state.  The caller is responsible for any
+        warm-restart (e.g. ``model.warm_restart_with_new_k``) and for
+        ensuring the model's n_states matches ``args.n_states``.
+    """
     # Setup output directory
     paths = setup_output_directory(args)
 
@@ -440,9 +456,15 @@ def run_training(args):
         if hasattr(args, 'ml3_node_dim'):
             args.ml3_node_dim = args.embedding_out_dim
 
-    # Create model
-    model = create_model(args)
-    print(f"Created VAMPNet model with {sum(p.numel() for p in model.parameters())} parameters")
+    # Model: either freshly-built or caller-supplied (warm-start retrain path)
+    if pre_built_model is None:
+        model = create_model(args)
+        print(f"Created VAMPNet model with {sum(p.numel() for p in model.parameters())} parameters")
+    else:
+        model = pre_built_model
+        device = torch.device("cpu" if args.cpu else "cuda" if torch.cuda.is_available() else "cpu")
+        model.to(device)
+        print(f"Using warm-started model with {sum(p.numel() for p in model.parameters())} parameters")
 
     # Train model
     scores = train_model(args=args,
