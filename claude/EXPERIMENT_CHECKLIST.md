@@ -21,46 +21,86 @@ The experiments fall into three categories with different scientific goals and d
 
 ### GraphVAMPNet reproduction
 
+**Architecture note for strict reproduction:** Ghorbani et al. 2022 used a deliberately small network — 4 graph layers with 16 neurons per layer, 16 Gaussians for edge features. Your default `medium_schnet` preset uses 128 hidden dims and 64 output dims, which is ~8× larger. For **strict reproduction** runs you should override to match their architecture (hidden_dim=16, similar scaling throughout). For **"PyGVAMP with its default preset" reproduction**, use your medium_schnet preset but clearly document the architectural difference in the paper — expect somewhat higher VAMP-2 scores than theirs because the larger model has more capacity. My recommendation: do strict reproduction first to validate the framework, then a "scaled-up" run at your preset to show what PyGVAMP's default delivers.
+
+**Other protocol details from Ghorbani et al. 2022:**
+- 70/30 train/validation split (your default is 80/20 — worth matching for strict reproduction)
+- 100 epochs training (before early stopping)
+- Adam optimizer, lr = 0.0005
+- Batch size = 1000
+- 10 seeds for error bars (95% CI)
+
 - [ ] **Trp-cage** (Lindorff-Larsen, 208 µs)
-  - k = ?? (look up from Ghorbani 2022 paper or supplementary)
-  - lag time = ?? ns (look up — likely 20 ns based on what I recall)
+  - k = 5, lag time = 20 ns
+  - n_neighbors = 7, n_atoms (Cα) = 20
+  - batch_size = 1000, lr = 0.0005
   - 10 seeds
-  - Compare against: published VAMP-2 score, ITS plot, CK test
+  - Compare against: published VAMP-2 = 4.79 ± 0.01 (Table S1), ITS plot (Fig 2A), CK test (Fig 2B)
   - Estimated wall time: ~2-3 hours total at 10-20 min/seed
 
 - [ ] **Villin** (Lindorff-Larsen, 125 µs)
-  - k = ??, lag time = 20 ns (per Fig 4 in Ghorbani 2022)
+  - k = 4, lag time = 20 ns
+  - n_neighbors = 10, n_atoms (Cα) = 35
+  - batch_size = 1000, lr = 0.0005
   - 10 seeds
-  - Compare against: published VAMP-2 score, ITS plot, CK test
+  - Compare against: published VAMP-2 = 3.78 ± 0.02 (Table S1), ITS plot (Fig 4A), CK test (Fig 4B)
   - Estimated wall time: ~2-3 hours total
 
-- [ ] **NTL9** (Lindorff-Larsen, 62 µs)
-  - k = ??, lag time = ??
+- [ ] **NTL9** (Lindorff-Larsen, 1.11 ms)
+  - k = 5, lag time = 200 ns
+  - n_neighbors = 10, n_atoms (Cα) = 39
+  - batch_size = 1000, lr = 0.0005
   - 10 seeds
-  - Compare against: published VAMP-2 score, ITS plot, CK test
+  - Compare against: published VAMP-2 = 4.59 ± 0.09 (Table S1), ITS plot (Fig 6A), CK test (Fig 6B)
   - Estimated wall time: ~2-3 hours total
 
 ### RevGraphVAMP reproduction
 
+**Architecture note for strict reproduction:** Huang et al. 2024 use a small network — hidden dim 16, 4 graph layers — and the RevGraphVAMP model has only **6,357 parameters** on Aβ42 (vs. 464,646 for the standard VAMPNets they compare against). This small-model choice is a core part of their story. For strict reproduction, match their architecture; for "PyGVAMP default preset" reproduction, use medium_schnet and note the difference. The parameter count comparison is actually a nice angle to highlight in your paper.
+
+**Confirmed protocol details from Huang et al. 2024:**
+- 7:3 train/val split
+- Adam optimizer
+- Three-phase training strategy (Section 2.3):
+  1. Train GASchNet (χ) with VAMP-2 at lr=0.0005 for `epoch_chi` epochs
+  2. Fix GASchNet, train U+S constraints with VAMP-E at lr=0.0005 for `epoch_US` epochs
+  3. Train full model with VAMP-E at lr=0.0001 for `epoch_all` epochs
+- GitHub defaults for Aβ42: pre_train = 300, total = 1000 epochs
+- Hardware: NVIDIA GeForce GTX 3090 (your 5090 is meaningfully faster)
+- Aβ42 dataset from Löhr et al. 2021 (ref 23), 5119 trajectories, 315 µs total at 250 ps/frame
+
+**Important: Aβ42 ox/red split.** The paper treats Aβ42 as a single dataset and does not report separate ox/red runs. The Löhr et al. 2021 source dataset likely contains both forms, but RevGraphVAMP doesn't split them. **If you want to report ox vs red comparisons, that's a novel contribution** of your work, not a reproduction of RevGraphVAMP's results — frame this carefully in the paper. The RevGraphVAMP reproduction should be on the combined Aβ42 dataset to match their protocol exactly.
+
+**Note on number of seeds:** The paper doesn't explicitly state how many training runs were used for error bars. Error bars in Table 2 are very tight (±0.002 on Aβ42 VAMP-2) which suggests at least 5 runs, probably more. Running 10 seeds gives you stronger error-bar discipline than the baseline, which is a small methodological point worth noting in your paper.
+
+**One unresolved discrepancy:** The paper's Table 1 says Aβ42 uses **40 atoms** while the GitHub `train.py` command uses **`--num-atoms 42`**. Aβ42 has 42 amino acid residues. Worth checking their actual preprocessing code — they may select only 40 Cα positions due to terminal handling, or the paper table might have a typo. Test with both values and see which matches their published VAMP scores.
+
 - [ ] **Alanine dipeptide** (mdshare, 3 trajectories)
-  - k = 6 (per RevGraphVAMP paper, matching original VAMPNet)
-  - lag time = ?? (look up from Huang 2024)
-  - 10 seeds
-  - Reversible model
-  - Compare against: published VAMP-2 and VAMP-E scores from Table 2
+  - k = 6, lag time = 20 ps (confirmed in Section 3.1.1)
+  - n_atoms = 10 (heavy atoms on main chain), n_neighbors = 5
+  - batch_size = 1000
+  - lr = [0.0005, 0.0001] — two-phase: 0.0005 for phase 1 (χ training), 0.0001 for phase 3 (full model)
+  - hidden_dim = 16, n_graph_layers = 4, n_Gaussians = 16
+  - Training: 3 trajectories × 250 ns × 1 ps/frame = 750k frames total
+  - 10 seeds (recommended; paper doesn't state count)
+  - Reversible model, three-phase training strategy (VAMP-2 then VAMP-E)
+  - Compare against: RevGraphVAMP published VAMP-2 = 4.41 ± 0.01, VAMP-E = 4.38 ± 0.01 (Table 2)
   - Estimated wall time: ~1-2 hours total (small system)
 
-- [ ] **Aβ42-red** (Huang 2024 dataset, 1 ns spacing)
-  - k = 4 (per RevGraphVAMP defaults)
-  - lag time = ?? (look up — likely matches their `lag_time` arg)
-  - 10 seeds
+- [ ] **Aβ42** (Löhr et al. 2021 dataset, ref 23 in Huang 2024)
+  - k = 4, lag time = 10 ns (confirmed in Section 3.2.1)
+  - n_atoms = 40 (per paper Table 1) OR 42 (per GitHub train.py command) — discrepancy worth resolving
+  - n_neighbors = 10
+  - batch_size = 500
+  - lr = [0.0005, 0.0001] — two-phase
+  - hidden_dim = 16, n_graph_layers = 4, n_Gaussians = 16 (dmin=0, dmax=8, step=0.5)
+  - pre_train_epochs = 300, epochs = 1000 (from GitHub script)
+  - Dataset: 5,119 trajectories, 1.26M frames total, 250 ps/frame, 315 µs total
+  - Validation subset: 1024 trajectories = 273,715 frames
+  - State populations: 52.3%, 26.7%, 10.7%, 10.2%
+  - 10 seeds (recommended; paper doesn't state count, but error bars are tight)
   - Reversible model
-  - Compare against: published VAMP scores
-  - Estimated wall time: ~3-4 hours total
-
-- [ ] **Aβ42-ox** (Huang 2024 dataset, 1 ns spacing)
-  - Same protocol as Aβ42-red
-  - 10 seeds
+  - Compare against: RevGraphVAMP published VAMP-2 = 3.99 ± 0.002, VAMP-E = 3.99 ± 0.003 (Table 2)
   - Estimated wall time: ~3-4 hours total
 
 **Reproduction success criterion:** PyGVAMP's mean VAMP-2 (over 10 seeds, with 95% CI) should overlap with the published value within their reported confidence interval, or differ by less than 0.05 (a typical CI width for these scores).
@@ -88,10 +128,11 @@ The experiments fall into three categories with different scientific goals and d
 - [ ] **Villin:** SchNet, GIN, ML3 × 10 seeds = 30 runs
 - [ ] **NTL9:** SchNet, GIN, ML3 × 10 seeds = 30 runs
 - [ ] **Alanine dipeptide:** SchNet, GIN, ML3 × 10 seeds = 30 runs (reversible)
-- [ ] **Aβ42-red:** SchNet, GIN, ML3 × 10 seeds = 30 runs (reversible)
-- [ ] **Aβ42-ox:** SchNet, GIN, ML3 × 10 seeds = 30 runs (reversible)
+- [ ] **Aβ42** (full dataset, matching RevGraphVAMP): SchNet, GIN, ML3 × 10 seeds = 30 runs (reversible)
+- [ ] **Aβ42-red** (if you have the split): SchNet, GIN, ML3 × 10 seeds = 30 runs (reversible)
+- [ ] **Aβ42-ox** (if you have the split): SchNet, GIN, ML3 × 10 seeds = 30 runs (reversible)
 
-**Total: 180 runs.** At 15 min/run on a 5090 = ~45 hours of wall time. About 2 days continuous, or several overnights.
+**Total: 120-180 runs depending on whether you include ox/red split.** At 15 min/run on a 5090 = ~30-45 hours of wall time. About 2 days continuous, or several overnights.
 
 **Reporting:** A table per system showing mean VAMP-2 ± 95% CI for each encoder. A claim like "GIN improves over SchNet on Trp-cage" requires non-overlapping CIs.
 
@@ -101,16 +142,16 @@ The experiments fall into three categories with different scientific goals and d
 
 ## Category 3: Multi-Lag-Time Exploration
 
-**Scientific goal:** Use PyGVAMP's auto-stride and auto-discovery features to explore Aβ42 dynamics across multiple timescales, demonstrating the framework's exploratory power. Not a comparison to the baselines — a novel analysis enabled by the framework.
+**Scientific goal:** Use PyGVAMP's auto-stride and auto-discovery features to explore Aβ42 dynamics across multiple timescales, demonstrating the framework's exploratory power. Not a comparison to the baselines — a novel analysis enabled by the framework. **The ox vs red comparison itself is novel** — RevGraphVAMP doesn't separate them, so any finding here is your contribution, not a reproduction.
 
 **Protocol:**
 - 3 seeds per (system, encoder, lag time) — enough to estimate variance, not enough to claim small differences
 - All three encoders
-- Lag times: 0.5, 1, 2, 5, 10, 20, 50 ns (or some sensible range — adjust based on what makes sense for Aβ42 dynamics)
+- Lag times: 0.5, 1, 2, 5, 10, 20, 50 ns (or some sensible range — adjust based on what makes sense for Aβ42 dynamics; note RevGraphVAMP's chosen τ = 10 ns is in the middle of this range)
 - Auto-discovery ON
 - Auto-stride ON
 - Reversible model
-- Aβ42-red and Aβ42-ox
+- Aβ42-red and Aβ42-ox (assuming you have them split)
 
 ### Runs
 
