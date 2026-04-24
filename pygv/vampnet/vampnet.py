@@ -800,8 +800,9 @@ class VAMPNet(nn.Module):
             counts as an "improvement" only when ``val > plateau_ref * (1 + tol)``
             (or ``val > plateau_ref + tol`` if ``plateau_ref <= 0``).  At 0.0
             (default) any strict improvement resets the counter — matches the
-            historical behaviour.  Typical non-zero value: ``1e-4`` (0.01%
-            relative gain threshold).
+            historical behaviour.  Typical non-zero value: ``5e-4`` (0.05%
+            relative per-epoch gain required; sits above Val-VAMP plateau
+            noise floor).
         early_stopping_min_epochs : int, default=0
             Warmup — no early-stopping trigger before this epoch.  Protects
             against stopping during the initial noisy climb.  Typical value

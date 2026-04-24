@@ -41,7 +41,10 @@ class BaseConfig:
     max_retrains: int = 5              # safety cap on retrain iterations per experiment
     convergence_check: bool = True     # stop when diagnostic recommends the current k (no change)
     # Early-stopping / plateau detection (off by default — patience=None).
-    # Typical non-default values:   patience=8, tol=1e-4, min_epochs=10
+    # Typical non-default values:   patience=8, tol=5e-4, min_epochs=10
+    # (tol=5e-4 ≈ 0.05%/epoch — sits above the Val-VAMP plateau noise floor
+    # and below anything we'd call meaningful progress; validated empirically
+    # on ab42_red overnight 2026-04-22).
     early_stopping_patience: Optional[int] = None
     early_stopping_tol: float = 0.0
     early_stopping_min_epochs: int = 0

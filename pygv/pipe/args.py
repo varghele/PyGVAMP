@@ -88,8 +88,8 @@ Examples:
     parser.add_argument('--early_stopping_tol', type=float, default=None,
                         help="Relative improvement threshold for the plateau counter.  An "
                              "epoch counts as an improvement only when the gain over the "
-                             "plateau reference exceeds this fraction.  Suggested: 1e-4 "
-                             "(0.01%% relative).")
+                             "plateau reference exceeds this fraction.  Suggested: 5e-4 "
+                             "(0.05%% relative, sits above the Val-VAMP plateau noise floor).")
     parser.add_argument('--early_stopping_min_epochs', type=int, default=None,
                         help="Warmup — no early-stopping trigger before this epoch.  Suggested: 10.")
     parser.add_argument('--stride', type=int, default=None,
