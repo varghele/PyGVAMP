@@ -92,6 +92,35 @@ Examples:
                              "(0.05%% relative, sits above the Val-VAMP plateau noise floor).")
     parser.add_argument('--early_stopping_min_epochs', type=int, default=None,
                         help="Warmup — no early-stopping trigger before this epoch.  Suggested: 10.")
+    parser.add_argument('--seed', type=int, default=None,
+                        help="Master RNG seed — controls train/val split and dataset-internal "
+                             "random state.  Use distinct values (0, 1, 2, ...) across a "
+                             "multi-seed sweep.  Default: 42 (historical).")
+    # Encoder/graph architecture overrides — override preset defaults for
+    # per-experiment reproduction protocols without creating a new preset class.
+    parser.add_argument('--hidden_dim', type=int, default=None,
+                        help='Encoder hidden dimension (SchNet/GIN).')
+    parser.add_argument('--output_dim', type=int, default=None,
+                        help='Encoder output dimension.')
+    parser.add_argument('--n_interactions', type=int, default=None,
+                        help='Number of message-passing layers.')
+    parser.add_argument('--n_neighbors', type=int, default=None,
+                        help='k-NN graph neighbors.')
+    parser.add_argument('--gaussian_expansion_dim', type=int, default=None,
+                        help='Number of RBF/Gaussian edge features.')
+    parser.add_argument('--use_attention', dest='use_attention', action='store_const', const=True,
+                        default=None, help='Enable attention in the encoder (default off depends on preset).')
+    parser.add_argument('--no_use_attention', dest='use_attention', action='store_const', const=False,
+                        help='Force-disable attention in the encoder.')
+    parser.add_argument('--file_pattern', type=str, default=None,
+                        help='Glob for trajectory files within --traj_dir (default: *.xtc).')
+    # Training hyperparameters
+    parser.add_argument('--lr', type=float, default=None,
+                        help='Learning rate.')
+    parser.add_argument('--weight_decay', type=float, default=None,
+                        help='Weight decay / L2.')
+    parser.add_argument('--val_split', type=float, default=None,
+                        help='Validation fraction (e.g. 0.3 for 70/30).')
     parser.add_argument('--stride', type=int, default=None,
                         help='Frame stride for trajectory loading (overrides preset)')
     parser.add_argument('--selection', type=str, default=None,

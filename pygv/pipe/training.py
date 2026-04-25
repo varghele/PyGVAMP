@@ -91,19 +91,26 @@ def create_dataset_and_loader(args,
     Parameters
     ----------
     args : Namespace
-        Arguments containing dataset and loader configurations.
+        Arguments containing dataset and loader configurations.  If ``args.seed``
+        is set, it overrides the ``seed`` kwarg here (so multi-seed sweeps get
+        distinct train/val splits and torch RNG state per run).
     is_frame_loader : bool, default=False
         Whether to create a frame-wise dataset loader (for inference).
     test_split : float, default=0.2
         Fraction of the dataset to use for testing.
     seed : int, default=42
-        Random seed for reproducibility.
+        Random seed for reproducibility.  Overridden by ``args.seed`` when set.
 
     Returns
     -------
     tuple
         (dataset, train_dataset, train_loader, test_dataset, test_loader)
     """
+    # Seed override — when present on args, it wins (multi-seed sweeps).
+    args_seed = getattr(args, 'seed', None)
+    if args_seed is not None:
+        seed = int(args_seed)
+
     # Getting all trajectories in traj directory
     traj_files = find_trajectory_files(args.traj_dir, file_pattern=args.file_pattern)
 
@@ -122,6 +129,7 @@ def create_dataset_and_loader(args,
         timestep=getattr(args, 'timestep', None),
         continuous=getattr(args, 'continuous', True),
         runtime_stride=getattr(args, 'runtime_stride', 1),
+        seed=seed,
     )
 
     print(f"Dataset created with {len(dataset)} samples")

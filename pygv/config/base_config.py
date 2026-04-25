@@ -48,6 +48,10 @@ class BaseConfig:
     early_stopping_patience: Optional[int] = None
     early_stopping_tol: float = 0.0
     early_stopping_min_epochs: int = 0
+    # Master RNG seed — drives train/val random_split and dataset random seed.
+    # None falls back to the hard-coded default (42) in training.create_dataset_and_loader.
+    # Multi-seed sweeps set this per-run via --seed to get distinct splits.
+    seed: Optional[int] = None
 
     # Output and caching
     output_dir: str = "./output"

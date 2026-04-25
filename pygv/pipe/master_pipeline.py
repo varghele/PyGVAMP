@@ -575,6 +575,13 @@ class PipelineOrchestrator:
             the kwarg default is kept at 2 for backward-compatibility with
             callers that predate the policy change.
         """
+        # Short-circuit: max_retrain <= 0 disables the retrain loop entirely.
+        # This is the "strict reproduction" switch — callers with a fixed k
+        # (--no_discover_states --n_states K) can set max_retrains=0 to
+        # guarantee no automatic shrinking.
+        if max_retrain is not None and int(max_retrain) <= 0:
+            return
+
         # Collect experiments that need retraining from the initial analysis
         pending = []
         for exp_name, results in list(analysis_results.items()):
@@ -1083,6 +1090,29 @@ def main():
         config.early_stopping_tol = args.early_stopping_tol
     if args.early_stopping_min_epochs is not None:
         config.early_stopping_min_epochs = args.early_stopping_min_epochs
+    if args.seed is not None:
+        config.seed = args.seed
+    # Architecture / training overrides (per-experiment reproduction protocols)
+    if args.hidden_dim is not None:
+        config.hidden_dim = args.hidden_dim
+    if args.output_dim is not None:
+        config.output_dim = args.output_dim
+    if args.n_interactions is not None:
+        config.n_interactions = args.n_interactions
+    if args.n_neighbors is not None:
+        config.n_neighbors = args.n_neighbors
+    if args.gaussian_expansion_dim is not None:
+        config.gaussian_expansion_dim = args.gaussian_expansion_dim
+    if args.use_attention is not None:
+        config.use_attention = args.use_attention
+    if args.file_pattern is not None:
+        config.file_pattern = args.file_pattern
+    if args.lr is not None:
+        config.lr = args.lr
+    if args.weight_decay is not None:
+        config.weight_decay = args.weight_decay
+    if args.val_split is not None:
+        config.val_split = args.val_split
     if args.stride is not None:
         config.stride = args.stride
     if args.selection is not None:
