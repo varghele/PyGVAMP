@@ -1105,6 +1105,33 @@ def main():
         config.gaussian_expansion_dim = args.gaussian_expansion_dim
     if args.use_attention is not None:
         config.use_attention = args.use_attention
+    # Pre-encoder embedding MLP — paired toggle + per-field overrides.
+    if args.use_embedding is not None:
+        config.use_embedding = args.use_embedding
+    if args.embedding_hidden_dim is not None:
+        config.embedding_hidden_dim = args.embedding_hidden_dim
+    if args.embedding_out_dim is not None:
+        config.embedding_out_dim = args.embedding_out_dim
+    if args.embedding_num_layers is not None:
+        config.embedding_num_layers = args.embedding_num_layers
+    if args.embedding_act is not None:
+        config.embedding_act = args.embedding_act
+    if args.embedding_dropout is not None:
+        config.embedding_dropout = args.embedding_dropout
+    if args.embedding_norm is not None:
+        # Accept the literal "none" string from the CLI as Python None.
+        config.embedding_norm = None if args.embedding_norm.lower() == "none" else args.embedding_norm
+    # Classifier head overrides.
+    if args.clf_hidden_dim is not None:
+        config.clf_hidden_dim = args.clf_hidden_dim
+    if args.clf_num_layers is not None:
+        config.clf_num_layers = args.clf_num_layers
+    if args.clf_dropout is not None:
+        config.clf_dropout = args.clf_dropout
+    if args.clf_activation is not None:
+        config.clf_activation = args.clf_activation
+    if args.clf_norm is not None:
+        config.clf_norm = None if args.clf_norm.lower() == "none" else args.clf_norm
     if args.file_pattern is not None:
         config.file_pattern = args.file_pattern
     if args.lr is not None:

@@ -112,6 +112,37 @@ Examples:
                         default=None, help='Enable attention in the encoder (default off depends on preset).')
     parser.add_argument('--no_use_attention', dest='use_attention', action='store_const', const=False,
                         help='Force-disable attention in the encoder.')
+    # Pre-encoder embedding MLP — paired toggle + per-field overrides.
+    # When disabled, raw node features (e.g. one-hot atom-type identity) are
+    # fed straight into the encoder, which handles the input projection in
+    # its first linear layer.
+    parser.add_argument('--use_embedding', dest='use_embedding', action='store_const', const=True,
+                        default=None, help='Insert a pre-encoder MLP on node features (default depends on preset).')
+    parser.add_argument('--no_use_embedding', dest='use_embedding', action='store_const', const=False,
+                        help='Skip the pre-encoder MLP; feed raw node features into the encoder.')
+    parser.add_argument('--embedding_hidden_dim', type=int, default=None,
+                        help='Hidden width of the pre-encoder embedding MLP.')
+    parser.add_argument('--embedding_out_dim', type=int, default=None,
+                        help='Output width of the pre-encoder embedding MLP (becomes encoder node_dim).')
+    parser.add_argument('--embedding_num_layers', type=int, default=None,
+                        help='Number of layers in the pre-encoder embedding MLP. 1 = single linear, no activation.')
+    parser.add_argument('--embedding_act', type=str, default=None,
+                        help='Activation for the pre-encoder embedding MLP (e.g. relu, tanh).')
+    parser.add_argument('--embedding_dropout', type=float, default=None,
+                        help='Dropout in the pre-encoder embedding MLP.')
+    parser.add_argument('--embedding_norm', type=str, default=None,
+                        help='Normalization in the pre-encoder embedding MLP (batch_norm, layer_norm, none).')
+    # Classifier (softmax) head overrides.
+    parser.add_argument('--clf_hidden_dim', type=int, default=None,
+                        help='Hidden width of the classifier head.')
+    parser.add_argument('--clf_num_layers', type=int, default=None,
+                        help='Number of layers in the classifier head. 1 = single linear → softmax.')
+    parser.add_argument('--clf_dropout', type=float, default=None,
+                        help='Dropout in the classifier head.')
+    parser.add_argument('--clf_activation', type=str, default=None,
+                        help='Activation in the classifier head (e.g. relu, tanh).')
+    parser.add_argument('--clf_norm', type=str, default=None,
+                        help='Normalization in the classifier head (batch_norm, layer_norm, none).')
     parser.add_argument('--file_pattern', type=str, default=None,
                         help='Glob for trajectory files within --traj_dir (default: *.xtc).')
     # Training hyperparameters
